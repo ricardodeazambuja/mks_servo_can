@@ -1,0 +1,18 @@
+# mks_servo_can_project/mks_servo_can_library/mks_servo_can/kinematics/__init__.py
+"""
+Kinematics module for MKS Servo CAN library.
+
+Provides classes for converting between motor encoder/pulse units and
+real-world units (e.g., mm, degrees).
+"""
+from .base_kinematics import Kinematics
+from .linear_kinematics import LinearKinematics
+from .rotary_kinematics import RotaryKinematics
+from .eccentric_kinematics import EccentricKinematics
+
+__all__ = [
+    "Kinematics",
+    "LinearKinematics",
+    "RotaryKinematics",
+    "EccentricKinematics",
+]
