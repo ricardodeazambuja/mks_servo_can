@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_simulator/setup.py
+# mks_servo_can/mks_servo_simulator/setup.py
 from setuptools import setup, find_packages
 
 # Read version from __init__.py of the simulator package

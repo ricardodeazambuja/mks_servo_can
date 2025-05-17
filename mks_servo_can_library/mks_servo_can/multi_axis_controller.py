@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/multi_axis_controller.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/multi_axis_controller.py
 """
 MultiAxisController for managing and coordinating multiple MKS Servo axes.
 """

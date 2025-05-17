@@ -1,4 +1,4 @@
-# mks_servo_can_project/examples/multi_axis_simulator.py
+# mks_servo_can/examples/multi_axis_simulator.py
 """
 Example: Controlling multiple MKS Servo motors using the Simulator.
 Make sure the simulator is running before executing this script.

@@ -34,7 +34,7 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 
 The project is organized into two main Python packages and supporting directories:
 
-mks_servo_can_project/
+mks_servo_can/
 ├── mks_servo_can_library/        # The installable Python library (mks_servo_can)
 │   ├── mks_servo_can/            # Source code for the library
 │   │   ├── kinematics/           # Kinematic transformation modules
@@ -90,7 +90,7 @@ It is highly recommended to use a Python virtual environment.
 
 Navigate to the library directory and install:
 ```bash
-cd mks_servo_can_project/mks_servo_can_library
+cd mks_servo_can/mks_servo_can_library
 pip install .
 For development, use an editable install:pip install -e .
 ```
@@ -98,7 +98,7 @@ For development, use an editable install:pip install -e .
 **2. MKS Servo Simulator (mks-servo-simulator)**
 Navigate to the simulator directory and install:
 ```bash
-cd mks_servo_can_project/mks_servo_simulator
+cd mks_servo_can/mks_servo_simulator
 pip install .
 ```
 This makes the mks-servo-simulator command available in your environment. For development:

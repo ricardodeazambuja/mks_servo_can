@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_simulator/mks_simulator/main.py
+# mks_servo_can/mks_servo_simulator/mks_simulator/main.py
 """
 Main entry point for running the MKS Servo CAN Simulator.
 This simply calls the CLI's main function.

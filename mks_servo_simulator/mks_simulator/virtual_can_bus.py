@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_simulator/mks_simulator/virtual_can_bus.py
+# mks_servo_can/mks_servo_simulator/mks_simulator/virtual_can_bus.py
 """
 Virtual CAN Bus for the MKS Servo Simulator.
 Handles communication between the mks-servo-can library (in sim mode)

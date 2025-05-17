@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/axis.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/axis.py
 """
 High-Level Axis Class for individual MKS Servo motor control.
 """

@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/kinematics/linear_kinematics.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/kinematics/linear_kinematics.py
 """
 Linear kinematics: converts between linear distance (e.g., mm) and motor steps.
 """

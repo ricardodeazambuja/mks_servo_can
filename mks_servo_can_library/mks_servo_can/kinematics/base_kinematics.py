@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/kinematics/base_kinematics.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/kinematics/base_kinematics.py
 """
 Base class for kinematic transformations.
 """

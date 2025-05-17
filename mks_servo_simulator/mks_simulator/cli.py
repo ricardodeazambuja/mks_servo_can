@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_simulator/mks_simulator/cli.py
+# mks_servo_can/mks_servo_simulator/mks_simulator/cli.py
 """
 Command-Line Interface for the MKS Servo CAN Simulator.
 Uses 'click' for CLI argument parsing and command structure.

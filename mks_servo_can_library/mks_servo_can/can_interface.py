@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/can_interface.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/can_interface.py
 """
 CAN Communication Layer for MKS Servo Control.
 Handles raw CAN bus communication using python-can for real hardware

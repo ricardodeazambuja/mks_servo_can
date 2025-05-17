@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/kinematics/eccentric_kinematics.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/kinematics/eccentric_kinematics.py
 """
 Eccentric kinematics: example for a non-linear relationship.
 This is a placeholder and would need a specific mechanical model.

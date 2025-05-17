@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/exceptions.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/exceptions.py
 """
 Custom exceptions for the MKS Servo CAN library.
 """

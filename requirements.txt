@@ -1,0 +1,14 @@
+# Core dependencies for the MKS Servo CAN Project (library and simulator)
+
+# For the mks-servo-can library (and potentially used by simulator indirectly)
+python-can>=3.0.0,<5.0.0
+
+# For the mks-servo-simulator CLI
+click>=7.0
+
+# Note: For development (testing, linting, docs), refer to the [dev]
+# and [docs] extras in the setup.py files of the respective packages:
+#   mks_servo_can_library/setup.py
+#   mks_servo_simulator/setup.py
+#
+# Example: pip install -e ./mks_servo_can_library[dev]

@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/constants.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/constants.py
 """
 Constants for the MKS Servo CAN library.
 Includes CAN command codes, default values, and other relevant constants

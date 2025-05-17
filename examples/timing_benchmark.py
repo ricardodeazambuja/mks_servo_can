@@ -1,4 +1,4 @@
-# mks_servo_can_project/examples/timing_benchmark.py
+# mks_servo_can/examples/timing_benchmark.py
 """
 Example: Benchmarking command round-trip times with MKS Servo.
 Can be used with either the simulator or real hardware.

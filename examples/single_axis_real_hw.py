@@ -1,4 +1,4 @@
-# mks_servo_can_project/examples/single_axis_real_hw.py
+# mks_servo_can/examples/single_axis_real_hw.py
 """
 Example: Controlling a single MKS Servo motor using a real CAN hardware interface.
 """

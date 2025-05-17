@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/crc.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/crc.py
 """
 CRC calculation utility for MKS Servo CAN commands.
 """

@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/kinematics/rotary_kinematics.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/kinematics/rotary_kinematics.py
 """
 Rotary kinematics: converts between angular displacement (degrees) and motor steps.
 """

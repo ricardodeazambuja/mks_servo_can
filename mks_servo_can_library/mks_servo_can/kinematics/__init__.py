@@ -1,4 +1,4 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/kinematics/__init__.py
+# mks_servo_can/mks_servo_can_library/mks_servo_can/kinematics/__init__.py
 """
 Kinematics module for MKS Servo CAN library.
 
