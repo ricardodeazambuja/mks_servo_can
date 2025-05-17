@@ -19,6 +19,7 @@ from mks_servo_can_library.mks_servo_can import CANInterface
 from mks_servo_can_library.mks_servo_can import const
 from mks_servo_can_library.mks_servo_can import exceptions
 from mks_servo_can_library.mks_servo_can import RotaryKinematics
+from mks_servo_can_library.mks_servo_can import LowLevelAPI
 
 # --- Configuration ---
 # These can be overridden by command-line arguments
@@ -47,24 +48,26 @@ async def benchmark_read_position_low_level(
     """Benchmarks reading position using the low-level API directly."""
     latencies = []
     logger.info(
-        f"Benchmarking Low-Level read_encoder_value_addition ({iterations} iterations)..."
+        "Benchmarking Low-Level read_encoder_value_addition "
+        "(%d iterations)...",
+        iterations,
     )
-    # Ensure motor is enabled for responsiveness if that affects timing, though read usually works regardless
-    # await low_level_api.enable_motor(can_id, True) # Might be needed if motor sleeps
+    # Ensure motor is enabled for responsiveness if that affects timing,
+    # though read usually works regardless
+    # await low_level_api.enable_motor(can_id, True) # Might be needed
 
     for i in range(iterations):
         start_time = time.perf_counter()
         try:
             await low_level_api.read_encoder_value_addition(can_id)
         except exceptions.MKSServoError as e:
-            logger.warning(f"Iteration {i+1}: Low-level read error: {e}")
-            # Optionally skip or record failure
+            logger.warning("Iteration %d: Low-level read error: %s", i + 1, e)
             continue
         end_time = time.perf_counter()
         latencies.append((end_time - start_time) * 1000)  # ms
         if (i + 1) % (iterations // 10 or 1) == 0:
             logger.debug(
-                f"Low-level read iteration {i+1}/{iterations} completed."
+                "Low-level read iteration %d/%d completed.", i + 1, iterations
             )
         await asyncio.sleep(0.001)  # Small delay between commands
     return latencies
@@ -73,25 +76,29 @@ async def benchmark_read_position_low_level(
 async def benchmark_axis_get_position(
     axis: "Axis", iterations: int
 ) -> list[float]:
-    """Benchmarks reading position using the high-level Axis.get_current_position_steps()."""
+    """Benchmarks reading position via Axis.get_current_position_steps()."""
     latencies = []
     logger.info(
-        f"Benchmarking Axis.get_current_position_steps ({iterations} iterations)..."
+        "Benchmarking Axis.get_current_position_steps (%d iterations)...",
+        iterations,
     )
-    # await axis.enable_motor() # Axis methods often handle enabling if needed
 
     for i in range(iterations):
         start_time = time.perf_counter()
         try:
             await axis.get_current_position_steps()
         except exceptions.MKSServoError as e:
-            logger.warning(f"Iteration {i+1}: Axis get_position error: {e}")
+            logger.warning(
+                "Iteration %d: Axis get_position error: %s", i + 1, e
+            )
             continue
         end_time = time.perf_counter()
         latencies.append((end_time - start_time) * 1000)  # ms
         if (i + 1) % (iterations // 10 or 1) == 0:
             logger.debug(
-                f"Axis get_position iteration {i+1}/{iterations} completed."
+                "Axis get_position iteration %d/%d completed.",
+                i + 1,
+                iterations,
             )
         await asyncio.sleep(0.001)
     return latencies
@@ -103,23 +110,25 @@ async def benchmark_axis_enable_disable(
     """Benchmarks enabling and then disabling the motor using Axis methods."""
     latencies = []
     logger.info(
-        f"Benchmarking Axis enable/disable cycle ({iterations} iterations)..."
+        "Benchmarking Axis enable/disable cycle (%d iterations)...", iterations
     )
     for i in range(iterations):
         start_time = time.perf_counter()
         try:
             await axis.enable_motor()
-            # Add a tiny pause if the motor needs time to report enabled status before disable is effective
-            # await asyncio.sleep(0.001)
             await axis.disable_motor()
         except exceptions.MKSServoError as e:
-            logger.warning(f"Iteration {i+1}: Axis enable/disable error: {e}")
+            logger.warning(
+                "Iteration %d: Axis enable/disable error: %s", i + 1, e
+            )
             continue
         end_time = time.perf_counter()
         latencies.append((end_time - start_time) * 1000)  # ms
         if (i + 1) % (iterations // 10 or 1) == 0:
             logger.debug(
-                f"Axis enable/disable iteration {i+1}/{iterations} completed."
+                "Axis enable/disable iteration %d/%d completed.",
+                i + 1,
+                iterations,
             )
         await asyncio.sleep(0.005)  # Slightly longer pause after a cycle
     return latencies
@@ -131,179 +140,44 @@ async def benchmark_short_relative_move(
     """Benchmarks a short relative move and waits for completion."""
     latencies = []
     logger.info(
-        f"Benchmarking Axis short relative move ({move_pulses} pulses, {iterations} iterations)..."
+        "Benchmarking Axis short relative move "
+        "(%d pulses, %d iterations)...",
+        move_pulses,
+        iterations,
     )
     await axis.enable_motor()
-    # Ensure axis is in a known state, e.g., set work mode if necessary
-    # await axis.set_work_mode(const.MODE_SR_VFOC) # Or other suitable serial mode
 
     for i in range(iterations):
-        # Move back and forth to avoid hitting limits and to have a consistent start
         try:
             start_time = time.perf_counter()
             await axis.move_relative_pulses(
                 move_pulses, speed_param=1000, accel_param=150, wait=True
             )
-            # await axis.move_relative_pulses(-move_pulses, speed_param=1000, accel_param=150, wait=True) # Move back
             end_time = time.perf_counter()
             latencies.append((end_time - start_time) * 1000)  # ms
             if (i + 1) % (iterations // 10 or 1) == 0:
                 logger.debug(
-                    f"Axis short move iteration {i+1}/{iterations} completed."
+                    "Axis short move iteration %d/%d completed.",
+                    i + 1,
+                    iterations,
                 )
             await asyncio.sleep(0.01)  # Pause between move cycles
         except exceptions.MKSServoError as e:
-            logger.warning(f"Iteration {i+1}: Axis move error: {e}")
-            await asyncio.sleep(0.1)  # Longer pause on error before retrying
-            # Attempt to re-enable if error might have disabled it
+            logger.warning("Iteration %d: Axis move error: %s", i + 1, e)
+            await asyncio.sleep(0.1)
             try:
                 await axis.enable_motor()
-            except:
-                pass  # Ignore if re-enable fails
+            except Exception:  # pylint: disable=bare-except
+                pass
             continue
         except asyncio.CancelledError:
-            logger.warning(f"Iteration {i+1}: Move cancelled.")
+            logger.warning("Iteration %d: Move cancelled.", i + 1)
             break
-
     return latencies
 
 
-async def run_benchmarks(args: argparse.Namespace):
-    """Main function to set up and run the benchmarks."""
-    log_level_numeric = getattr(logging, args.log_level.upper(), logging.INFO)
-    logging.basicConfig(
-        level=log_level_numeric,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    logger.setLevel(log_level_numeric)  # Set our specific logger level
-
-    if args.use_simulator:
-        can_if = CANInterface(
-            use_simulator=True,
-            simulator_host=args.simulator_host,
-            simulator_port=args.simulator_port,
-        )
-        logger.info(
-            f"Using Simulator. Ensure it's running (e.g., with latency ~{args.simulator_latency_ms}ms)."
-        )
-        # Note: The CANInterface itself doesn't know the simulator's configured latency.
-        # The simulator's internal latency setting is what matters.
-    else:
-        can_if = CANInterface(
-            interface_type=args.can_interface_type,
-            channel=args.can_channel,
-            bitrate=args.can_bitrate,
-            use_simulator=False,
-        )
-        logger.info(
-            f"Using Real Hardware: {args.can_interface_type} on {args.can_channel} @ {args.can_bitrate}bps."
-        )
-
-    try:
-        await can_if.connect()
-        logger.info("CAN Interface connected.")
-    except exceptions.MKSServoError as e:
-        logger.error(f"Failed to connect to CAN interface: {e}")
-        return
-
-    # Use default RotaryKinematics for the axis, steps_per_revolution won't affect raw pulse moves or reads
-    kin = RotaryKinematics(
-        steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION
-    )
-    axis = Axis(
-        can_interface_manager=can_if,
-        motor_can_id=args.motor_can_id,
-        name="BenchmarkAxis",
-        kinematics=kin,
-    )
-
-    try:
-        logger.info(f"Initializing Axis (CAN ID: {args.motor_can_id})...")
-        await axis.initialize(
-            calibrate=False, home=False
-        )  # Basic communication check
-        logger.info("Axis initialized.")
-    except exceptions.MKSServoError as e:
-        logger.error(f"Failed to initialize axis {args.motor_can_id}: {e}")
-        await can_if.disconnect()
-        return
-
-    all_results: dict[str, list[float]] = {}
-    low_level_api = axis._low_level_api  # For direct low-level benchmarks
-
-    try:
-        # --- Run selected benchmarks ---
-        if "read_low_level" in args.benchmarks:
-            all_results["Low-Level Read Position"] = (
-                await benchmark_read_position_low_level(
-                    low_level_api, args.motor_can_id, args.iterations
-                )
-            )
-        if "read_axis" in args.benchmarks:
-            all_results["Axis Read Position (get_current_position_steps)"] = (
-                await benchmark_axis_get_position(axis, args.iterations)
-            )
-        if "enable_disable" in args.benchmarks:
-            all_results["Axis Enable-Disable Cycle"] = (
-                await benchmark_axis_enable_disable(axis, args.iterations)
-            )
-        if "short_move" in args.benchmarks:
-            all_results["Axis Short Relative Move (100 pulses)"] = (
-                await benchmark_short_relative_move(
-                    axis, args.iterations, move_pulses=100
-                )
-            )
-
-        # --- Analysis and Output ---
-        logger.info("\n--- BENCHMARK RESULTS (latencies in ms) ---")
-        for test_name, latencies in all_results.items():
-            if not latencies:
-                logger.info(
-                    f"{test_name}: No data (all iterations failed or benchmark not run)."
-                )
-                continue
-
-            count = len(latencies)
-            mean_lat = statistics.mean(latencies)
-            median_lat = statistics.median(latencies)
-            min_lat = min(latencies)
-            max_lat = max(latencies)
-            std_dev = statistics.stdev(latencies) if count > 1 else 0.0
-
-            logger.info(f"\nResults for: {test_name}")
-            logger.info(f"  Iterations: {count}/{args.iterations}")
-            logger.info(f"  Min     : {min_lat:.3f} ms")
-            logger.info(f"  Max     : {max_lat:.3f} ms")
-            logger.info(f"  Mean    : {mean_lat:.3f} ms")
-            logger.info(f"  Median  : {median_lat:.3f} ms")
-            logger.info(f"  Std.Dev.: {std_dev:.3f} ms")
-            if args.use_simulator:
-                logger.info(
-                    f"  (Simulator Note: Bus latency is configured within the simulator instance, e.g., --latency-ms {args.simulator_latency_ms} for round trip)"
-                )
-
-    except KeyboardInterrupt:
-        logger.info("Benchmark run interrupted by user.")
-    except Exception as e:
-        logger.error(
-            f"An unexpected error occurred during benchmarking: {e}",
-            exc_info=True,
-        )
-    finally:
-        logger.info("Cleaning up and disconnecting CAN interface...")
-        if (
-            axis.is_enabled()
-        ):  # Attempt to disable the motor if it was left enabled
-            try:
-                await axis.disable_motor()
-            except Exception as e:
-                logger.warning(f"Could not disable motor during cleanup: {e}")
-        await can_if.disconnect()
-        logger.info("Benchmarking finished.")
-
-
-def main_cli():
+def _parse_args() -> argparse.Namespace:
+    """Parses command-line arguments."""
     parser = argparse.ArgumentParser(
         description="MKS Servo CAN Command Latency Benchmarker."
     )
@@ -334,18 +208,16 @@ def main_cli():
         "--simulator-latency-ms",
         type=float,
         default=DEFAULT_SIMULATOR_LATENCY_MS,
-        help="Expected simulator round-trip latency (for informational display).",
+        help="Expected simulator round-trip latency (for info).",
     )
-
     parser.add_argument(
         "--can-interface-type",
         default=DEFAULT_CAN_INTERFACE_TYPE,
         help="CAN interface type for python-can.",
     )
     parser.add_argument(
-        "--can-channel",
-        default=DEFAULT_CAN_CHANNEL,
-        help="CAN interface channel.",
+        "--can-channel", default=DEFAULT_CAN_CHANNEL, 
+        help="CAN interface channel."
     )
     parser.add_argument(
         "--can-bitrate",
@@ -353,7 +225,6 @@ def main_cli():
         default=DEFAULT_CAN_BITRATE,
         help="CAN bus bitrate.",
     )
-
     parser.add_argument(
         "--motor-can-id",
         type=int,
@@ -379,28 +250,189 @@ def main_cli():
         choices=["read_low_level", "read_axis", "enable_disable", "short_move"],
         help="Specify which benchmarks to run.",
     )
+    return parser.parse_args()
 
-    args = parser.parse_args()
 
-    # Forcing use_simulator to True if no real hardware args are changed from defaults
-    # This is a bit heuristic, user should explicitly use --no-simulator for hardware.
-    if (
-        args.can_interface_type == DEFAULT_CAN_INTERFACE_TYPE
-        and args.can_channel == DEFAULT_CAN_CHANNEL
-        and not hasattr(args, "no_simulator_explicitly_set")
-    ):  # A way to check if --no-simulator was used
-        if not args.use_simulator and not (
-            args.can_interface_type != DEFAULT_CAN_INTERFACE_TYPE
-            or args.can_channel != DEFAULT_CAN_CHANNEL
-        ):
-            # If still default hardware and --no-simulator wasn't explicitly used, but --use-simulator is false (default state)
-            # This logic is tricky. Better to make --use-simulator explicit or --hardware explicit.
-            # For now, if --no-simulator is not used, and hardware params are default, assume sim.
-            # Let's simplify: if --no-simulator is present, use_simulator becomes False. Otherwise, it's its default/set value.
-            pass
+async def _setup_can_interface(args: argparse.Namespace) -> CANInterface:
+    """Sets up and connects the CAN interface based on arguments."""
+    if args.use_simulator:
+        can_if = CANInterface(
+            use_simulator=True,
+            simulator_host=args.simulator_host,
+            simulator_port=args.simulator_port,
+        )
+        # The C0301 on line 226 was here.
+        logger.info(
+            "Using Simulator. Ensure it's running (e.g., with "
+            "latency ~%.1fms).",
+            args.simulator_latency_ms,
+        )
+    else:
+        can_if = CANInterface(
+            interface_type=args.can_interface_type,
+            channel=args.can_channel,
+            bitrate=args.can_bitrate,
+            use_simulator=False,
+        )
+        logger.info(
+            "Using Real Hardware: %s on %s @ %s bps.",
+            args.can_interface_type,
+            args.can_channel,
+            args.can_bitrate,
+        )
+    try:
+        await can_if.connect()
+        logger.info("CAN Interface connected.")
+        return can_if
+    except exceptions.MKSServoError as e:
+        logger.error("Failed to connect to CAN interface: %s", e)
+        raise
 
-    asyncio.run(run_benchmarks(args))
+
+async def _initialize_axis(
+    can_if: CANInterface, args: argparse.Namespace
+) -> Axis:
+    """Initializes the Axis instance."""
+    kin = RotaryKinematics(
+        steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION
+    )
+    axis = Axis(
+        can_interface_manager=can_if,
+        motor_can_id=args.motor_can_id,
+        name="BenchmarkAxis",
+        kinematics=kin,
+    )
+    try:
+        logger.info("Initializing Axis (CAN ID: %d)...", args.motor_can_id)
+        await axis.initialize(calibrate=False, home=False)
+        logger.info("Axis initialized.")
+        return axis
+    except exceptions.MKSServoError as e:
+        logger.error(
+            "Failed to initialize axis %d: %s", args.motor_can_id, e
+        )
+        raise
+
+
+def _print_results(
+    all_results: dict[str, list[float]], args: argparse.Namespace
+):
+    """Prints the benchmark results."""
+    logger.info("\n--- BENCHMARK RESULTS (latencies in ms) ---")
+    for test_name, latencies in all_results.items():
+        if not latencies:
+            logger.info(
+                "%s: No data (all iterations failed or benchmark not run).",
+                test_name,
+            )
+            continue
+
+        count = len(latencies)
+        mean_lat = statistics.mean(latencies)
+        median_lat = statistics.median(latencies)
+        min_lat = min(latencies)
+        max_lat = max(latencies)
+        std_dev = statistics.stdev(latencies) if count > 1 else 0.0
+
+        logger.info("\nResults for: %s", test_name)
+        logger.info("  Iterations: %d/%d", count, args.iterations)
+        logger.info("  Min     : %.3f ms", min_lat)
+        logger.info("  Max     : %.3f ms", max_lat)
+        logger.info("  Mean    : %.3f ms", mean_lat)
+        logger.info("  Median  : %.3f ms", median_lat)
+        logger.info("  Std.Dev.: %.3f ms", std_dev)
+        if args.use_simulator:
+            logger.info(
+                "  (Simulator Note: Bus latency is configured within the "
+                "simulator instance, e.g., --latency-ms %.1f for round trip)",
+                args.simulator_latency_ms,
+            )
+
+
+async def _execute_selected_benchmarks(
+    axis: Axis, low_level_api: LowLevelAPI, args: argparse.Namespace
+) -> dict[str, list[float]]:
+    """Executes the selected benchmark functions."""
+    all_results: dict[str, list[float]] = {}
+    if "read_low_level" in args.benchmarks:
+        all_results["Low-Level Read Position"] = (
+            await benchmark_read_position_low_level(
+                low_level_api, args.motor_can_id, args.iterations
+            )
+        )
+    if "read_axis" in args.benchmarks:
+        all_results["Axis Read Position (get_current_position_steps)"] = (
+            await benchmark_axis_get_position(axis, args.iterations)
+        )
+    if "enable_disable" in args.benchmarks:
+        all_results["Axis Enable-Disable Cycle"] = (
+            await benchmark_axis_enable_disable(axis, args.iterations)
+        )
+    if "short_move" in args.benchmarks:
+        all_results["Axis Short Relative Move (100 pulses)"] = (
+            await benchmark_short_relative_move(
+                axis, args.iterations, move_pulses=100
+            )
+        )
+    return all_results
+
+
+async def run_benchmarks_main(args: argparse.Namespace):
+    """Main function to set up and run the benchmarks."""
+    log_level_numeric = getattr(logging, args.log_level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=log_level_numeric,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logger.setLevel(log_level_numeric)
+
+    can_if = None
+    axis = None
+    try:
+        can_if = await _setup_can_interface(args)
+        axis = await _initialize_axis(can_if, args)
+
+        # pylint: disable=protected-access
+        # Accessing _low_level_api for direct benchmarking is intentional here
+        # to compare overheads.
+        low_level_api = axis._low_level_api
+
+        all_results = await _execute_selected_benchmarks(
+            axis, low_level_api, args
+        )
+        _print_results(all_results, args)
+
+    except KeyboardInterrupt:
+        logger.info("Benchmark run interrupted by user.")
+    except exceptions.MKSServoError:
+        logger.error("Exiting due to MKS Servo library error.")
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error(
+            "An unexpected error occurred during benchmarking: %s",
+            e,
+            exc_info=True,
+        )
+    finally:
+        logger.info("Cleaning up and disconnecting CAN interface...")
+        if axis and axis.is_enabled():
+            try:
+                await axis.disable_motor()
+            except Exception as e:  # pylint: disable=broad-except
+                logger.warning(
+                    "Could not disable motor during cleanup: %s", e
+                )
+        if can_if:
+            await can_if.disconnect()
+        logger.info("Benchmarking finished.")
+
+
+def main_cli():
+    """Parses arguments and runs the benchmark asynchronous function."""
+    args = _parse_args()
+    asyncio.run(run_benchmarks_main(args))
 
 
 if __name__ == "__main__":
     main_cli()
+    

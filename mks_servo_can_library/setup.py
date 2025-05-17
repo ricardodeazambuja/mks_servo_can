@@ -1,9 +1,7 @@
 # mks_servo_can_project/mks_servo_can_library/setup.py
 import re
-
 import os
-from setuptools import find_packages
-from setuptools import setup
+from setuptools import find_packages, setup
 
 
 def get_version_from_init():
@@ -12,8 +10,8 @@ def get_version_from_init():
         os.path.dirname(__file__), "mks_servo_can", "__init__.py"
     )
     try:
-        with open(init_py_path, "r", encoding="utf-8") as f:
-            version_file_content = f.read()
+        with open(init_py_path, "r", encoding="utf-8") as f_version:
+            version_file_content = f_version.read()
         version_match = re.search(
             r"^__version__\s*=\s*['\"]([^'\"]*)['\"]",
             version_file_content,
@@ -24,19 +22,21 @@ def get_version_from_init():
         raise RuntimeError(
             f"Unable to find __version__ string in {init_py_path}."
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         raise RuntimeError(
-            f"{init_py_path} not found. Ensure you are in the correct directory."
-        )
+            f"{init_py_path} not found. Ensure you are in the correct "
+            f"directory."
+        ) from exc
 
 
 # Attempt to read long description from root README.md
-# Adjust the path if your setup.py is not in 'mks_servo_can_library' relative to the root README
+# Adjust the path if your setup.py is not in 'mks_servo_can_library'
+# relative to the root README
 try:
     with open(
         "../README.md", "r", encoding="utf-8"
-    ) as f:  # Path relative to this setup.py
-        long_description = f.read()
+    ) as readme_file:  # Path relative to this setup.py
+        long_description = readme_file.read()
 except FileNotFoundError:
     # Fallback if README.md is not found at the expected relative path
     long_description = (
@@ -47,16 +47,17 @@ except FileNotFoundError:
 setup(
     name="mks-servo-can",
     version=get_version_from_init(),  # Use the new function to get version
-    author="[Your Name/Organization]",  # Please update this
-    author_email="[your.email@example.com]",  # Please update this
-    description="Python library to control MKS SERVO42D/57D motors via CAN bus.",
+    author="Ricardo de Azambuja",  # Please update this
+    description="Python library to control MKS SERVO42D/57D motors "
+    "via CAN bus.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://docs.github.com/en/get-started/start-your-journey/uploading-a-project-to-github",  # Please update this
+    url="https://github.com/ricardodeazambuja/mks_servo_can",
     packages=find_packages(
         where="."
     ),  # Finds mks_servo_can and mks_servo_can.kinematics
-    # package_dir={'': '.'}, # Usually not needed if setup.py is in the same dir as the main package folder
+    # package_dir={'': '.'}, # Usually not needed if setup.py is in the
+    # same dir as the main package folder
     classifiers=[
         "Development Status :: 3 - Alpha",  # Or Beta, Production/Stable
         "Intended Audience :: Developers",
@@ -95,9 +96,11 @@ setup(
         ],
     },
     project_urls={
-        "Bug Reports": "https://www.nuclino.com/solutions/issue-tracking-software",  # Please update this
-        "Source": "https://www.techtarget.com/searchapparchitecture/definition/source-code",  # Please update this
-        # "Documentation": "https://www.pwc.com/mt/en/publications/transfer-pricing-documentation.html"
+        "Bug Reports": "https://github.com/ricardodeazambuja/mks_servo_can",
+        "Source": "https://github.com/ricardodeazambuja/mks_servo_can",
+        "Documentation": "https://github.com/ricardodeazambuja/"
+        "mks_servo_can/docs",
     },
-    keywords="mks servo canbus motor control robotics automation servo42d servo57d asyncio",
+    keywords="mks servo canbus motor control robotics automation servo42d "
+    "servo57d asyncio",
 )
