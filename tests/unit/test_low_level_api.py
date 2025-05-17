@@ -20,7 +20,7 @@ except ImportError:
             self.arbitration_id = arbitration_id
             self.data = data if data is not None else b''
             self.is_extended_id = is_extended_id
-            self.dlc = dlc if data is None else len(data)
+            self.dlc = dlc if data is None else len(self.data)
             self.timestamp = 0.0 # Added for completeness if used by SUT
             self.channel = None
             self.is_rx = True
@@ -157,9 +157,10 @@ class TestLowLevelAPISets:
     async def test_set_work_mode_failure_response(self, low_level_api, mock_can_interface):
         can_id = 0x01
         command_code = const.CMD_SET_WORK_MODE
-        mode_to_set = const.MODE_CR_OPEN
+        mode_to_set = const.MODE_CR_OPEN # This is 0
+        status_failure = const.STATUS_FAILURE # This is 0
 
-        response_payload_data = [command_code, const.STATUS_FAILURE] 
+        response_payload_data = [command_code, status_failure] 
         response_crc = (can_id + sum(response_payload_data)) & 0xFF
         full_response_data_bytes = bytes(response_payload_data + [response_crc])
 
@@ -167,10 +168,18 @@ class TestLowLevelAPISets:
             arbitration_id=can_id, data=full_response_data_bytes, dlc=len(full_response_data_bytes)
         )
         
-        # Corrected regex to match the error raised by _send_command_and_get_response
-        # when the status byte itself is a failure.
-        expected_error_msg = f"Command {command_code:02X} to ID {can_id:03X} failed with status 00."
-        with pytest.raises(MotorError, match=expected_error_msg):
+        # Corrected expected error message format to match MotorError.__str__
+        # The message from LowLevelAPI.set_work_mode is:
+        # f"Set work mode to {mode} failed for CAN ID {can_id}. Status: {response.data[1]}"
+        # The MotorError then appends " - CAN ID: {self.can_id} - Error Code: {self.error_code}"
+        expected_error_msg_regex = (
+            f"Set work mode to {mode_to_set} failed for CAN ID {can_id}\\. "
+            f"Status: {status_failure} - CAN ID: {can_id} - Error Code: {status_failure}"
+        )
+        # Escape the '.' for regex. For this specific string, it's simple enough.
+        # If messages become more complex, more robust regex construction might be needed.
+
+        with pytest.raises(MotorError, match=expected_error_msg_regex):
             await low_level_api.set_work_mode(can_id, mode_to_set)
 
     async def test_set_work_mode_invalid_param(self, low_level_api):

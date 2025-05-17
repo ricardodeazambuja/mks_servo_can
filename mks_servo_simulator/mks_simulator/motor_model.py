@@ -45,6 +45,7 @@ except ImportError:
         CMD_READ_ENCODER_ADDITION = 0x31
         CMD_READ_MOTOR_SPEED_RPM = 0x32
         CMD_READ_EN_PIN_STATUS = 0x3A # Added missing constant
+        CMD_SET_CURRENT_AXIS_TO_ZERO = 0x92 # Added for fix
         CMD_QUERY_MOTOR_STATUS = 0xF1
         CMD_SET_WORK_MODE = 0x82
         CMD_ENABLE_MOTOR = 0xF3
@@ -268,7 +269,6 @@ class SimulatedMotor:
         elif command_code == const.CMD_READ_MOTOR_SPEED_RPM:
             response_data_for_payload = list(struct.pack('<h', int(round(self.current_rpm))))
         elif command_code == const.CMD_READ_EN_PIN_STATUS: # Handle 0x3A
-            # Response: [0x3A, enable_status (00 or 01), CRC]
             enable_status_byte = 0x01 if self.is_enabled else 0x00
             response_data_for_payload = [enable_status_byte]
             logger.debug(f"Motor {self.can_id}: Responding to CMD_READ_EN_PIN_STATUS (0x3A) with status: {enable_status_byte}")
@@ -279,6 +279,11 @@ class SimulatedMotor:
                 new_mode = data_from_payload[0]
                 if 0 <= new_mode <= 5: self.work_mode = new_mode; logger.info(f"Motor {self.can_id}: Work mode set to {self.work_mode}"); return self._generate_simple_status_response(command_code, True)
             return self._generate_simple_status_response(command_code, False)
+        elif command_code == const.CMD_SET_CURRENT_AXIS_TO_ZERO: # Command 0x92
+            logger.info(f"Motor {self.can_id}: Setting current position to zero (CMD 0x92).")
+            self.position_steps = 0.0
+            self.is_homed = True # Setting position to zero usually implies a known reference
+            return self._generate_simple_status_response(command_code, True)
         elif command_code == const.CMD_ENABLE_MOTOR:
             if len(data_from_payload) >= 1:
                 self.is_enabled = (data_from_payload[0] == 0x01)
@@ -293,8 +298,6 @@ class SimulatedMotor:
                 byte2, byte3, byte4 = data_from_payload[0], data_from_payload[1], data_from_payload[2]
                 mks_speed_param = ((byte2 & 0x0F) << 8) | byte3; mks_accel_param = byte4
                 calculated_target_rpm = mks_speed_param_to_rpm(mks_speed_param, self.work_mode)
-                # Manual for F6: byte2 b7=dir (0=CCW, 1=CW).
-                # Let's define Sim: Positive RPM = CCW, Negative RPM = CW
                 self.target_rpm = calculated_target_rpm if (byte2 & 0x80) == 0 else -calculated_target_rpm
                 self.target_accel_mks = mks_accel_param; self.target_position_steps = None
                 if self._current_move_task and not self._current_move_task.done(): self._current_move_task.cancel("New speed command")
