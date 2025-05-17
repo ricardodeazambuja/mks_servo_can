@@ -13,8 +13,8 @@ from .motor_model import SimulatedMotor
 
 # CRC and constants might be needed if we re-validate here, but motor_model handles it.
 try:
-    from mks_servo_can_library.mks_servo_can import constants as const  # For potential use
-    from mks_servo_can_library.mks_servo_can.crc import \
+    from mks_servo_can import constants as const  # For potential use
+    from mks_servo_can.crc import \
         calculate_crc  # For potential use
 except ImportError:
     pass  # Handled in motor_model for its own needs

@@ -12,19 +12,19 @@ import time
 
 # Attempt to import from the main library
 try:
-    from mks_servo_can_library.mks_servo_can import constants as const_module
-    from mks_servo_can_library.mks_servo_can.crc import calculate_crc
-    from mks_servo_can_library.mks_servo_can.exceptions import LimitError
-    from mks_servo_can_library.mks_servo_can.exceptions import MKSServoError
-    from mks_servo_can_library.mks_servo_can.exceptions import ParameterError
+    from mks_servo_can import constants as const_module
+    from mks_servo_can.crc import calculate_crc
+    from mks_servo_can.exceptions import LimitError
+    from mks_servo_can.exceptions import MKSServoError
+    from mks_servo_can.exceptions import ParameterError
 
     const = const_module
     print(
-        f"SIMULATOR: Successfully imported constants from mks_servo_can_library (e.g., const.MODE_SR_VFOC={getattr(const, 'MODE_SR_VFOC', 'Not Found')})."
+        f"SIMULATOR: Successfully imported constants from mks_servo_can (e.g., const.MODE_SR_VFOC={getattr(const, 'MODE_SR_VFOC', 'Not Found')})."
     )
 except ImportError:
     print(
-        "SIMULATOR WARNING: Could not import from mks_servo_can_library. Using placeholder constants/crc."
+        "SIMULATOR WARNING: Could not import from  Using placeholder constants/crc."
     )
 
     class _ConstPlaceholder:

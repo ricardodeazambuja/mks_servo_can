@@ -7,7 +7,7 @@ displacement of an eccentrically driven output.
 """
 import math
 
-from mks_servo_can_library.mks_servo_can.exceptions import KinematicsError
+from mks_servo_can.exceptions import KinematicsError
 
 from .base_kinematics import Kinematics
 

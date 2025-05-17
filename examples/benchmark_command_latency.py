@@ -14,12 +14,12 @@ import logging
 import time
 
 # Assuming the library is installed or in PYTHONPATH
-from mks_servo_can_library.mks_servo_can import Axis
-from mks_servo_can_library.mks_servo_can import CANInterface
-from mks_servo_can_library.mks_servo_can import const
-from mks_servo_can_library.mks_servo_can import exceptions
-from mks_servo_can_library.mks_servo_can import RotaryKinematics
-from mks_servo_can_library.mks_servo_can import LowLevelAPI
+from mks_servo_can import Axis
+from mks_servo_can import CANInterface
+from mks_servo_can import const
+from mks_servo_can import exceptions
+from mks_servo_can import RotaryKinematics
+from mks_servo_can import LowLevelAPI
 
 # --- Configuration ---
 # These can be overridden by command-line arguments

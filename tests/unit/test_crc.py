@@ -1,9 +1,9 @@
 # mks_servo_can_project/tests/unit/test_crc.py
 import pytest
 
-from mks_servo_can_library.mks_servo_can.crc import calculate_crc
-from mks_servo_can_library.mks_servo_can.crc import verify_crc
-from mks_servo_can_library.mks_servo_can.exceptions import ParameterError
+from mks_servo_can.crc import calculate_crc
+from mks_servo_can.crc import verify_crc
+from mks_servo_can.exceptions import ParameterError
 
 # Test cases from MKS SERVO42&57D_CAN User Manual V1.0.6.pdf
 # Page 14: Example: command "01 30 CRC" -> CRC = (0x01 + 0x30) & 0xFF = 0x31

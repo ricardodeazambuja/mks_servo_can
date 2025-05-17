@@ -5,11 +5,11 @@ import pytest_asyncio  # For async fixtures
 import subprocess
 import time
 
-from mks_servo_can_library.mks_servo_can import Axis
-from mks_servo_can_library.mks_servo_can import CANInterface
-from mks_servo_can_library.mks_servo_can import const
-from mks_servo_can_library.mks_servo_can import exceptions
-from mks_servo_can_library.mks_servo_can import LinearKinematics
+from mks_servo_can import Axis
+from mks_servo_can import CANInterface
+from mks_servo_can import const
+from mks_servo_can import exceptions
+from mks_servo_can import LinearKinematics
 
 SIMULATOR_HOST = "localhost"
 SIMULATOR_PORT = 6789

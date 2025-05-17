@@ -13,7 +13,7 @@ from .virtual_can_bus import VirtualCANBus
 
 # Assuming the main library's constants are accessible for defaults
 try:
-    from mks_servo_can_library.mks_servo_can import constants as lib_const
+    from mks_servo_can import constants as lib_const
 except ImportError:
     # Minimal fallback if library not in path
     class lib_const:  # type: ignore

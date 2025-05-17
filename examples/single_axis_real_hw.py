@@ -6,11 +6,11 @@ hardware interface.
 import asyncio
 import logging
 
-from mks_servo_can_library.mks_servo_can import Axis
-from mks_servo_can_library.mks_servo_can import CANInterface
-from mks_servo_can_library.mks_servo_can import const
-from mks_servo_can_library.mks_servo_can import exceptions
-from mks_servo_can_library.mks_servo_can import RotaryKinematics
+from mks_servo_can import Axis
+from mks_servo_can import CANInterface
+from mks_servo_can import const
+from mks_servo_can import exceptions
+from mks_servo_can import RotaryKinematics
 
 # Configure logging
 logging.basicConfig(

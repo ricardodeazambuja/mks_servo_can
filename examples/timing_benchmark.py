@@ -9,12 +9,12 @@ import asyncio
 import logging
 import time
 
-from mks_servo_can_library.mks_servo_can import Axis
-from mks_servo_can_library.mks_servo_can import CANInterface
-from mks_servo_can_library.mks_servo_can import exceptions
-from mks_servo_can_library.mks_servo_can import const
+from mks_servo_can import Axis
+from mks_servo_can import CANInterface
+from mks_servo_can import exceptions
+from mks_servo_can import const
 # Correct import for RotaryKinematics:
-from mks_servo_can_library.mks_servo_can import RotaryKinematics
+from mks_servo_can import RotaryKinematics
 
 # --- Configuration ---
 USE_SIMULATOR = True  # Set to False for real hardware

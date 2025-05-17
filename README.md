@@ -150,7 +150,7 @@ Refer to the scripts in the `examples/` directory for complete, runnable code:
 **Conceptual Snippet (connecting to the simulator):**
 ```python
 import asyncio
-from mks_servo_can_library.mks_servo_can import (
+from mks_servo_can import (
     CANInterface, Axis, RotaryKinematics, const, exceptions
 )
 

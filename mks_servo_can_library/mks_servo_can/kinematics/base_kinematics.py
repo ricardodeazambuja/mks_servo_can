@@ -5,7 +5,7 @@ Base class for kinematic transformations.
 from abc import ABC
 from abc import abstractmethod
 
-from mks_servo_can_library.mks_servo_can.exceptions import KinematicsError
+from mks_servo_can.exceptions import KinematicsError
 
 
 class Kinematics(ABC):

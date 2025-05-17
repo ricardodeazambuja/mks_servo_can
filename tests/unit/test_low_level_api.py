@@ -3,15 +3,15 @@ import pytest
 import struct
 from unittest.mock import AsyncMock
 
-from mks_servo_can_library.mks_servo_can import constants as const
-from mks_servo_can_library.mks_servo_can.can_interface import CANInterface
-from mks_servo_can_library.mks_servo_can.exceptions import CalibrationError
-from mks_servo_can_library.mks_servo_can.exceptions import CommandError
-from mks_servo_can_library.mks_servo_can.exceptions import CommunicationError
-from mks_servo_can_library.mks_servo_can.exceptions import CRCError
-from mks_servo_can_library.mks_servo_can.exceptions import MotorError
-from mks_servo_can_library.mks_servo_can.exceptions import ParameterError
-from mks_servo_can_library.mks_servo_can.low_level_api import LowLevelAPI
+from mks_servo_can import constants as const
+from mks_servo_can.can_interface import CANInterface
+from mks_servo_can.exceptions import CalibrationError
+from mks_servo_can.exceptions import CommandError
+from mks_servo_can.exceptions import CommunicationError
+from mks_servo_can.exceptions import CRCError
+from mks_servo_can.exceptions import MotorError
+from mks_servo_can.exceptions import ParameterError
+from mks_servo_can.low_level_api import LowLevelAPI
 
 try:
     from can import Message as CanMessage

@@ -3,13 +3,13 @@ import math
 
 import pytest
 
-from mks_servo_can_library.mks_servo_can.constants import \
+from mks_servo_can.constants import \
     ENCODER_PULSES_PER_REVOLUTION
-from mks_servo_can_library.mks_servo_can.exceptions import KinematicsError
-from mks_servo_can_library.mks_servo_can.kinematics import EccentricKinematics
-from mks_servo_can_library.mks_servo_can.kinematics import Kinematics
-from mks_servo_can_library.mks_servo_can.kinematics import LinearKinematics
-from mks_servo_can_library.mks_servo_can.kinematics import RotaryKinematics
+from mks_servo_can.exceptions import KinematicsError
+from mks_servo_can.kinematics import EccentricKinematics
+from mks_servo_can.kinematics import Kinematics
+from mks_servo_can.kinematics import LinearKinematics
+from mks_servo_can.kinematics import RotaryKinematics
 
 
 class TestBaseKinematics:

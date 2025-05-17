@@ -3,9 +3,9 @@
 Linear kinematics: converts between linear distance (e.g., mm) and motor steps.
 """
 
-from mks_servo_can_library.mks_servo_can.constants import \
+from mks_servo_can.constants import \
     MAX_RPM_VFOC_MODE  # Default max RPM
-from mks_servo_can_library.mks_servo_can.exceptions import KinematicsError
+from mks_servo_can.exceptions import KinematicsError
 
 from .base_kinematics import Kinematics
 

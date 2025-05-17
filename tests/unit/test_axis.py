@@ -5,15 +5,15 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-from mks_servo_can_library.mks_servo_can import constants as const
-from mks_servo_can_library.mks_servo_can.axis import Axis
-from mks_servo_can_library.mks_servo_can.can_interface import CANInterface
-from mks_servo_can_library.mks_servo_can.exceptions import CalibrationError
-from mks_servo_can_library.mks_servo_can.exceptions import CommunicationError
-from mks_servo_can_library.mks_servo_can.exceptions import LimitError
-from mks_servo_can_library.mks_servo_can.exceptions import ParameterError
-from mks_servo_can_library.mks_servo_can.kinematics import RotaryKinematics
-from mks_servo_can_library.mks_servo_can.low_level_api import LowLevelAPI
+from mks_servo_can import constants as const
+from mks_servo_can.axis import Axis
+from mks_servo_can.can_interface import CANInterface
+from mks_servo_can.exceptions import CalibrationError
+from mks_servo_can.exceptions import CommunicationError
+from mks_servo_can.exceptions import LimitError
+from mks_servo_can.exceptions import ParameterError
+from mks_servo_can.kinematics import RotaryKinematics
+from mks_servo_can.low_level_api import LowLevelAPI
 
 try:
     from can import Message as CanMessage
@@ -68,7 +68,7 @@ def axis_instance(
     mock_can_interface_for_axis: MagicMock, mock_low_level_api: AsyncMock
 ):  # Type hint for mock_can_interface
     with patch(
-        "mks_servo_can_library.mks_servo_can.axis.LowLevelAPI",
+        "mks_servo_can.axis.LowLevelAPI",
         return_value=mock_low_level_api,
     ):
         kin = RotaryKinematics(
@@ -321,7 +321,7 @@ class TestAxisMovement:
 
         # Patch the timeout constant used in Axis._execute_move for this test
         with patch(
-            "mks_servo_can_library.mks_servo_can.axis.const.CAN_TIMEOUT_SECONDS",
+            "mks_servo_can.axis.const.CAN_TIMEOUT_SECONDS",
             0.001,
         ):  # Very short timeout
             with pytest.raises(
