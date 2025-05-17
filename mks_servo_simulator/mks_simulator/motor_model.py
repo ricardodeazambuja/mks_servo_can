@@ -24,7 +24,7 @@ try:
     )
 except ImportError:
     print(
-        "SIMULATOR WARNING: Could not import from  Using placeholder constants/crc."
+        "SIMULATOR WARNING: Could not import from mks_servo_can. Using placeholder constants/crc."
     )
 
     class _ConstPlaceholder:
@@ -85,7 +85,7 @@ except ImportError:
         pass
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # Resolves to mks_simulator.motor_model
 SIM_TIME_STEP_MS = 10
 SIM_MAX_SPEED_PARAM = 3000
 SIM_MAX_ACCEL_PARAM = 255
@@ -175,7 +175,7 @@ class SimulatedMotor:
 
     async def _send_completion_if_callback(
         self, command_code: Optional[int], status_byte: int
-    ):  # Made command_code optional
+    ):
         if self._send_completion_callback and command_code is not None:
             logger.debug(
                 f"Motor {self.can_id}: Sending async completion for CMD {command_code:02X} with status {status_byte:02X}"
@@ -183,8 +183,6 @@ class SimulatedMotor:
             _id, response_can_payload = self._generate_response(
                 command_code, [status_byte]
             )
-            # Ensure the callback is awaited if it's an async function that returns a task
-            # For now, just create_task as before.
             self._loop.create_task(
                 self._send_completion_callback(
                     self.can_id, response_can_payload
@@ -303,25 +301,21 @@ class SimulatedMotor:
                         self.target_position_steps = None
 
             if self.target_position_steps is not None:
-                is_moving_positive = self.current_rpm > 0
-                is_moving_negative = self.current_rpm < 0
+                is_moving_positive = self.current_rpm > 0 # This was previously checking target_rpm
+                is_moving_negative = self.current_rpm < 0 # This was previously checking target_rpm
+
                 target_reached = False
-                if (
-                    is_moving_positive
-                    and self.position_steps >= self.target_position_steps
-                ):
+
+                # If moving towards target and close enough or overshot
+                if is_moving_positive and self.position_steps >= self.target_position_steps:
                     target_reached = True
-                elif (
-                    is_moving_negative
-                    and self.position_steps <= self.target_position_steps
-                ):
+                elif is_moving_negative and self.position_steps <= self.target_position_steps:
                     target_reached = True
-                elif (
-                    abs(self.current_rpm) < 0.1
-                    and abs(self.position_steps - self.target_position_steps)
-                    < 1.0
-                ):
+                # If very close and barely moving (or not moving at all)
+                elif abs(self.position_steps - self.target_position_steps) < 1.0 and abs(self.current_rpm) < 0.1 :
                     target_reached = True
+
+
                 if target_reached:
                     logger.info(
                         f"Motor {self.can_id}: Target position {self.target_position_steps:.2f} reached. Current: {self.position_steps:.2f}"
@@ -353,19 +347,21 @@ class SimulatedMotor:
             )
             await self._send_completion_if_callback(
                 self._current_move_command_code, const.POS_RUN_FAIL
-            )  # Fail previous
+            )
             self._current_move_task.cancel("Superseded by new move command")
 
         self.target_position_steps = target_pos_abs_steps
         delta_pos = target_pos_abs_steps - self.position_steps
-        if abs(delta_pos) < 0.5:
+        if abs(delta_pos) < 0.5: # If already very close, consider it done
             logger.info(
-                f"Motor {self.can_id}: Already at target position {target_pos_abs_steps:.2f}."
+                f"Motor {self.can_id}: Already at target position {target_pos_abs_steps:.2f} (or very close)."
             )
+            self.position_steps = target_pos_abs_steps # Snap to target
             self.current_rpm = 0.0
             self.target_rpm = 0.0
             self.motor_status_code = const.MOTOR_STATUS_STOPPED
-            self.target_position_steps = None
+            self.target_position_steps = None # Clear target
+            # Send POS_RUN_COMPLETE for this command
             await self._send_completion_if_callback(
                 command_code, const.POS_RUN_COMPLETE
             )
@@ -382,44 +378,53 @@ class SimulatedMotor:
             if delta_pos > 0
             else -target_speed_rpm_magnitude
         )
+        # If target RPM is zero but we need to move, set a minimal speed
+        if abs(self.target_rpm) < 0.01 and abs(delta_pos) >= 0.5:
+            logger.warning(f"Motor {self.can_id}: Calculated target RPM is zero for a non-zero move. Using minimal RPM.")
+            min_rpm_for_move = 1.0 # Or some other small default
+            self.target_rpm = min_rpm_for_move if delta_pos > 0 else -min_rpm_for_move
+
         self.target_accel_mks = accel_mks
         self._current_move_command_code = command_code
         self._current_move_task = self._loop.create_future()
 
         distance = abs(delta_pos)
-        avg_speed_rpm = (
-            target_speed_rpm_magnitude / 2.0
-            if target_speed_rpm_magnitude > 0
-            else 1.0
-        )
-        avg_speed_steps_per_sec = (
-            avg_speed_rpm / 60.0
-        ) * self.steps_per_rev_encoder
-        est_duration = 1.0
-        if avg_speed_steps_per_sec > 0:
-            est_duration = (distance / avg_speed_steps_per_sec) + 1.0
+        avg_speed_rpm_calc = abs(self.target_rpm) / 2.0 if abs(self.target_rpm) > 0 else 1.0
+
+        est_duration = 1.0 # Default minimum duration
+        if avg_speed_rpm_calc > 0:
+            avg_speed_steps_per_sec = (
+                avg_speed_rpm_calc / 60.0
+            ) * self.steps_per_rev_encoder
+            if avg_speed_steps_per_sec > 0:
+                 est_duration = (distance / avg_speed_steps_per_sec) + 1.0 # Add buffer
+
         logger.info(
-            f"Motor {self.can_id}: Positional move to {target_pos_abs_steps:.2f} (delta: {delta_pos:.2f}) initiated. Target RPM: {self.target_rpm:.2f}. Est. duration: {est_duration:.2f}s"
+            f"Motor {self.can_id}: Positional move to {target_pos_abs_steps:.2f} (delta: {delta_pos:.2f}) initiated. Target RPM: {self.target_rpm:.2f}, AccelP: {self.target_accel_mks}. Est. duration: {est_duration:.2f}s"
         )
 
         try:
             await asyncio.wait_for(
-                self._current_move_task, timeout=est_duration + 2.0
+                self._current_move_task, timeout=est_duration + 2.0 # Increased buffer for timeout
             )
         except asyncio.TimeoutError:
             logger.warning(
                 f"Motor {self.can_id}: Positional move future timed out (sim). Current: {self.position_steps:.2f}, Target: {self.target_position_steps}"
             )
-            if self.target_position_steps is not None:
+            if self.target_position_steps is not None: # If still targeting a position
                 await self._send_completion_if_callback(
                     self._current_move_command_code, const.POS_RUN_FAIL
                 )
                 self.target_position_steps = None
-                self.target_rpm = 0.0
+                self.target_rpm = 0.0 # Stop the motor
+                self.current_rpm = 0.0
         except asyncio.CancelledError:
             logger.info(
                 f"Motor {self.can_id}: Positional move future cancelled."
             )
+            # If cancelled, it means a new command superseded or sim is stopping.
+            # Don't send POS_RUN_FAIL unless it's a true failure.
+            # The new command will handle its own responses.
         except Exception as e:
             logger.error(
                 f"Motor {self.can_id}: Exception in positional move future: {e}"
@@ -430,20 +435,15 @@ class SimulatedMotor:
                 )
                 self.target_position_steps = None
                 self.target_rpm = 0.0
+                self.current_rpm = 0.0
         finally:
-            if (
-                self._current_move_task
-                and self._current_move_task.done()
-                or (
-                    self._current_move_task
-                    and self._current_move_task.cancelled()
-                )
-            ):  # Also clear if cancelled
-                self._current_move_command_code = (
-                    None  # Clear only if this command truly finished/cancelled
-                )
-            # Do not nullify _current_move_task here if it might be awaited by another part.
-            # It's better if the task that creates it also clears its reference once done.
+            # Clear current_move_command_code only if this specific command's future is resolved/cancelled
+            # and not because a new command started (which would set its own _current_move_command_code)
+            if self._current_move_task and (self._current_move_task.done() or self._current_move_task.cancelled()):
+                 # Check if the command code matches the one that just finished/cancelled
+                if self._current_move_command_code == command_code:
+                    self._current_move_command_code = None
+
 
     def process_command(
         self,
@@ -453,6 +453,9 @@ class SimulatedMotor:
     ) -> Optional[Tuple[int, bytes]]:
         self._send_completion_callback = send_completion_callback
         response_data_for_payload: Optional[List[int]] = None
+
+        # Add initial log for received command to process_command
+        logger.info(f"Motor {self.can_id}: Processing CMD 0x{command_code:02X}, Data: {data_from_payload.hex()}")
 
         if command_code == const.CMD_READ_ENCODER_ADDITION:
             pos_bytes = bytearray(8)
@@ -464,7 +467,7 @@ class SimulatedMotor:
             response_data_for_payload = list(
                 struct.pack("<h", int(round(self.current_rpm)))
             )
-        elif command_code == const.CMD_READ_EN_PIN_STATUS:  # Handle 0x3A
+        elif command_code == const.CMD_READ_EN_PIN_STATUS:
             enable_status_byte = 0x01 if self.is_enabled else 0x00
             response_data_for_payload = [enable_status_byte]
             logger.debug(
@@ -484,28 +487,31 @@ class SimulatedMotor:
                         command_code, True
                     )
             return self._generate_simple_status_response(command_code, False)
-        elif command_code == const.CMD_SET_CURRENT_AXIS_TO_ZERO:  # Command 0x92
+        elif command_code == const.CMD_SET_CURRENT_AXIS_TO_ZERO:
             logger.info(
                 f"Motor {self.can_id}: Setting current position to zero (CMD 0x92)."
             )
             self.position_steps = 0.0
-            self.is_homed = True  # Setting position to zero usually implies a known reference
+            self.is_homed = True
             return self._generate_simple_status_response(command_code, True)
         elif command_code == const.CMD_ENABLE_MOTOR:
             if len(data_from_payload) >= 1:
                 self.is_enabled = data_from_payload[0] == 0x01
-                if not self.is_enabled:
+                if not self.is_enabled: # If disabling
                     self.current_rpm = 0.0
                     self.target_rpm = 0.0
-                if (
-                    self._current_move_task
-                    and not self._current_move_task.done()
-                    and not self.is_enabled
-                ):
-                    self._current_move_task.cancel("Motor disabled during move")
-                self.target_position_steps = (
-                    None if not self.is_enabled else self.target_position_steps
-                )
+                    self.motor_status_code = const.MOTOR_STATUS_STOPPED
+                    if ( # If a move was active, cancel it and send fail status
+                        self._current_move_task
+                        and not self._current_move_task.done()
+                    ):
+                        logger.warning(f"Motor {self.can_id}: Move cancelled due to disable command.")
+                        self._current_move_task.cancel("Motor disabled during move")
+                        # Send POS_RUN_FAIL for the interrupted move
+                        # This requires _current_move_command_code to be set
+                        if self._current_move_command_code is not None:
+                             self._loop.create_task(self._send_completion_if_callback(self._current_move_command_code, const.POS_RUN_FAIL))
+                        self.target_position_steps = None # Clear target
                 logger.info(
                     f"Motor {self.can_id}: Enable set to {self.is_enabled}"
                 )
@@ -525,16 +531,16 @@ class SimulatedMotor:
                 )
                 self.target_rpm = (
                     calculated_target_rpm
-                    if (byte2 & 0x80) == 0
+                    if (byte2 & 0x80) == 0 # Bit 7 is direction: 0=CCW (positive RPM), 1=CW (negative RPM)
                     else -calculated_target_rpm
                 )
                 self.target_accel_mks = mks_accel_param
-                self.target_position_steps = None
+                self.target_position_steps = None # Speed mode, no fixed target position
                 if (
                     self._current_move_task
                     and not self._current_move_task.done()
                 ):
-                    self._current_move_task.cancel("New speed command")
+                    self._current_move_task.cancel("New speed command superseded positional move")
                 logger.info(
                     f"Motor {self.can_id}: Speed mode. Target RPM: {self.target_rpm:.2f}, Accel Param: {self.target_accel_mks}"
                 )
@@ -548,6 +554,7 @@ class SimulatedMotor:
             const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS,
             const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
         ]:
+            logger.info(f"Motor {self.can_id}: Entering positional move processing for CMD 0x{command_code:02X}")
             target_pos_abs_final: Optional[float] = None
             mks_speed_val: int = 0
             mks_accel_val: int = 0
@@ -560,9 +567,9 @@ class SimulatedMotor:
                             data_from_payload[1],
                             data_from_payload[2],
                         )
-                        pB = bytes(data_from_payload[3:6]) + b"\x00"
-                        nP = struct.unpack("<I", pB)[0]
-                        is_ccw = (b2 & 0x80) == 0
+                        pB = bytes(data_from_payload[3:6]) + b"\x00" # ensure 4 bytes for unpack
+                        nP = struct.unpack("<I", pB)[0] & 0xFFFFFF # mask to 24-bit
+                        is_ccw = (b2 & 0x80) == 0 # Manual: b7=dir (0=CCW, 1=CW).
                         mks_speed_val = ((b2 & 0x0F) << 8) | b3
                         mks_accel_val = b4
                         delta = float(nP) if is_ccw else -float(nP)
@@ -577,54 +584,41 @@ class SimulatedMotor:
                         )[0]
                         mks_accel_val = data_from_payload[2]
                         apB = bytes(data_from_payload[3:6])
-                        if apB[2] & 0x80:
-                            val_u = apB[0] | (apB[1] << 8) | (apB[2] << 16)
-                            target_pos_abs_final = float(val_u - (1 << 24))
+                        val_u = apB[0] | (apB[1] << 8) | (apB[2] << 16) # Unpack as uint24
+                        if val_u & 0x800000: # Check sign bit for int24
+                            target_pos_abs_final = float(val_u - (1 << 24)) # Convert to signed
                         else:
-                            target_pos_abs_final = float(
-                                struct.unpack("<I", apB + b"\x00")[0] & 0xFFFFFF
-                            )
+                            target_pos_abs_final = float(val_u)
                         parsed_ok = True
-                elif command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS:
-                    if len(data_from_payload) >= 6:
-                        mks_speed_val = struct.unpack(
-                            "<H", bytes(data_from_payload[0:2])
-                        )[0]
+                # Placeholder for AXIS modes, requires more complex logic if pulses != steps_per_rev
+                elif command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS: # Assuming axis units are steps for now
+                     if len(data_from_payload) >= 6:
+                        mks_speed_val = struct.unpack("<H", bytes(data_from_payload[0:2]))[0]
                         mks_accel_val = data_from_payload[2]
                         raB = bytes(data_from_payload[3:6])
-                        val_s24 = 0.0
-                        if raB[2] & 0x80:
-                            val_u = raB[0] | (raB[1] << 8) | (raB[2] << 16)
-                            val_s24 = float(val_u - (1 << 24))
-                        else:
-                            val_s24 = float(
-                                struct.unpack("<I", raB + b"\x00")[0] & 0xFFFFFF
-                            )
-                        target_pos_abs_final = self.position_steps + val_s24
+                        val_u = raB[0] | (raB[1] << 8) | (raB[2] << 16)
+                        delta_s24 = float(val_u - (1 << 24)) if val_u & 0x800000 else float(val_u)
+                        target_pos_abs_final = self.position_steps + delta_s24
                         parsed_ok = True
-                elif command_code == const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS:
+                elif command_code == const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS: # Assuming axis units are steps
                     if len(data_from_payload) >= 6:
-                        mks_speed_val = struct.unpack(
-                            "<H", bytes(data_from_payload[0:2])
-                        )[0]
+                        mks_speed_val = struct.unpack("<H", bytes(data_from_payload[0:2]))[0]
                         mks_accel_val = data_from_payload[2]
                         aaB = bytes(data_from_payload[3:6])
-                        if aaB[2] & 0x80:
-                            val_u = aaB[0] | (aaB[1] << 8) | (aaB[2] << 16)
-                            target_pos_abs_final = float(val_u - (1 << 24))
-                        else:
-                            target_pos_abs_final = float(
-                                struct.unpack("<I", aaB + b"\x00")[0] & 0xFFFFFF
-                            )
+                        val_u = aaB[0] | (aaB[1] << 8) | (aaB[2] << 16)
+                        target_pos_abs_final = float(val_u - (1 << 24)) if val_u & 0x800000 else float(val_u)
                         parsed_ok = True
+
             except struct.error as e:
                 logger.error(
-                    f"Motor {self.can_id}: Parse error CMD {command_code:02X}: {e}"
+                    f"Motor {self.can_id}: Parse error for CMD {command_code:02X} data {data_from_payload.hex()}: {e}"
                 )
                 return self._generate_response(
                     command_code, [const.POS_RUN_FAIL]
                 )
+
             if parsed_ok and target_pos_abs_final is not None:
+                logger.info(f"Motor {self.can_id}: CMD 0x{command_code:02X} parsed OK. TargetSteps={target_pos_abs_final}, SpeedP={mks_speed_val}, AccelP={mks_accel_val}")
                 self._loop.create_task(
                     self._handle_positional_move(
                         target_pos_abs_final,
@@ -638,7 +632,7 @@ class SimulatedMotor:
                 )
             else:
                 logger.warning(
-                    f"Motor {self.can_id}: Parse fail CMD {command_code:02X}. Data: {data_from_payload.hex()}"
+                    f"Motor {self.can_id}: Failed to parse positional CMD 0x{command_code:02X}. Data: {data_from_payload.hex()}"
                 )
                 return self._generate_response(
                     command_code, [const.POS_RUN_FAIL]
@@ -646,9 +640,15 @@ class SimulatedMotor:
         elif command_code == const.CMD_EMERGENCY_STOP:
             self.current_rpm = 0.0
             self.target_rpm = 0.0
-            self.target_position_steps = None
+            self.motor_status_code = const.MOTOR_STATUS_STOPPED
+            self.target_position_steps = None # Clear target
             if self._current_move_task and not self._current_move_task.done():
+                logger.warning(f"Motor {self.can_id}: Move cancelled due to emergency stop.")
                 self._current_move_task.cancel("Emergency stop")
+                # Send POS_RUN_FAIL for the interrupted move
+                if self._current_move_command_code is not None:
+                    self._loop.create_task(self._send_completion_if_callback(self._current_move_command_code, const.POS_RUN_FAIL))
+
             logger.warning(f"Motor {self.can_id}: Emergency stop processed.")
             return self._generate_simple_status_response(command_code, True)
 
@@ -658,13 +658,21 @@ class SimulatedMotor:
             )
         else:
             logger.warning(
-                f"Motor {self.can_id}: Unhandled CMD 0x{command_code:02X}, data: {data_from_payload.hex()}. No direct response."
+                f"Motor {self.can_id}: Unhandled CMD 0x{command_code:02X}, data: {data_from_payload.hex()}. No direct response generated by model."
             )
-            return None
+            # For unhandled commands, we might return a generic fail, or nothing if the protocol implies no response.
+            # MKS typically responds. Let's send a generic fail if not handled.
+            # However, some commands might not have a data payload in response, just status.
+            # For now, returning None means the VirtualCANBus won't send an immediate ACK.
+            # This might be desired if the command is truly unsupported or is one-way.
+            # If an ACK is always expected, then this should return a fail response.
+            # Let's assume for now that if no specific response_data_for_payload is set, it's an unhandled command by the model.
+            return self._generate_response(command_code, [const.STATUS_FAILURE])
+
 
     async def start(self):
         if self.is_running_task and not self.is_running_task.done():
-            logger.warning(f"Motor {self.can_id} sim task running.")
+            logger.warning(f"Motor {self.can_id} simulation task already running.")
             return
         self._last_update_time = time.monotonic()
         self.is_running_task = self._loop.create_task(self._update_state())
@@ -672,13 +680,20 @@ class SimulatedMotor:
 
     async def stop_simulation(self):
         if self._current_move_task and not self._current_move_task.done():
-            self._current_move_task.cancel("Sim stopping")
-            await asyncio.gather(
-                self._current_move_task, return_exceptions=True
-            )
-        self._current_move_task = None
+            self._current_move_task.cancel("Simulation stopping")
+            # Give a moment for cancellation to propagate if needed
+            await asyncio.sleep(0) # Yield control to allow task to process cancellation
+            # Don't necessarily need to gather here if the task handles its own cleanup on cancel.
+        self._current_move_task = None # Clear the reference
+
         if self.is_running_task and not self.is_running_task.done():
             self.is_running_task.cancel()
-            await asyncio.gather(self.is_running_task, return_exceptions=True)
+            try:
+                await self.is_running_task # Wait for the task to acknowledge cancellation
+            except asyncio.CancelledError:
+                logger.info(f"SimulatedMotor {self.can_id} update task successfully cancelled.")
+            except Exception as e:
+                logger.error(f"SimulatedMotor {self.can_id} update task error during stop: {e}")
         self.is_running_task = None
         logger.info(f"SimulatedMotor {self.can_id} update task stopped.")
+        
