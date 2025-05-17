@@ -1,6 +1,8 @@
 # mks_servo_can_project/tests/unit/test_crc.py
 import pytest
-from mks_servo_can_library.mks_servo_can.crc import calculate_crc, verify_crc
+
+from mks_servo_can_library.mks_servo_can.crc import calculate_crc
+from mks_servo_can_library.mks_servo_can.crc import verify_crc
 from mks_servo_can_library.mks_servo_can.exceptions import ParameterError
 
 # Test cases from MKS SERVO42&57D_CAN User Manual V1.0.6.pdf
@@ -27,7 +29,7 @@ class TestCRC:
     def test_calculate_crc_simple(self):
         """Test basic CRC calculation."""
         assert calculate_crc(can_id=0x01, data_bytes=[0x30]) == 0x31
-        assert calculate_crc(can_id=0x01, data_bytes=[0x30, 0x31]) == 0x62 
+        assert calculate_crc(can_id=0x01, data_bytes=[0x30, 0x31]) == 0x62
 
     def test_calculate_crc_manual_examples(self):
         """Test CRC calculations based on manual examples."""
@@ -51,10 +53,14 @@ class TestCRC:
         # 511 & 255 = 255 (0xFF).
         # The previous comment was (0x1FD & 0xFF = 0xFD). 0x1FD is 409+253 = 509.
         # 1 + 255 + 255 = 511 = 0x1FF. So 0x1FF & 0xFF = 0xFF.
-        assert calculate_crc(can_id=0x01, data_bytes=[0xFF, 0xFF]) == 0xFF # Corrected from 0xFD
+        assert (
+            calculate_crc(can_id=0x01, data_bytes=[0xFF, 0xFF]) == 0xFF
+        )  # Corrected from 0xFD
         # Verify the first part of the original assertion which should be true
-        assert calculate_crc(can_id=0x01, data_bytes=[0xFF, 0xFF]) == (0x01 + 0xFF + 0xFF) & 0xFF
-
+        assert (
+            calculate_crc(can_id=0x01, data_bytes=[0xFF, 0xFF])
+            == (0x01 + 0xFF + 0xFF) & 0xFF
+        )
 
     def test_calculate_crc_broadcast_id(self):
         """Test CRC calculation when CAN ID is broadcast (0x00)."""
@@ -62,44 +68,83 @@ class TestCRC:
 
     def test_calculate_crc_invalid_can_id(self):
         """Test CRC calculation with an invalid CAN ID."""
-        with pytest.raises(ParameterError, match="CAN ID 2048 is out of valid range 0-2047."):
-            calculate_crc(can_id=0x800, data_bytes=[0x30]) 
-        with pytest.raises(ParameterError, match="CAN ID -1 is out of valid range 0-2047."):
+        with pytest.raises(
+            ParameterError, match="CAN ID 2048 is out of valid range 0-2047."
+        ):
+            calculate_crc(can_id=0x800, data_bytes=[0x30])
+        with pytest.raises(
+            ParameterError, match="CAN ID -1 is out of valid range 0-2047."
+        ):
             calculate_crc(can_id=-1, data_bytes=[0x30])
 
     def test_calculate_crc_empty_data_bytes(self):
         """Test CRC calculation with empty data_bytes list."""
-        with pytest.raises(ParameterError, match="Data bytes list cannot be empty"):
+        with pytest.raises(
+            ParameterError, match="Data bytes list cannot be empty"
+        ):
             calculate_crc(can_id=0x01, data_bytes=[])
 
     def test_calculate_crc_invalid_data_byte_value(self):
         """Test CRC calculation with data_bytes containing out-of-range values."""
-        with pytest.raises(ParameterError, match="All data bytes must be in range 0-255."):
-            calculate_crc(can_id=0x01, data_bytes=[0x00, 0x100]) 
-        with pytest.raises(ParameterError, match="All data bytes must be in range 0-255."):
+        with pytest.raises(
+            ParameterError, match="All data bytes must be in range 0-255."
+        ):
+            calculate_crc(can_id=0x01, data_bytes=[0x00, 0x100])
+        with pytest.raises(
+            ParameterError, match="All data bytes must be in range 0-255."
+        ):
             calculate_crc(can_id=0x01, data_bytes=[-1])
 
     def test_verify_crc_valid(self):
         """Test successful CRC verification."""
-        received_bytes_30 = [0x30, 0x00, 0x00, 0x00, 0x00, 0x01, 0x29, 0xEF, 0x4A] 
+        received_bytes_30 = [
+            0x30,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x29,
+            0xEF,
+            0x4A,
+        ]
         assert verify_crc(can_id=0x01, received_bytes=received_bytes_30) is True
-        received_bytes_f6 = [0xF6, 0x01, 0xF8] 
+        received_bytes_f6 = [0xF6, 0x01, 0xF8]
         assert verify_crc(can_id=0x01, received_bytes=received_bytes_f6) is True
 
     def test_verify_crc_invalid(self):
         """Test failed CRC verification."""
-        received_bytes_invalid_crc = [0x30, 0x00, 0x00, 0x00, 0x00, 0x01, 0x29, 0xEF, 0x4B] 
-        assert verify_crc(can_id=0x01, received_bytes=received_bytes_invalid_crc) is False
+        received_bytes_invalid_crc = [
+            0x30,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x29,
+            0xEF,
+            0x4B,
+        ]
+        assert (
+            verify_crc(can_id=0x01, received_bytes=received_bytes_invalid_crc)
+            is False
+        )
 
     def test_verify_crc_short_payload(self):
         """Test CRC verification with a payload that's too short."""
-        with pytest.raises(ParameterError, match="Received bytes list is too short"):
-            verify_crc(can_id=0x01, received_bytes=[0x30]) 
-        with pytest.raises(ParameterError, match="Received bytes list is too short"):
+        with pytest.raises(
+            ParameterError, match="Received bytes list is too short"
+        ):
+            verify_crc(can_id=0x01, received_bytes=[0x30])
+        with pytest.raises(
+            ParameterError, match="Received bytes list is too short"
+        ):
             verify_crc(can_id=0x01, received_bytes=[])
 
     def test_verify_crc_invalid_can_id_for_calc(self):
         """Test CRC verification where CAN ID for calculation would be invalid."""
-        received_bytes = [0x30, 0x31] 
-        with pytest.raises(ParameterError, match="CAN ID 2048 is out of valid range 0-2047."):
+        received_bytes = [0x30, 0x31]
+        with pytest.raises(
+            ParameterError, match="CAN ID 2048 is out of valid range 0-2047."
+        ):
             verify_crc(can_id=0x800, received_bytes=received_bytes)

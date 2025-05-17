@@ -1,0 +1,123 @@
+# pyproject.toml
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+# Consistent with Google Python Style Guide's preference for 80 character lines.
+line-length = 80
+# Specify target Python versions your project supports.
+# This helps Black make decisions about syntax.
+# Example: target-version = ['py38', 'py39', 'py310', 'py311']
+# Based on your setup.py, you support Python 3.8+
+target-version = ['py38']
+
+[tool.isort]
+# Google's import order:
+# 1. Python standard library imports (and future statements)
+# 2. Third-party library imports
+# 3. Application-specific imports (your project's modules)
+# Each group separated by a blank line.
+
+profile = "google" # Uses Google's import ordering conventions.
+# Alternatively, "black" profile is also very common and compatible.
+# If using "google" profile, Black might make minor adjustments after isort.
+# Using "black" profile with explicit section ordering can also work well.
+
+line_length = 80 # Match Black's line length
+
+# Explicitly define sections for clarity and control, matching Google style.
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+
+# Known third-party libraries used in your project
+# (Extracted from requirements.txt and setup.py files)
+known_third_party = [
+    "asyncio", # Often treated as stdlib but can be explicit if needed for ordering
+    "can",
+    "click",
+    "coverage",
+    "flake8",
+    "isort",
+    "mypy",
+    "pytest",
+    "pytest_asyncio", # Note: pytest plugins are often grouped with pytest
+    "pylint",
+    "serial", # python-can might use this or other backends
+    "setuptools",
+    "sphinx",
+    "sphinx_rtd_theme",
+    "time", # stdlib, but sometimes explicitly listed if there are ordering nuances
+    "unittest", # stdlib
+    "logging", # stdlib
+    "struct", # stdlib
+    "socket", # stdlib
+    "enum", # stdlib
+    "abc", # stdlib
+    "collections", # stdlib
+    "pathlib", # stdlib
+    "subprocess", # stdlib
+    "sys", # stdlib
+    "os", # stdlib
+    "signal" # stdlib
+]
+
+# Known first-party (your project's own top-level importable packages/modules)
+known_first_party = [
+    "mks_servo_can",         # From mks_servo_can_library
+    "mks_servo_simulator",   # The simulator application package
+    "mks_simulator",         # The core simulator logic package
+    "examples"               # If examples are meant to be importable or run as scripts
+]
+
+# Ensure that imports from the same module are on separate lines if they are too long
+# force_single_line = false # Default for "google" profile is often false.
+                          # Black will handle wrapping if lines are too long.
+                          # If true, it forces one import per line, e.g. from x import (a, b) becomes
+                          # from x import a
+                          # from x import b
+                          # This can be verbose. Google style allows `from module import a, b, c`.
+
+# Add a newline before comments that are on their own line.
+ensure_newline_before_comments = true
+
+# Group like imports together. For example, all "from" imports from the same module.
+force_sort_within_sections = true
+order_by_type = false # Google style typically orders by module name, not type of import
+
+# If you have a "src" layout, specify it:
+# src_paths = ["src"] # Uncomment and adjust if your code is in a src directory
+
+[tool.pylint."MESSAGES CONTROL"]
+# Refer to your .pylintrc file for Pylint configurations.
+# Pylint configuration is primarily managed in .pylintrc or setup.cfg.
+# Some basic Pylint settings can be put here if not using a separate pylintrc,
+# but .pylintrc is more comprehensive.
+# Example if not using .pylintrc:
+# disable = "C0114,C0115,C0116,R0903"
+# max-line-length = 80
+
+# If you use Flake8, you can configure it here too.
+# This is an alternative to a .flake8 file or setup.cfg.
+[tool.flake8]
+max-line-length = 80
+extend-ignore = [
+    "E203", # Whitespace before ':' - Black handles this differently
+    "W503", # Line break before binary operator - Black prefers after
+]
+docstring-convention = "google" # Requires flake8-docstrings
+# To make flake8-docstrings work with Google style, you might need:
+# pip install flake8-docstrings
+# And ensure it checks for google style.
+inline-quotes = "'" # Prefer single quotes for strings if not docstrings
+# Add other flake8 plugins and configurations as needed (e.g., flake8-bugbear, flake8-comprehensions)
+exclude = [
+    ".git",
+    "__pycache__",
+    "docs/source/conf.py",
+    "old",
+    "build",
+    "dist",
+    ".venv",
+    "*.egg-info"
+]

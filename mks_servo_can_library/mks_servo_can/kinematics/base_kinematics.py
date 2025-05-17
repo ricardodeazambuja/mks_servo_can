@@ -2,8 +2,11 @@
 """
 Base class for kinematic transformations.
 """
-from abc import ABC, abstractmethod
+from abc import ABC
+from abc import abstractmethod
+
 from mks_servo_can_library.mks_servo_can.exceptions import KinematicsError
+
 
 class Kinematics(ABC):
     """
@@ -11,6 +14,7 @@ class Kinematics(ABC):
     It handles conversions between desired final movement units (e.g., mm, degrees)
     and motor encoder values or pulses.
     """
+
     def __init__(self, steps_per_revolution: int, gear_ratio: float = 1.0):
         """
         Initialize base kinematics.
@@ -35,7 +39,9 @@ class Kinematics(ABC):
         self.steps_per_revolution = steps_per_revolution
         self.gear_ratio = gear_ratio
         # Effective steps at the final output after gearing
-        self.effective_steps_per_output_revolution = self.steps_per_revolution * self.gear_ratio
+        self.effective_steps_per_output_revolution = (
+            self.steps_per_revolution * self.gear_ratio
+        )
 
     @abstractmethod
     def user_to_steps(self, user_value: float) -> int:
@@ -48,7 +54,6 @@ class Kinematics(ABC):
         Returns:
             The equivalent number of motor steps/pulses (integer).
         """
-        pass
 
     @abstractmethod
     def steps_to_user(self, steps_value: int) -> float:
@@ -61,7 +66,6 @@ class Kinematics(ABC):
         Returns:
             The equivalent value in user-defined units (float).
         """
-        pass
 
     @abstractmethod
     def user_speed_to_motor_speed(self, user_speed: float) -> int:
@@ -78,7 +82,6 @@ class Kinematics(ABC):
         Returns:
             Equivalent motor speed parameter (integer).
         """
-        pass
 
     @abstractmethod
     def motor_speed_to_user_speed(self, motor_speed: int) -> float:
@@ -91,7 +94,6 @@ class Kinematics(ABC):
         Returns:
             Equivalent speed in user units per second.
         """
-        pass
 
     def get_parameters(self) -> dict:
         """Return the parameters of this kinematic model."""
@@ -99,7 +101,7 @@ class Kinematics(ABC):
             "type": self.__class__.__name__,
             "steps_per_revolution": self.steps_per_revolution,
             "gear_ratio": self.gear_ratio,
-            "effective_steps_per_output_revolution": self.effective_steps_per_output_revolution
+            "effective_steps_per_output_revolution": self.effective_steps_per_output_revolution,
         }
 
     def __repr__(self) -> str:

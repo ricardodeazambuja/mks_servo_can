@@ -8,21 +8,23 @@ via a CAN interface. It includes low-level command APIs, high-level Axis
 and MultiAxisController objects, and utilities for kinematics and simulation.
 """
 
+# Import other key components
 # Import the constants module and alias it as 'const' for patterned access (e.g., const.CAN_DEFAULT_BITRATE)
 from . import constants as const
+from . import crc  # Import the module itself
+from . import exceptions  # Import the module itself
+from .axis import Axis
+from .can_interface import CANInterface
 
 # Also make individual constants available directly from the package if desired,
 # e.g., from mks_servo_can import CAN_DEFAULT_BITRATE.
 # The __all__ list will control what 'from mks_servo_can import *' imports.
-from .constants import * # This makes them available directly in this namespace.
-
-# Import other key components
-from . import exceptions # Import the module itself
-from . import crc # Import the module itself
-from .can_interface import CANInterface
+from .constants import *  # This makes them available directly in this namespace.
+from .kinematics import EccentricKinematics
+from .kinematics import Kinematics
+from .kinematics import LinearKinematics
+from .kinematics import RotaryKinematics
 from .low_level_api import LowLevelAPI
-from .kinematics import Kinematics, LinearKinematics, RotaryKinematics, EccentricKinematics
-from .axis import Axis
 from .multi_axis_controller import MultiAxisController
 
 __version__ = "0.1.0"
@@ -30,7 +32,6 @@ __version__ = "0.1.0"
 __all__ = [
     # Export the 'const' alias for the constants module
     "const",
-
     # Export key classes
     "CANInterface",
     "LowLevelAPI",
@@ -40,18 +41,26 @@ __all__ = [
     "LinearKinematics",
     "RotaryKinematics",
     "EccentricKinematics",
-
     # Export utility functions or specific exceptions if needed directly
-    "calculate_crc", # from crc module (assuming crc.py has this function)
+    "calculate_crc",  # from crc module (assuming crc.py has this function)
     # "verify_crc", # from crc module (add if needed in public API)
-
     # Export specific exceptions if they are commonly caught directly
     # (These should be defined in exceptions.py and imported above)
-    "MKSServoError", "CANError", "CRCError", "CommandError",
-    "ParameterError", "MotorError", "CommunicationError", "MultiAxisError",
-    "SimulatorError", "KinematicsError", "ConfigurationError",
-    "HomingError", "CalibrationError", "LimitError", "StallError",
-
+    "MKSServoError",
+    "CANError",
+    "CRCError",
+    "CommandError",
+    "ParameterError",
+    "MotorError",
+    "CommunicationError",
+    "MultiAxisError",
+    "SimulatorError",
+    "KinematicsError",
+    "ConfigurationError",
+    "HomingError",
+    "CalibrationError",
+    "LimitError",
+    "StallError",
     # Export all constants made available by 'from .constants import *'
     # This can be long. Alternatively, users can use 'const.CONSTANT_NAME'.
     # If you want `from mks_servo_can import *` to bring in all constants,

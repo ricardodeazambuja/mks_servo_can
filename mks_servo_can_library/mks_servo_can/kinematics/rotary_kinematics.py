@@ -2,17 +2,23 @@
 """
 Rotary kinematics: converts between angular displacement (degrees) and motor steps.
 """
-import math
+
+
 from .base_kinematics import Kinematics
-from mks_servo_can_library.mks_servo_can.constants import MAX_RPM_VFOC_MODE
+
 
 class RotaryKinematics(Kinematics):
     """
     Handles conversion for rotary motion systems.
     User units are typically degrees.
     """
-    def __init__(self, steps_per_revolution: int, gear_ratio: float = 1.0,
-                 degrees_per_output_revolution: float = 360.0):
+
+    def __init__(
+        self,
+        steps_per_revolution: int,
+        gear_ratio: float = 1.0,
+        degrees_per_output_revolution: float = 360.0,
+    ):
         """
         Initialize rotary kinematics.
 
@@ -25,7 +31,10 @@ class RotaryKinematics(Kinematics):
         super().__init__(steps_per_revolution, gear_ratio)
         self.degrees_per_output_revolution = degrees_per_output_revolution
         # Steps per degree of final output rotation
-        self.steps_per_degree = self.effective_steps_per_output_revolution / self.degrees_per_output_revolution
+        self.steps_per_degree = (
+            self.effective_steps_per_output_revolution
+            / self.degrees_per_output_revolution
+        )
 
     def user_to_steps(self, user_value: float) -> int:
         """
@@ -51,7 +60,9 @@ class RotaryKinematics(Kinematics):
         # Motor RPM
         motor_rpm = motor_revs_per_second * 60
 
-        mks_speed_param = int(round(motor_rpm)) # Simplistic: assume param is roughly RPM in VFOC
+        mks_speed_param = int(
+            round(motor_rpm)
+        )  # Simplistic: assume param is roughly RPM in VFOC
         mks_speed_param = max(0, min(mks_speed_param, 3000))
         return mks_speed_param
 
@@ -59,8 +70,8 @@ class RotaryKinematics(Kinematics):
         """
         Convert MKS motor speed parameter (0-3000) to angular speed (degrees per second).
         """
-        motor_rpm = float(motor_speed_param) # Simplistic
-        
+        motor_rpm = float(motor_speed_param)  # Simplistic
+
         motor_revs_per_second = motor_rpm / 60
         output_revs_per_second = motor_revs_per_second / self.gear_ratio
         user_speed = output_revs_per_second * self.degrees_per_output_revolution
@@ -68,8 +79,10 @@ class RotaryKinematics(Kinematics):
 
     def get_parameters(self) -> dict:
         params = super().get_parameters()
-        params.update({
-            "degrees_per_output_revolution": self.degrees_per_output_revolution,
-            "steps_per_degree": self.steps_per_degree
-        })
+        params.update(
+            {
+                "degrees_per_output_revolution": self.degrees_per_output_revolution,
+                "steps_per_degree": self.steps_per_degree,
+            }
+        )
         return params

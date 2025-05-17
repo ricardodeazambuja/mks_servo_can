@@ -5,21 +5,30 @@ Example: Controlling a single MKS Servo motor using a real CAN hardware interfac
 import asyncio
 import logging
 
-from mks_servo_can_library.mks_servo_can import (
-    CANInterface, Axis, RotaryKinematics, const, exceptions
-)
+from mks_servo_can_library.mks_servo_can import Axis
+from mks_servo_can_library.mks_servo_can import CANInterface
+from mks_servo_can_library.mks_servo_can import const
+from mks_servo_can_library.mks_servo_can import exceptions
+from mks_servo_can_library.mks_servo_can import RotaryKinematics
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 # Hardware CAN interface configuration (MODIFY THESE FOR YOUR SETUP)
-CAN_INTERFACE_TYPE = 'canable'  # e.g., 'canable', 'socketcan', 'kvaser', 'pcan', 'usb2can'
-CAN_CHANNEL = '/dev/ttyACM0'      # e.g., 'slcan0', '/dev/ttyUSB0', 'PCAN_USBBUS1', 'can0'
-                                # For canable on Linux, it's often /dev/ttyACMx if using slcan firmware
-                                # Or use gs_usb kernel module and 'can0' (need to bring up with ip link)
-CAN_BITRATE = 500000            # Must match motor's CAN bitrate setting
+CAN_INTERFACE_TYPE = (
+    "canable"  # e.g., 'canable', 'socketcan', 'kvaser', 'pcan', 'usb2can'
+)
+CAN_CHANNEL = (
+    "/dev/ttyACM0"  # e.g., 'slcan0', '/dev/ttyUSB0', 'PCAN_USBBUS1', 'can0'
+)
+# For canable on Linux, it's often /dev/ttyACMx if using slcan firmware
+# Or use gs_usb kernel module and 'can0' (need to bring up with ip link)
+CAN_BITRATE = 500000  # Must match motor's CAN bitrate setting
 
-MOTOR_CAN_ID = 1                # CAN ID of your motor
+MOTOR_CAN_ID = 1  # CAN ID of your motor
+
 
 async def main():
     logging.info("Starting single axis real hardware example...")
@@ -38,7 +47,7 @@ async def main():
         interface_type=CAN_INTERFACE_TYPE,
         channel=CAN_CHANNEL,
         bitrate=CAN_BITRATE,
-        use_simulator=False
+        use_simulator=False,
     )
 
     try:
@@ -46,32 +55,42 @@ async def main():
         logging.info("CAN Interface connected successfully.")
     except exceptions.CANError as e:
         logging.error(f"Failed to connect to CAN interface: {e}")
-        logging.error("Please ensure your CAN adapter is connected, configured, and the motor is powered.")
-        logging.error("Check CAN_INTERFACE_TYPE, CAN_CHANNEL, and CAN_BITRATE settings.")
+        logging.error(
+            "Please ensure your CAN adapter is connected, configured, and the motor is powered."
+        )
+        logging.error(
+            "Check CAN_INTERFACE_TYPE, CAN_CHANNEL, and CAN_BITRATE settings."
+        )
         return
     except Exception as e:
-        logging.error(f"An unexpected error occurred during CAN connection: {e}")
+        logging.error(
+            f"An unexpected error occurred during CAN connection: {e}"
+        )
         return
 
     # Define kinematics (e.g., simple rotary, encoder pulses per revolution)
     # MKS Servos have high-resolution encoders (e.g., 16384 pulses/rev)
-    kin = RotaryKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION) # Using encoder pulses directly
+    kin = RotaryKinematics(
+        steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION
+    )  # Using encoder pulses directly
 
     # Create an Axis
     axis1 = Axis(
         can_interface_manager=can_if,
         motor_can_id=MOTOR_CAN_ID,
         name="MyMotorAxis",
-        kinematics=kin
+        kinematics=kin,
     )
 
     try:
         # --- Initialize Axis (IMPORTANT: Be careful with real hardware) ---
         # Before running, ensure motor is free to move and properly mounted.
         logging.info("Initializing axis... (This might involve communication)")
-        await axis1.initialize(calibrate=False, home=False) # Initial comms check
-                                                          # Set calibrate=True only if needed and safe.
-                                                          # Set home=True only if limits are set and safe.
+        await axis1.initialize(
+            calibrate=False, home=False
+        )  # Initial comms check
+        # Set calibrate=True only if needed and safe.
+        # Set home=True only if limits are set and safe.
 
         # --- Basic Operations ---
         logging.info("Enabling motor...")
@@ -80,7 +99,9 @@ async def main():
 
         logging.info("Getting current position...")
         pos_user = await axis1.get_current_position_user()
-        logging.info(f"Current position: {pos_user:.2f} {axis1.kinematics.units if hasattr(axis1.kinematics, 'units') else 'degrees'}")
+        logging.info(
+            f"Current position: {pos_user:.2f} {axis1.kinematics.units if hasattr(axis1.kinematics, 'units') else 'degrees'}"
+        )
 
         # --- Perform a simple move (USE WITH CAUTION ON REAL HARDWARE) ---
         # Ensure the move is safe and within mechanical limits.
@@ -105,7 +126,6 @@ async def main():
         # except exceptions.MotorError as e:
         #     logging.warning(f"Could not read work mode or parameter not readable: {e}")
 
-
         logging.info("Example finished. Disabling motor.")
         await axis1.disable_motor()
 
@@ -117,6 +137,7 @@ async def main():
         logging.info("Disconnecting CAN Interface...")
         await can_if.disconnect()
         logging.info("Program terminated.")
+
 
 if __name__ == "__main__":
     # To run on systems where default event loop policy might cause issues with serial,

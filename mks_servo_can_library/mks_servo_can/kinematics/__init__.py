@@ -6,9 +6,9 @@ Provides classes for converting between motor encoder/pulse units and
 real-world units (e.g., mm, degrees).
 """
 from .base_kinematics import Kinematics
+from .eccentric_kinematics import EccentricKinematics
 from .linear_kinematics import LinearKinematics
 from .rotary_kinematics import RotaryKinematics
-from .eccentric_kinematics import EccentricKinematics
 
 __all__ = [
     "Kinematics",

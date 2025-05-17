@@ -2,18 +2,27 @@
 """
 Linear kinematics: converts between linear distance (e.g., mm) and motor steps.
 """
-import math
-from .base_kinematics import Kinematics
+
+from mks_servo_can_library.mks_servo_can.constants import \
+    MAX_RPM_VFOC_MODE  # Default max RPM
 from mks_servo_can_library.mks_servo_can.exceptions import KinematicsError
-from mks_servo_can_library.mks_servo_can.constants import MAX_RPM_VFOC_MODE # Default max RPM
+
+from .base_kinematics import Kinematics
+
 
 class LinearKinematics(Kinematics):
     """
     Handles conversion for linear motion systems (e.g., lead screw, belt and pinion).
     User units are typically millimeters (mm).
     """
-    def __init__(self, steps_per_revolution: int, pitch: float,
-                 gear_ratio: float = 1.0, units: str = "mm"):
+
+    def __init__(
+        self,
+        steps_per_revolution: int,
+        pitch: float,
+        gear_ratio: float = 1.0,
+        units: str = "mm",
+    ):
         """
         Initialize linear kinematics.
 
@@ -31,7 +40,9 @@ class LinearKinematics(Kinematics):
         self.units = units
 
         # Steps per unit of linear travel (e.g., steps per mm)
-        self.steps_per_user_unit = self.effective_steps_per_output_revolution / self.pitch
+        self.steps_per_user_unit = (
+            self.effective_steps_per_output_revolution / self.pitch
+        )
 
     def user_to_steps(self, user_value: float) -> int:
         """
@@ -78,7 +89,7 @@ class LinearKinematics(Kinematics):
         # Given the documentation in 6.1 regarding subdivisions effect on speed, this is tricky.
         # "speed value is calibrated based on 16/32/64 subdivisions"
         # For now, let's assume a direct scaling for the default microstepping assumption (16/32/64)
-        
+
         # If we assume the parameter 0-3000 maps to 0-3000 RPM (in modes like VFOC)
         # then mks_speed_param = motor_rpm
         # However, this needs to be clamped and scaled by MAX_RPM for that parameter.
@@ -88,9 +99,11 @@ class LinearKinematics(Kinematics):
         # Let's assume for now:
         #   mks_speed_param = (motor_rpm / MAX_RPM_FOR_PARAM) * 3000
         #   If MAX_RPM_FOR_PARAM is also 3000 (like in VFOC mode), then mks_speed_param is approx motor_rpm.
-        
-        mks_speed_param = int(round(motor_rpm)) # Simplistic: assume param is roughly RPM in VFOC mode
-        
+
+        mks_speed_param = int(
+            round(motor_rpm)
+        )  # Simplistic: assume param is roughly RPM in VFOC mode
+
         # Clamp to the 0-3000 range for the parameter itself
         mks_speed_param = max(0, min(mks_speed_param, 3000))
         return mks_speed_param
@@ -105,8 +118,8 @@ class LinearKinematics(Kinematics):
             pass
 
         # Assume motor_speed_param is roughly motor_rpm in modes like VFOC
-        motor_rpm = float(motor_speed_param) # Simplistic
-        
+        motor_rpm = float(motor_speed_param)  # Simplistic
+
         motor_revs_per_second = motor_rpm / 60
         output_revs_per_second = motor_revs_per_second / self.gear_ratio
         user_speed = output_revs_per_second * self.pitch
@@ -114,9 +127,11 @@ class LinearKinematics(Kinematics):
 
     def get_parameters(self) -> dict:
         params = super().get_parameters()
-        params.update({
-            "pitch": self.pitch,
-            "units": self.units,
-            "steps_per_user_unit": self.steps_per_user_unit
-        })
+        params.update(
+            {
+                "pitch": self.pitch,
+                "units": self.units,
+                "steps_per_user_unit": self.steps_per_user_unit,
+            }
+        )
         return params

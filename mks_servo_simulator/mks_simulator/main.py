@@ -5,9 +5,11 @@ This simply calls the CLI's main function.
 """
 from .cli import main as cli_main
 
+
 def main():
     """Runs the command-line interface for the simulator."""
     cli_main()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

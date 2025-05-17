@@ -1,0 +1,139 @@
+# .pylintrc
+
+[MAIN]
+# Specify a comma-separated list of plugins to load and their argument strings.
+# For example, to use a plugin for checking Google style docstrings (if available and installed).
+# load-plugins=
+
+# Add paths to ignore (comma-separated list of regular expressions).
+# The regexes are matched against the absolute path of every module/package found.
+# Typically, you'd ignore virtual environments, build artifacts, etc.
+ignore-paths=
+    .*/\.venv/.*,       # Matches .venv directory anywhere in the path
+    .*/venv/.*,         # Matches venv directory anywhere in the path
+    .*/env/.*,          # Matches env directory anywhere in the path
+    .*/\.env/.*,        # Matches .env directory anywhere in the path
+    .*/build/.*,        # Matches build directory anywhere in the path
+    .*/dist/.*,         # Matches dist directory anywhere in the path
+    .*\.egg-info.*,     # Corrected: Matches any path containing .egg-info
+    .*/docs/_build/.* # Matches docs/_build directory anywhere in the path
+
+[MESSAGES CONTROL]
+# Disable the message(s) with the given id(s).
+# Add message codes here as you find them necessary for your project.
+# Some common ones that might be adjusted for typical Python projects or Google style:
+disable=
+    C0103, # invalid-name (can be too strict, Google has specific naming guidelines)
+           # You might enable this and then use line-level disables where appropriate.
+    C0114, # missing-module-docstring (Google style requires module docstrings)
+           # Keep this enabled, but you might disable it temporarily during initial dev.
+    C0115, # missing-class-docstring (Google style requires class docstrings)
+    C0116, # missing-function-docstring (Google style requires function/method docstrings for public API)
+    R0903, # too-few-public-methods (sometimes classes are small by design)
+    R0913, # too-many-arguments (Google style generally advises fewer arguments, but sometimes necessary)
+    R0902, # too-many-instance-attributes
+    R0914, # too-many-locals
+    W0511, # fixme (useful to leave enabled to track TODOs/FIXMEs)
+    W0613, # unused-argument (Google style has specific ways to handle this, e.g., `del arg` or `_arg_name`)
+           # Consider line-level disables for this one.
+    W0703  # broad-except (Catching too general exceptions like Exception)
+           # Google style advises being specific with exceptions.
+
+# Enable the message(s) with the given id(s).
+# enable=
+
+[FORMAT]
+# Maximum number of characters on a single line.
+# Consistent with Google Python Style Guide.
+max-line-length=80
+
+# Maximum number of lines in a module.
+max-module-lines=1000
+
+# String used as indentation marker. Default is 4 spaces.
+# Consistent with Google Python Style Guide.
+indent-string='    '
+
+# Allow hanging indents with a single tab.
+# indent-after-paren=4 # Default, usually fine
+
+# Expected format for TODO/FIXME comments.
+# todo-terms=FIXME,XXX,TODO # Default
+
+[BASIC]
+# Naming style for modules.
+module-naming-style=snake_case
+
+# Naming style for constants.
+const-naming-style=UPPER_CASE
+
+# Naming style for classes.
+class-naming-style=PascalCase
+
+# Naming style for functions.
+function-naming-style=snake_case
+
+# Naming style for methods.
+method-naming-style=snake_case
+
+# Naming style for attributes.
+attr-naming-style=snake_case
+
+# Naming style for arguments.
+argument-naming-style=snake_case
+
+# Naming style for variables.
+variable-naming-style=snake_case
+
+# Naming style for class attributes.
+class-attribute-naming-style=snake_case
+
+# Good variable names regexes (default is usually fine)
+# variable-rgx=
+# argument-rgx=
+# class-attribute-rgx=
+
+# Bad variable names regexes (default is usually fine)
+# bad-names=
+
+[DESIGN]
+# Maximum number of arguments for function / method.
+max-args=7 # Adjust as per your project's needs, Google style encourages fewer.
+
+# Maximum number of parents for a class (see R0901).
+max-parents=7
+
+# Maximum number of attributes for a class (see R0902).
+max-attributes=15 # Adjust as needed
+
+# Maximum number of statements in function / method body.
+max-statements=50
+
+# Maximum number of locals for function / method body.
+max-locals=15
+
+# Maximum number of return statements in function / method body.
+max-returns=6
+
+# Maximum number of branch statements in function / method body.
+max-branches=12
+
+[TYPECHECK]
+# Tells whether to generate type inference objects for inferred types.
+# generating-members=no
+
+[REPORTS]
+# Set the output format. Available formats are text, parseable, colorized, json and msvs.
+# Setting this to colorized is nice for terminal output.
+output-format=colorized
+
+# Python expression which should return a score less than or equal to 10.0.
+# You can disable the evaluation statement via Pylint's command line arguments.
+evaluation=10.0 - ((float(5 * error + warning + refactor + convention) / statement) * 10)
+
+[SPELLING]
+# Spelling dictionary name. Available dictionaries: none. To make it work, install
+# the python-enchant package and the dictionary for your language.
+# spelling-dict=
+# Comma-separated list of words not to report as misspelled.
+# spelling-private-dict-file=

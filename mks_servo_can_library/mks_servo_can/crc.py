@@ -4,6 +4,7 @@ CRC calculation utility for MKS Servo CAN commands.
 """
 from .exceptions import ParameterError
 
+
 def calculate_crc(can_id: int, data_bytes: list[int]) -> int:
     """
     Calculates the 8-bit checksum (CRC) for an MKS Servo CAN command.
@@ -20,10 +21,14 @@ def calculate_crc(can_id: int, data_bytes: list[int]) -> int:
     Raises:
         ParameterError: if can_id or data_bytes are invalid.
     """
-    if not (0 <= can_id <= 0x7FF): # Max CAN ID for standard frame is 11-bit (0-2047)
+    if not (
+        0 <= can_id <= 0x7FF
+    ):  # Max CAN ID for standard frame is 11-bit (0-2047)
         raise ParameterError(f"CAN ID {can_id} is out of valid range 0-2047.")
     if not data_bytes:
-        raise ParameterError("Data bytes list cannot be empty for CRC calculation.")
+        raise ParameterError(
+            "Data bytes list cannot be empty for CRC calculation."
+        )
     if not all(0 <= b <= 0xFF for b in data_bytes):
         raise ParameterError("All data bytes must be in range 0-255.")
 
@@ -32,6 +37,7 @@ def calculate_crc(can_id: int, data_bytes: list[int]) -> int:
         checksum += byte_val
 
     return checksum & 0xFF
+
 
 def verify_crc(can_id: int, received_bytes: list[int]) -> bool:
     """
@@ -48,8 +54,12 @@ def verify_crc(can_id: int, received_bytes: list[int]) -> bool:
     Raises:
         ParameterError: if inputs are invalid.
     """
-    if not received_bytes or len(received_bytes) < 2: # Must have at least command code and CRC
-        raise ParameterError("Received bytes list is too short to verify CRC (must include data and CRC).")
+    if (
+        not received_bytes or len(received_bytes) < 2
+    ):  # Must have at least command code and CRC
+        raise ParameterError(
+            "Received bytes list is too short to verify CRC (must include data and CRC)."
+        )
 
     data_payload = received_bytes[:-1]
     received_crc = received_bytes[-1]
