@@ -5,7 +5,7 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
 ## Table of Contents
 
 1.  **Introduction**
-    * [Project Overview](introduction/project_overview.md) (Link to main README or a summary)
+    * [Project Overview](introduction/project_overview.md)
     * [Key Features](introduction/key_features.md)
     * [Target Audience](introduction/target_audience.md)
 
@@ -23,6 +23,7 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
         * [Using Kinematics](user_guides/library/kinematics.md) (Linear, Rotary, Custom)
         * [Reading Motor Status & Parameters](user_guides/library/reading_status.md)
         * [Working with Multiple Axes](user_guides/library/multi_axis.md) (`MultiAxisController`)
+        * [Controlling Robot Models](user_guides/library/robot_control.md) (Using `robot_kinematics.py` models like `CartesianRobot`, `TwoLinkArmPlanar`, `RRRArm`)
         * [Error Handling & Exceptions](user_guides/library/error_handling.md)
         * [Advanced Configuration](user_guides/library/advanced_config.md) (e.g., timeouts, motor parameters)
     * **`mks-servo-simulator` CLI Usage**
@@ -37,6 +38,7 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
         * [`axis.py`](api_reference/library/axis.md)
         * [`multi_axis_controller.py`](api_reference/library/multi_axis_controller.md)
         * [`kinematics/`](api_reference/library/kinematics.md) (Covering base and specific kinematics classes)
+        * [`robot_kinematics.py`](api_reference/library/robot_kinematics.md) (Covering `RobotModelBase` and specific robot models)
         * [`constants.py`](api_reference/library/constants.md)
         * [`exceptions.py`](api_reference/library/exceptions.md)
     * **`mks_simulator` (Simulator Internals - for contributors)**
@@ -49,7 +51,10 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
     * [Controlling a Single Axis (Real Hardware)](tutorials/single_axis_hw.md)
     * [Synchronizing Multiple Axes](tutorials/multi_axis_sync.md)
     * [Implementing Custom Kinematics](tutorials/custom_kinematics.md)
-    * (Links to `examples/` directory scripts with explanations)
+    * [Controlling a 2-Link Planar Arm (`TwoLinkArmPlanar`)](tutorials/two_link_planar_arm_example.md)
+    * [Controlling a 3-DOF Cartesian Robot (`CartesianRobot`)](tutorials/cartesian_robot_example.md)
+    * [Controlling a 3-DOF RRR Arm (`RRRArm`)](tutorials/rrr_arm_example.md)
+    * (General link to `examples/` directory scripts with explanations)
 
 6.  **Advanced Topics**
     * [CAN Protocol Details (MKS Specifics)](advanced_topics/can_protocol.md)
@@ -60,7 +65,7 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
     * [Setting up Development Environment](development/setup.md)
     * [Coding Standards & Style Guide](development/coding_standards.md)
     * [Running Tests](development/running_tests.md)
-    * [How to Contribute](development/contributing.md) (Link to main README section or expand here)
+    * [How to Contribute](development/contributing.md)
     * [Project Roadmap (Future Plans)](development/roadmap.md)
 
 8.  **Appendices**
@@ -80,4 +85,4 @@ Documentation improvements are always welcome! If you find errors, omissions, or
 
 ---
 
-*This `README.md` serves as the main entry point for the detailed documentation. Each linked section above (e.g., `introduction/project_overview.md`) would ideally be a separate Markdown file within the `docs/` directory structure.*
+*This `README.md` serves as the main entry point for the detailed documentation. Each linked section above should ideally correspond to a separate Markdown file within the `docs/` directory structure.*

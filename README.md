@@ -15,6 +15,7 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 * **Kinematics Engine**:
     * Convert between user-defined units (e.g., mm, degrees) and motor encoder/pulse values.
     * Includes `LinearKinematics`, `RotaryKinematics`, and a base for custom kinematics (e.g., `EccentricKinematics`).
+    * **Robot Kinematics**: Includes `RobotModelBase` and implementations for common robot types like `TwoLinkArmPlanar`, `CartesianRobot`, and `RRRArm` found in `mks_servo_can.robot_kinematics`. These allow for controlling multi-axis robots in task space (e.g., Cartesian coordinates).
 * **Hardware & Simulator Support**: Can connect to real MKS servo motors via various `python-can` compatible interfaces or to the provided `mks-servo-simulator`.
 * **Robust Error Handling**: Custom exceptions for clear diagnostics of communication, motor, and configuration issues.
 
@@ -36,43 +37,48 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 
 The project is organized into two main Python packages and supporting directories:
 
-```
+```text
 mks_servo_can/
-├── mks_servo_can_library/        # The installable Python library (mks_servo_can)
-│   ├── mks_servo_can/            # Source code for the library
-│   │   ├── kinematics/           # Kinematic transformation modules
-│   │   ├── __init__.py
-│   │   ├── can_interface.py    # Handles real CAN and simulator connection
-│   │   ├── low_level_api.py    # Implements MKS CAN commands
-│   │   ├── axis.py               # High-level single motor control
+├── mks_servo_can_library/           # The installable Python library (mks_servo_can)
+│   ├── mks_servo_can/               # Source code for the library
+│   │   ├── kinematics/              # Kinematic transformation modules
+│   │   ├── init.py
+│   │   ├── can_interface.py         # Handles real CAN and simulator connection
+│   │   ├── low_level_api.py         # Implements MKS CAN commands
+│   │   ├── axis.py                  # High-level single motor control
 │   │   ├── multi_axis_controller.py # High-level multi-motor control
+│   │   ├── robot_kinematics.py      # High-level robot model kinematics
 │   │   ├── constants.py
 │   │   ├── crc.py
 │   │   └── exceptions.py
-│   └── setup.py                  # Packaging script for the library
-├── mks_servo_simulator/        # The CLI simulator (mks_servo_simulator)
-│   ├── mks_simulator/            # Source code for the simulator
-│   │   ├── __init__.py
-│   │   ├── cli.py                # Command-line interface (using Click)
-│   │   ├── motor_model.py        # Simulates individual motor behavior
-│   │   ├── virtual_can_bus.py    # Manages simulated CAN traffic
-│   │   └── main.py               # Entry point for the simulator CLI
-│   └── setup.py                  # Packaging script for the simulator
-├── tests/                        # Unit, integration, HIL, determinism tests
+│   └── setup.py                     # Packaging script for the library
+├── mks_servo_simulator/             # The CLI simulator (mks_servo_simulator)
+│   ├── mks_simulator/               # Source code for the simulator
+│   │   ├── init.py
+│   │   ├── cli.py                   # Command-line interface (using Click)
+│   │   ├── motor_model.py           # Simulates individual motor behavior
+│   │   ├── virtual_can_bus.py       # Manages simulated CAN traffic
+│   │   └── main.py                  # Entry point for the simulator CLI
+│   └── setup.py                     # Packaging script for the simulator
+├── tests/                           # Unit, integration, HIL, determinism tests
 │   ├── unit/
 │   ├── integration/
 │   ├── hil/
 │   └── determinism/
-├── examples/                     # Example scripts demonstrating library usage
+├── examples/                        # Example scripts demonstrating library usage
 │   ├── single_axis_real_hw.py
 │   ├── multi_axis_simulator.py
-│   └── timing_benchmark.py
-├── docs/                         # Detailed documentation
-│   └── README.md                 # This file (overview of documentation)
+│   ├── two_link_planar_arm.py       # Example using TwoLinkArmPlanar robot model
+│   ├── cartesian_3dof_robot.py      # Example using CartesianRobot model
+│   ├── three_link_arm.py            # Example using RRRArm model
+│   ├── benchmark_command_latency.py # (Formerly timing_benchmark.py)
+│   └── sync_mks_axis.py             # Example of a synchronous wrapper
+├── docs/                            # Detailed documentation
+│   └── README.md                    # Overview of documentation structure
 │   └── (other .md files for specific sections)
-├── README.md                     # Main project README
-├── requirements.txt              # Core Python dependencies for running the library and simulator
-└── LICENSE.txt                   # Project license (e.g., MIT License)
+├── README.md                        # Main project README (this file)
+├── requirements.txt                 # Core Python dependencies
+└── LICENSE.txt                      # Project license
 ```
 
 ## Getting Started
