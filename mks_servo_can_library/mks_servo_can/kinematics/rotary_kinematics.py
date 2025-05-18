@@ -35,6 +35,7 @@ class RotaryKinematics(Kinematics):
             self.effective_steps_per_output_revolution
             / self.degrees_per_output_revolution
         )
+        self.units = "deg"
 
     def user_to_steps(self, user_value: float) -> int:
         """
