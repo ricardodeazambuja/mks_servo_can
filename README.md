@@ -235,7 +235,6 @@ Contributions are welcome! Please follow these general guidelines:
 6.  **Ensure all tests pass** locally before submitting.
 7.  **Submit a pull request** to the `main` (or `develop`) branch with a clear description of your changes and any relevant issue numbers.
 
-**(Maintainers: Please update placeholder information like author, email, and project URLs in the `setup.py` files for both the library and simulator packages.)**
 
 ## License
 
