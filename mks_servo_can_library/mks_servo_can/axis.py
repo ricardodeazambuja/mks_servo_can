@@ -1,4 +1,3 @@
-# mks_servo_can/mks_servo_can_library/mks_servo_can/axis.py
 """
 High-Level Axis Class for individual MKS Servo motor control.
 """
@@ -42,6 +41,23 @@ class Axis:
         default_accel_param: int = 100,
         loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
+        """
+        Initializes an Axis object representing a single MKS servo motor.
+
+        Args:
+            can_interface_manager: The CANInterface instance used for communication.
+            motor_can_id: The CAN ID of the motor (1-2047).
+            name: A descriptive name for this axis instance.
+            motor_type: The type of MKS servo motor (e.g., const.MOTOR_TYPE_SERVO42D).
+            kinematics: A Kinematics object for converting between user units and motor steps.
+                        If None, defaults to RotaryKinematics with standard encoder pulses.
+            default_speed_param: Default MKS speed parameter (0-3000) for moves if not specified.
+            default_accel_param: Default MKS acceleration parameter (0-255) for moves if not specified.
+            loop: The asyncio event loop to use. If None, the default loop is used.
+
+        Raises:
+            ParameterError: If motor_can_id is invalid.
+        """
         if not (
             const.BROADCAST_ADDRESS < motor_can_id <= 0x7FF
         ):
@@ -82,6 +98,22 @@ class Axis:
     async def initialize(
         self, calibrate: bool = False, home: bool = False
     ) -> None:
+        """
+        Performs initial communication with the axis.
+
+        This includes a basic communication test, reading the initial enable status,
+        and optionally performing encoder calibration and homing.
+
+        Args:
+            calibrate: If True, attempts to calibrate the encoder.
+            home: If True, attempts to home the axis. Homing will only proceed if
+                  calibration was successful (if calibrate=True) or if calibration
+                  was not requested.
+
+        Raises:
+            MKSServoError: Or its subclasses (e.g., CommunicationError, CalibrationError, HomingError)
+                           if any part of the initialization process fails.
+        """
         logger.info(
             f"Axis '{self.name}' (CAN ID: {self.can_id:03X}): Initializing..."
         )
@@ -108,6 +140,18 @@ class Axis:
         logger.info(f"Axis '{self.name}' initialization complete.")
 
     async def set_work_mode(self, mode_const: int) -> None:
+        """
+        Sets the working mode of the motor.
+
+        Args:
+            mode_const: The work mode constant (e.g., `const.MODE_SR_VFOC`).
+                        Refer to `const.WORK_MODES` for available modes.
+
+        Raises:
+            ParameterError: If the provided mode_const is not a valid work mode.
+            MotorError: If the motor fails to set the work mode.
+            CommunicationError: On CAN communication issues.
+        """
         if mode_const not in const.WORK_MODES:
             raise ParameterError(f"Invalid work mode constant: {mode_const}")
         logger.info(
@@ -116,6 +160,17 @@ class Axis:
         await self._low_level_api.set_work_mode(self.can_id, mode_const)
 
     async def calibrate_encoder(self) -> None:
+        """
+        Initiates the encoder calibration sequence on the motor.
+
+        The motor must typically be unloaded for successful calibration.
+        Updates the `_is_calibrated` status of the axis.
+
+        Raises:
+            CalibrationError: If the motor reports a calibration failure.
+            MotorError: For other motor-reported errors during the command.
+            CommunicationError: On CAN communication issues.
+        """
         logger.info(f"Axis '{self.name}': Starting encoder calibration...")
         try:
             await self._low_level_api.calibrate_encoder(self.can_id)
@@ -131,6 +186,25 @@ class Axis:
     async def home_axis(
         self, wait_for_completion: bool = True, timeout: float = 30.0
     ) -> None:
+        """
+        Commands the motor to perform its homing sequence.
+
+        Ensures the motor is enabled before starting. If `wait_for_completion` is True,
+        this method will wait for the motor to signal completion of the homing process.
+        Updates the `_is_homed` status and sets position to zero on success.
+
+        Args:
+            wait_for_completion: If True, waits for the homing process to complete.
+                                 If False, initiates homing and returns.
+            timeout: Maximum time in seconds to wait for homing completion if
+                     `wait_for_completion` is True.
+
+        Raises:
+            HomingError: If the homing process fails or times out.
+            CalibrationError: If attempting to home a non-calibrated axis (when calibration is expected).
+            CommunicationError: On CAN communication issues or timeout waiting for completion signal.
+            MotorError: For other motor-reported errors.
+        """
         if not self._is_calibrated:
             logger.warning(
                 f"Axis '{self.name}': Attempting to home non-calibrated axis."
@@ -189,6 +263,14 @@ class Axis:
 
 
     async def set_current_position_as_zero(self) -> None:
+        """
+        Defines the motor's current physical position as the zero reference point.
+        This typically also sets the homed status to True.
+
+        Raises:
+            MotorError: If the motor fails to set the current position as zero.
+            CommunicationError: On CAN communication issues.
+        """
         logger.info(f"Axis '{self.name}': Setting current position as zero.")
         await self._low_level_api.set_current_axis_to_zero(self.can_id)
         self._current_position_steps = 0
@@ -201,6 +283,29 @@ class Axis:
         success_status=const.POS_RUN_COMPLETE,
         # timeout_factor=1.2, # Not currently used effectively
     ) -> None:
+        """
+        Internal helper to execute a positional move command and manage its lifecycle.
+
+        This method handles sending the move command, creating a future to track
+        its completion (especially for motors with active responses), and processing
+        the initial and final status responses from the motor.
+
+        Args:
+            move_command_func: A callable (often a lambda) that, when called, executes
+                               the appropriate low-level move command and returns its
+                               initial status.
+            command_const: The MKS CAN command constant for this move type (e.g., 0xFD).
+            success_status: The expected status code from the motor upon successful
+                            completion of the move (e.g., `const.POS_RUN_COMPLETE`).
+
+        Raises:
+            MotorError: If the move fails at the motor level (e.g., initial rejection,
+                        unexpected completion status).
+            LimitError: If the move is stopped by an end limit.
+            CommunicationError: If a timeout occurs waiting for responses, or other
+                                CAN communication issues arise.
+            MKSServoError: For other library-specific errors during the move.
+        """
         if self._active_move_future and not self._active_move_future.done():
             # Cancel previous move if a new one is initiated for the same axis
             logger.warning(f"Axis '{self.name}': Active move future exists. Cancelling previous move.")
@@ -312,6 +417,22 @@ class Axis:
         accel_param: Optional[int] = None,
         wait: bool = True,
     ):
+        """
+        Moves the motor to an absolute position specified in raw encoder pulses.
+
+        Uses MKS command 0xFE.
+
+        Args:
+            target_pulses: The absolute target position in encoder pulses (signed 24-bit).
+            speed_param: MKS speed parameter (0-3000). If None, axis default is used.
+            accel_param: MKS acceleration parameter (0-255). If None, axis default is used.
+            wait: If True, waits for the move to complete before returning.
+
+        Raises:
+            MotorError: If the move command fails or is rejected by the motor.
+            LimitError: If the move is stopped by a limit.
+            CommunicationError: On CAN communication issues or timeout.
+        """
         sp = speed_param if speed_param is not None else self.default_speed_param
         ac = accel_param if accel_param is not None else self.default_accel_param
         logger.info(
@@ -330,6 +451,24 @@ class Axis:
         speed_user: Optional[float] = None,
         wait: bool = True,
     ):
+        """
+        Moves the motor to an absolute position specified in user-defined units.
+
+        Units are determined by the axis's kinematics configuration.
+        Converts user units to pulses and uses MKS command 0xFE.
+
+        Args:
+            target_pos_user: The absolute target position in user units (e.g., mm, degrees).
+            speed_user: The desired speed in user units per second. If None,
+                        the axis's default MKS speed parameter is used.
+            wait: If True, waits for the move to complete before returning.
+
+        Raises:
+            MotorError: If the move command fails or is rejected by the motor.
+            LimitError: If the move is stopped by a limit.
+            CommunicationError: On CAN communication issues or timeout.
+            KinematicsError: If kinematics conversion fails.
+        """
         target_steps = self.kinematics.user_to_steps(target_pos_user)
         mks_speed_param = (
             self.kinematics.user_speed_to_motor_speed(speed_user)
@@ -355,6 +494,23 @@ class Axis:
         accel_param: Optional[int] = None,
         wait: bool = True,
     ):
+        """
+        Moves the motor by a relative amount specified in raw encoder pulses.
+
+        Uses MKS command 0xFD.
+
+        Args:
+            relative_pulses: The number of pulses to move relative to the current position.
+                             Positive for CCW (default), negative for CW.
+            speed_param: MKS speed parameter (0-3000). If None, axis default is used.
+            accel_param: MKS acceleration parameter (0-255). If None, axis default is used.
+            wait: If True, waits for the move to complete before returning.
+
+        Raises:
+            MotorError: If the move command fails or is rejected by the motor.
+            LimitError: If the move is stopped by a limit.
+            CommunicationError: On CAN communication issues or timeout.
+        """
         sp = speed_param if speed_param is not None else self.default_speed_param
         ac = accel_param if accel_param is not None else self.default_accel_param
         direction_ccw = relative_pulses > 0
@@ -375,6 +531,25 @@ class Axis:
         speed_user: Optional[float] = None,
         wait: bool = True,
     ):
+        """
+        Moves the motor by a relative amount specified in user-defined units.
+
+        Units are determined by the axis's kinematics configuration.
+        Converts user units to pulses and uses MKS command 0xFD.
+
+        Args:
+            relative_dist_user: The distance to move in user units (e.g., mm, degrees).
+                                Positive for one direction, negative for the other.
+            speed_user: The desired speed in user units per second. If None,
+                        the axis's default MKS speed parameter is used.
+            wait: If True, waits for the move to complete before returning.
+
+        Raises:
+            MotorError: If the move command fails or is rejected by the motor.
+            LimitError: If the move is stopped by a limit.
+            CommunicationError: On CAN communication issues or timeout.
+            KinematicsError: If kinematics conversion fails.
+        """
         relative_steps = self.kinematics.user_to_steps(relative_dist_user)
         mks_speed_param = (
             self.kinematics.user_speed_to_motor_speed(speed_user)
@@ -398,6 +573,22 @@ class Axis:
     async def set_speed_user(
         self, speed_user: float, accel_user: Optional[float] = None # accel_user not yet implemented for conversion
     ) -> None:
+        """
+        Sets the motor to run continuously at a specified speed in user units (speed/velocity mode).
+
+        Uses MKS command 0xF6. To stop, call with speed_user = 0 or use `stop_motor()`.
+
+        Args:
+            speed_user: The desired speed in user units per second.
+                        Positive for one direction, negative for the other.
+            accel_user: Desired acceleration in user units per second squared.
+                        (Currently, this converts to a default MKS acceleration parameter).
+
+        Raises:
+            MotorError: If the command fails.
+            CommunicationError: On CAN communication issues.
+            KinematicsError: If kinematics conversion fails.
+        """
         mks_speed_param = self.kinematics.user_speed_to_motor_speed(abs(speed_user))
         mks_accel_param = self.default_accel_param # TODO: Convert accel_user
         direction_ccw = speed_user >= 0
@@ -423,6 +614,21 @@ class Axis:
 
 
     async def stop_motor(self, deceleration_param: Optional[int] = None) -> None:
+        """
+        Commands the motor to stop its current movement with controlled deceleration.
+
+        This typically uses the MKS speed mode stop command (0xF6 with speed 0).
+        If that fails, an emergency stop may be attempted.
+
+        Args:
+            deceleration_param: MKS deceleration parameter (0-255). If None,
+                                the axis default acceleration parameter is used.
+                                A value of 0 implies an immediate stop.
+
+        Raises:
+            MotorError: If the stop command fails.
+            CommunicationError: On CAN communication issues.
+        """
         decel = deceleration_param if deceleration_param is not None else self.default_accel_param
         logger.info(f"Axis '{self.name}': Commanding stop (decel_param: {decel}).")
         try:
@@ -441,6 +647,16 @@ class Axis:
 
 
     async def emergency_stop(self) -> None:
+        """
+        Commands an immediate emergency stop of the motor (MKS command 0xF7).
+
+        This should halt motor activity as quickly as possible.
+        Any active move future will be cancelled.
+
+        Raises:
+            MotorError: If the emergency stop command fails.
+            CommunicationError: On CAN communication issues.
+        """
         logger.warning(f"Axis '{self.name}': Performing EMERGENCY STOP.")
         await self._low_level_api.emergency_stop(self.can_id)
         if self._active_move_future and not self._active_move_future.done():
@@ -448,6 +664,16 @@ class Axis:
         self._active_move_future = None
 
     async def enable_motor(self) -> None:
+        """
+        Enables the motor's servo loop (MKS command 0xF3 with enable=1).
+
+        If the motor is already enabled, this method logs and does nothing further.
+        Updates the internal `_is_enabled` state.
+
+        Raises:
+            MotorError: If the enable command fails.
+            CommunicationError: On CAN communication issues.
+        """
         if not self._is_enabled:
             logger.info(f"Axis '{self.name}': Enabling motor.")
             await self._low_level_api.enable_motor(self.can_id, True)
@@ -456,6 +682,17 @@ class Axis:
             logger.info(f"Axis '{self.name}': Motor already enabled.")
 
     async def disable_motor(self) -> None:
+        """
+        Disables the motor's servo loop (MKS command 0xF3 with enable=0).
+
+        If the motor is already disabled, this method logs and does nothing further.
+        Updates the internal `_is_enabled` state. If a move was in progress,
+        its future is cancelled.
+
+        Raises:
+            MotorError: If the disable command fails.
+            CommunicationError: On CAN communication issues.
+        """
         if self._is_enabled:
             logger.info(f"Axis '{self.name}': Disabling motor.")
             await self._low_level_api.enable_motor(self.can_id, False)
@@ -467,33 +704,127 @@ class Axis:
             logger.info(f"Axis '{self.name}': Motor already disabled.")
 
     def is_enabled(self) -> bool:
+        """
+        Returns the cached enabled state of the motor.
+
+        This does not send a command to the motor; it reflects the last known state.
+        Use `read_en_status()` to actively query the motor.
+
+        Returns:
+            True if the motor is believed to be enabled, False otherwise.
+        """
         return self._is_enabled
 
     async def read_en_status(self) -> bool:
+        """
+        Actively reads and returns the current enable (EN pin) status from the motor.
+
+        Updates the internal `_is_enabled` state.
+
+        Returns:
+            True if the motor is enabled, False otherwise.
+
+        Raises:
+            CommunicationError: On CAN communication issues.
+            MotorError: For motor-reported errors.
+        """
         self._is_enabled = await self._low_level_api.read_en_pin_status(self.can_id)
         return self._is_enabled
 
     def is_homed(self) -> bool:
+        """
+        Returns the cached homed state of the motor.
+
+        This state is typically updated after a successful `home_axis()` or
+        `set_current_position_as_zero()` operation.
+
+        Returns:
+            True if the motor is considered homed, False otherwise.
+        """
         return self._is_homed
 
     def is_calibrated(self) -> bool:
+        """
+        Returns the cached calibration state of the motor's encoder.
+
+        This state is updated after a `calibrate_encoder()` operation.
+
+        Returns:
+            True if the motor's encoder is considered calibrated, False otherwise.
+        """
         return self._is_calibrated
 
     async def get_current_position_steps(self) -> int:
+        """
+        Reads and returns the motor's current position in raw encoder steps.
+
+        This actively queries the motor using command 0x31 (Read Encoder Addition).
+        Updates the internal `_current_position_steps` state.
+
+        Returns:
+            The current motor position in encoder steps.
+
+        Raises:
+            CommunicationError: On CAN communication issues.
+            MotorError: For motor-reported errors.
+        """
         pos_steps = await self._low_level_api.read_encoder_value_addition(self.can_id)
         self._current_position_steps = pos_steps
         return pos_steps
 
     async def get_current_position_user(self) -> float:
+        """
+        Reads the motor's current position and converts it to user-defined units.
+
+        This method first calls `get_current_position_steps()` to get the raw
+        step count, then applies the axis's kinematics for conversion.
+
+        Returns:
+            The current motor position in user-defined units (e.g., mm, degrees).
+
+        Raises:
+            CommunicationError: On CAN communication issues.
+            MotorError: For motor-reported errors.
+            KinematicsError: If an error occurs during kinematic conversion.
+        """
         steps = await self.get_current_position_steps()
         return self.kinematics.steps_to_user(steps)
 
     async def get_current_speed_rpm(self) -> int:
+        """
+        Reads and returns the motor's current speed in Revolutions Per Minute (RPM).
+
+        This actively queries the motor using command 0x32.
+        Updates the internal `_current_speed_rpm` state.
+
+        Returns:
+            The current motor speed in RPM.
+
+        Raises:
+            CommunicationError: On CAN communication issues.
+            MotorError: For motor-reported errors.
+        """
         rpm = await self._low_level_api.read_motor_speed_rpm(self.can_id)
         self._current_speed_rpm = rpm
         return rpm
 
     async def get_current_speed_user(self) -> float:
+        """
+        Reads the motor's current speed in RPM and converts it to user-defined speed units.
+
+        The conversion logic depends on the type of kinematics configured for the axis.
+        For `RotaryKinematics` and `LinearKinematics`, it converts RPM to user units/sec.
+        For `EccentricKinematics`, it's a more complex calculation involving current position.
+
+        Returns:
+            The current motor speed in user-defined units per second (e.g., mm/s, deg/s).
+            Returns 0.0 if the kinematics type is not fully supported for this conversion.
+
+        Raises:
+            CommunicationError: On CAN communication issues.
+            MotorError: For motor-reported errors.
+            KinematicsError: If an error occurs during kinematic conversion.
+        """
         rpm = await self.get_current_speed_rpm()
         motor_revs_per_sec = rpm / 60.0
         # Assuming motor_speed_to_user_speed in kinematics takes motor RPM.
@@ -520,6 +851,20 @@ class Axis:
 
 
     async def get_status_dict(self) -> Dict[str, Any]:
+        """
+        Retrieves a dictionary containing various status information about the axis.
+
+        This includes name, CAN ID, timestamp, position (steps and user units),
+        enabled/homed/calibrated states, motor status code and string,
+        any error state, and whether a move is currently in progress.
+
+        Returns:
+            A dictionary with axis status information.
+
+        Raises:
+            CommunicationError: If querying motor status or position fails.
+            MotorError: For motor-reported errors during status queries.
+        """
         pos_steps = self._current_position_steps if self._current_position_steps is not None else await self.get_current_position_steps()
         pos_user = self.kinematics.steps_to_user(pos_steps)
         is_en = self._is_enabled # Use cached, or await self.read_en_status() for fresh
@@ -548,11 +893,38 @@ class Axis:
         return await self._low_level_api.query_motor_status(self.can_id)
 
     def is_move_complete(self) -> bool:
+        """
+        Checks if the last commanded move for this axis has completed.
+
+        This is based on the state of an internal future (`_active_move_future`)
+        that tracks move completion.
+
+        Returns:
+            True if no move is active or the last move has completed (successfully or with error).
+            False if a move is currently in progress.
+        """
         if self._active_move_future:
             return self._active_move_future.done()
         return True
 
     async def wait_for_move_completion(self, timeout: Optional[float] = None) -> None:
+        """
+        Asynchronously waits until the current move operation for this axis is complete
+        or a timeout occurs.
+
+        If no move is active, this method returns immediately.
+        If the move future completes with an exception (e.g., MotorError, LimitError),
+        that exception will be re-raised by this method.
+
+        Args:
+            timeout: Optional maximum time in seconds to wait for completion.
+                     If None, waits indefinitely (or until the move naturally completes/fails).
+
+        Raises:
+            CommunicationError: If the wait times out.
+            MKSServoError (or subclasses): If the move itself failed and its future
+                                          was set with an exception.
+        """
         if self._active_move_future and not self._active_move_future.done():
             try:
                 await asyncio.wait_for(self._active_move_future, timeout=timeout)
@@ -610,3 +982,4 @@ class Axis:
         except Exception as e: # Catch any other unexpected error during ping
             logger.error(f"Axis '{self.name}': Ping failed due to unexpected error: {e}", exc_info=True)
             return False
+        

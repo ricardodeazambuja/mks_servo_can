@@ -1,4 +1,3 @@
-# mks_servo_can/mks_servo_simulator/mks_simulator/virtual_can_bus.py
 """
 Virtual CAN Bus for the MKS Servo Simulator.
 Handles communication between the mks-servo-can library (in sim mode)
@@ -23,7 +22,22 @@ logger = logging.getLogger(__name__)
 
 
 class VirtualCANBus:
+    """
+    Simulates a CAN bus, managing communication between one or more connected
+    clients (representing the mks-servo-can library) and multiple
+    SimulatedMotor instances.
+
+    It listens for client connections, routes incoming simulated CAN messages
+    to the appropriate motor(s), and forwards motor responses back to the client.
+    It can also simulate bus latency.
+    """
     def __init__(self, loop: asyncio.AbstractEventLoop):
+        """
+        Initializes the VirtualCANBus.
+
+        Args:
+            loop: The asyncio event loop to use for server and motor tasks.
+        """
         self._loop = loop
         self.simulated_motors: Dict[int, SimulatedMotor] = (
             {}
@@ -36,6 +50,14 @@ class VirtualCANBus:
         )
 
     def add_motor(self, motor: SimulatedMotor):
+        """
+        Adds a SimulatedMotor instance to the virtual CAN bus.
+
+        If a motor with the same CAN ID already exists, it will be overwritten.
+
+        Args:
+            motor: The SimulatedMotor instance to add.
+        """
         if motor.can_id in self.simulated_motors:
             logger.warning(
                 f"Motor with CAN ID {motor.can_id} already exists on virtual bus. Overwriting."
@@ -47,24 +69,47 @@ class VirtualCANBus:
         # self._loop.create_task(motor.start()) # Start motor's internal simulation loop
 
     async def start_all_motors(self):
+        """
+        Starts the internal simulation loop for all registered SimulatedMotor instances.
+        This typically involves scheduling their `_update_state` methods as asyncio tasks.
+        """
         logger.info("Starting all simulated motors...")
         for motor in self.simulated_motors.values():
             self._loop.create_task(motor.start())
         logger.info("All simulated motors have been issued a start command.")
 
     async def stop_all_motors(self):
+        """
+        Stops the internal simulation loop for all registered SimulatedMotor instances.
+        This typically involves cancelling their `_update_state` tasks.
+        """
         logger.info("Stopping all simulated motors...")
         for motor in self.simulated_motors.values():
             await motor.stop_simulation()  # Ensure it's awaited if stop_simulation is async
         logger.info("All simulated motors have been stopped.")
 
     def remove_motor(self, can_id: int):
+        """
+        Removes a simulated motor from the virtual CAN bus.
+
+        Args:
+            can_id: The CAN ID of the motor to remove.
+        """
         if can_id in self.simulated_motors:
             self.simulated_motors.pop(can_id)
             # self._loop.create_task(motor.stop_simulation()) # Ensure it stops
             logger.info(f"Removed simulated motor with CAN ID {can_id:03X}.")
 
     def set_latency(self, latency_ms: float):
+        """
+        Sets the simulated round-trip communication latency for the virtual CAN bus.
+
+        This latency is applied to messages passing through the bus, split
+        between receiving a command and sending a response.
+
+        Args:
+            latency_ms: The total round-trip latency in milliseconds. Must be non-negative.
+        """
         self.global_latency_ms = max(0, latency_ms)
         logger.info(
             f"Virtual CAN bus latency set to {self.global_latency_ms:.2f} ms."
@@ -178,6 +223,18 @@ class VirtualCANBus:
             async def send_async_completion_to_client(
                 resp_can_id: int, resp_payload_with_crc: bytes
             ):
+                """
+                Callback for SimulatedMotor to send asynchronous completion messages.
+
+                This function is passed to the motor model, allowing it to send
+                messages (like move completion notifications) back to the client
+                after an initial command has been processed. Incorporates bus latency.
+
+                Args:
+                    resp_can_id: The CAN ID to use for the response (typically motor's ID).
+                    resp_payload_with_crc: The complete response payload, including
+                                           echoed command, data, and CRC.
+                """
                 if self.global_latency_ms > 0:
                     await asyncio.sleep(
                         self.global_latency_ms / 2000.0

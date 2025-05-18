@@ -1,4 +1,12 @@
-# mks_servo_can/mks_servo_simulator/setup.py
+"""
+Setup script for the mks-servo-simulator package.
+
+This script uses setuptools to package and distribute the mks-servo-simulator,
+a command-line tool that emulates MKS SERVO42D/57D CAN motors.
+The simulator allows for testing the mks-servo-can library without
+requiring physical hardware. It defines metadata, dependencies, and the
+entry point for the simulator's command-line interface.
+"""
 import os
 import re
 from setuptools import find_packages, setup

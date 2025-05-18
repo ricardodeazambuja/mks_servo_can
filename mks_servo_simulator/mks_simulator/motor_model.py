@@ -1,4 +1,3 @@
-# mks_servo_can_project/mks_servo_simulator/mks_simulator/motor_model.py
 """
 Simulated Motor Model for MKS SERVO42D/57D.
 Models the internal state and behavior of a motor responding to CAN commands.
@@ -27,6 +26,12 @@ except ImportError:
     )
 
     class _ConstPlaceholder:
+        """
+        A placeholder class for MKS servo constants.
+        This class is used as a fallback when the main `mks_servo_can.constants`
+        module cannot be imported, ensuring the simulator can still run with
+        a basic set of predefined command codes and values.
+        """
         # Part 5.1 - Read Status
         CMD_READ_ENCODER_CARRY = 0x30
         CMD_READ_ENCODER_ADDITION = 0x31
@@ -136,16 +141,30 @@ except ImportError:
     const = _ConstPlaceholder()
 
     def calculate_crc(can_id: int, data_bytes: list[int]) -> int:
+        """
+        Fallback CRC calculation used if the main library's CRC function is unavailable.
+        Calculates an 8-bit checksum: (CAN_ID + sum_of_data_bytes) & 0xFF.
+
+        Args:
+            can_id: The CAN ID.
+            data_bytes: A list of data bytes (command code + data).
+
+        Returns:
+            The calculated 8-bit CRC.
+        """
         checksum = can_id
         for byte_val in data_bytes:
             checksum += byte_val
         return checksum & 0xFF
 
     class ParameterError(Exception): # Basic fallback
+        """Fallback exception for invalid parameters, used if main library exceptions are unavailable."""
         pass
     class LimitError(Exception): # Basic fallback
+        """Fallback exception for limit errors, used if main library exceptions are unavailable."""
         pass
     class MKSServoError(Exception): # Basic fallback
+        """Fallback base exception for MKS Servo errors, used if main library exceptions are unavailable."""
         pass
 
 SIM_TIME_STEP_MS = 10
@@ -154,6 +173,19 @@ SIM_MAX_ACCEL_PARAM = 255
 
 
 def mks_speed_param_to_rpm(param: int, mode: int = const.MODE_SR_VFOC) -> float:
+    """
+    Converts an MKS speed parameter (0-3000) to an approximate RPM value for simulation.
+
+    The conversion depends on the motor's work mode, as different modes have
+    different maximum RPMs associated with the 0-3000 parameter range.
+
+    Args:
+        param: The MKS speed parameter (0-3000).
+        mode: The current work mode of the motor (e.g., `const.MODE_SR_VFOC`).
+
+    Returns:
+        The approximate motor speed in RPM.
+    """
     max_rpm_for_mode = const.MAX_RPM_VFOC_MODE # Default
     if mode in [const.MODE_CR_OPEN, getattr(const, 'MODE_SR_OPEN', -1)]: # Check if SR_OPEN exists
         max_rpm_for_mode = const.MAX_RPM_OPEN_MODE
@@ -169,6 +201,22 @@ def mks_speed_param_to_rpm(param: int, mode: int = const.MODE_SR_VFOC) -> float:
 def mks_accel_param_to_rpm_per_sec_sq(
     param: int, current_rpm: float, target_rpm: float
 ) -> float:
+    """
+    Converts an MKS acceleration parameter (0-255) to an approximate acceleration
+    in RPM per second squared for simulation.
+
+    A parameter of 0 implies instantaneous acceleration. The formula is based
+    on the MKS manual's description of acceleration timing.
+
+    Args:
+        param: The MKS acceleration parameter (0-255).
+        current_rpm: The current RPM of the motor (not directly used in this simplified model).
+        target_rpm: The target RPM of the motor (not directly used in this simplified model).
+
+    Returns:
+        The approximate acceleration in RPM/s^2. Returns float('inf') for
+        instantaneous acceleration (param=0 or very high).
+    """
     if param == 0: # Instantaneous
         return float("inf") 
     if param > SIM_MAX_ACCEL_PARAM:
@@ -183,6 +231,14 @@ def mks_accel_param_to_rpm_per_sec_sq(
 
 
 class SimulatedMotor:
+    """
+    Models the internal state and behavior of an MKS SERVO42D/57D motor.
+
+    This class simulates responses to CAN commands, updates its position, speed,
+    and other parameters based on received commands and internal timing.
+    It is designed to work with the VirtualCANBus for testing the mks-servo-can
+    library without physical hardware.
+    """
     def __init__(
         self,
         can_id: int,
@@ -193,6 +249,20 @@ class SimulatedMotor:
         min_pos_limit_steps: Optional[int] = None,
         max_pos_limit_steps: Optional[int] = None,
     ):
+        """
+        Initializes a new simulated MKS servo motor instance.
+
+        Args:
+            can_id: The CAN ID this simulated motor will respond to.
+            loop: The asyncio event loop this motor's simulation will run in.
+            motor_type: The type of motor being simulated (e.g., "SERVO42D").
+                        This can influence default parameters like current.
+            initial_pos_steps: The starting position of the motor in encoder steps.
+            steps_per_rev_encoder: The number of encoder steps per one full revolution.
+                                   Defaults to `const.ENCODER_PULSES_PER_REVOLUTION`.
+            min_pos_limit_steps: Optional minimum software position limit in steps.
+            max_pos_limit_steps: Optional maximum software position limit in steps.
+        """
         self.can_id = can_id  # This is the ID the motor listens to
         self.original_can_id = can_id # To respond from, even if self.can_id is changed by 0x8B
         self.motor_type = motor_type
@@ -277,6 +347,20 @@ class SimulatedMotor:
     def _generate_response(
         self, request_command_code: int, data: List[int]
     ) -> Tuple[int, bytes]:
+        """
+        Generates a complete CAN response payload including echoed command and CRC.
+
+        The response is always generated using the motor's `original_can_id`.
+
+        Args:
+            request_command_code: The command code that was received and is being responded to
+                                  (this will be the first byte of the response data).
+            data: A list of integer data bytes forming the core of the response payload.
+
+        Returns:
+            A tuple containing the CAN ID to respond from (original_can_id) and
+            the fully formed response payload as bytes (echoed_command + data + crc).
+        """
         # Always respond with the original CAN ID the command was sent to,
         # even if self.can_id (the listening ID) has been "changed" by 0x8B.
         # The virtual CAN bus routes messages to this motor instance based on its current self.can_id.
@@ -287,12 +371,37 @@ class SimulatedMotor:
     def _generate_simple_status_response(
         self, command_code: int, success: bool = True
     ) -> Tuple[int, bytes]:
+        """
+        Generates a common success/failure status response payload.
+
+        Many MKS commands respond with a single status byte (0x01 for success,
+        0x00 for failure) after the echoed command code.
+
+        Args:
+            command_code: The command code being responded to.
+            success: True if the operation was successful, False otherwise.
+
+        Returns:
+            A tuple (original_can_id, response_payload_bytes) for a status response.
+        """
         status = const.STATUS_SUCCESS if success else const.STATUS_FAILURE
         return self._generate_response(command_code, [status])
 
     async def _send_completion_if_callback(
         self, command_code: Optional[int], status_byte: int
     ):
+        """
+        Sends an asynchronous completion message via the registered callback, if available.
+
+        This is used for commands that have multi-stage responses, like move commands
+        that first acknowledge start and then later signal completion or failure.
+        Only sends if `slave_active_initiation_enabled` is True.
+
+        Args:
+            command_code: The original command code for which this is a completion message.
+                          If None, no message is sent.
+            status_byte: The status code for the completion (e.g., POS_RUN_COMPLETE).
+        """
         if self._send_completion_callback and command_code is not None and self.slave_active_initiation_enabled:
             logger.debug(
                 f"Motor {self.original_can_id}: Sending async completion for CMD {command_code:02X} with status {status_byte:02X}"
@@ -337,6 +446,15 @@ class SimulatedMotor:
 
 
     async def _update_state(self):
+        """
+        Asynchronous task that simulates the motor's continuous state updates.
+
+        This loop runs periodically, updating the motor's position based on its
+        current and target RPM, and configured acceleration. It also handles
+        reaching target positions for positional moves and manages the motor's
+        status code (e.g., speeding up, stopped).
+        This task is started by `start()` and cancelled by `stop_simulation()`.
+        """
         # (Existing _update_state logic - mostly unchanged for now unless new commands affect continuous behavior)
         # This loop primarily handles motion. Other state changes are discrete.
         while True:
@@ -434,6 +552,21 @@ class SimulatedMotor:
         accel_mks: int,
         command_code: int,
     ):
+        """
+        Manages the simulation of a positional move.
+
+        This involves setting the target position, calculating target RPM based on
+        the provided MKS speed parameter, and managing an asyncio.Future that
+        resolves when the simulated move is considered complete.
+        It cancels any pre-existing move.
+
+        Args:
+            target_pos_abs_steps: The absolute target position in encoder steps.
+            speed_mks: The MKS speed parameter (0-3000) for this move.
+            accel_mks: The MKS acceleration parameter (0-255) for this move.
+            command_code: The original MKS command code that initiated this move
+                          (e.g., 0xFD, 0xFE), used for logging and completion messages.
+        """
         # (Existing _handle_positional_move logic - largely unchanged but uses original_can_id for logging)
         if self._current_move_task and not self._current_move_task.done():
             logger.warning(f"Motor {self.original_can_id}: Cancelling previous move for new one.")
@@ -516,6 +649,26 @@ class SimulatedMotor:
         data_from_payload: bytes, # This is data ONLY (no command code, no CRC)
         send_completion_callback: Callable[[int, bytes], asyncio.Task],
     ) -> Optional[Tuple[int, bytes]]:
+        """
+        Processes an incoming CAN command for this simulated motor.
+
+        It updates the motor's internal state based on the command and its data,
+        and generates an appropriate response. For commands that involve prolonged
+        actions (like movement or homing), it may schedule asynchronous completion
+        messages via the `send_completion_callback`.
+
+        Args:
+            command_code: The MKS CAN command code byte.
+            data_from_payload: The data bytes accompanying the command (excluding command code and CRC).
+            send_completion_callback: A callback function provided by the VirtualCANBus
+                                      to send asynchronous completion messages back to the client.
+                                      Signature: `callback(response_can_id: int, response_payload_with_crc: bytes)`
+
+        Returns:
+            An optional tuple `(response_can_id, response_payload_with_crc)` if an
+            immediate response is to be sent. Returns None if the response is handled
+            asynchronously or if no direct response is required for the command.
+        """
         self._send_completion_callback = send_completion_callback
         response_data_for_payload: Optional[List[int]] = None
         response_status_override: Optional[int] = None # For commands that return specific status, not just success/fail
@@ -687,6 +840,7 @@ class SimulatedMotor:
             # Simulate completion after a delay if active responses on
             if self.slave_active_initiation_enabled:
                 async def _complete_homing():
+                    """Simulates the completion of the homing sequence."""
                     await asyncio.sleep(0.5) # Simulate homing time
                     self.is_homed = True
                     self.position_steps = 0.0
@@ -880,6 +1034,7 @@ class SimulatedMotor:
                     # Simulate completion of stop
                     if self.slave_active_initiation_enabled:
                         async def _complete_stop():
+                            """Simulates the completion of a stop command."""
                             await asyncio.sleep(0.1 + (255 - mks_accel_val) * 0.001) # Sim stop time
                             await self._send_completion_if_callback(command_code, const.POS_RUN_COMPLETE) # "stop complete"
                         self._loop.create_task(_complete_stop())
@@ -905,6 +1060,13 @@ class SimulatedMotor:
 
 
     async def start(self):
+        """
+        Starts the asynchronous simulation loop for this motor.
+
+        This creates and schedules the `_update_state` coroutine, which will
+        periodically update the motor's internal state (position, speed, etc.).
+        Does nothing if the simulation is already running.
+        """
         if self.is_running_task and not self.is_running_task.done():
             logger.warning(f"Motor {self.original_can_id} simulation task already running.")
             return
@@ -913,6 +1075,11 @@ class SimulatedMotor:
         logger.info(f"SimulatedMotor {self.original_can_id} update task started.")
 
     async def stop_simulation(self):
+        """
+        Stops the asynchronous simulation loop for this motor.
+
+        This cancels the `_update_state` task and any active move future.
+        """
         if self._current_move_task and not self._current_move_task.done():
             self._current_move_task.cancel("Simulation stopping")
             await asyncio.sleep(0) 
@@ -928,4 +1095,3 @@ class SimulatedMotor:
                 logger.error(f"SimulatedMotor {self.original_can_id} update task error during stop: {e}")
         self.is_running_task = None
         logger.info(f"SimulatedMotor {self.original_can_id} update task stopped.")
-        

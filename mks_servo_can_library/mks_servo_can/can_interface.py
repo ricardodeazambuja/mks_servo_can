@@ -1,4 +1,3 @@
-# mks_servo_can/mks_servo_can_library/mks_servo_can/can_interface.py
 """
 CAN Communication Layer for MKS Servo Control.
 Handles raw CAN bus communication using python-can for real hardware
@@ -19,10 +18,23 @@ except ImportError:
 
     # Create dummy can classes/exceptions if can is not installed for basic loading
     class can: # type: ignore
+        """
+        Dummy 'can' module placeholder used when the 'python-can' library is not installed.
+        This allows the mks_servo_can library to be imported and for basic type
+        checking or offline development, but it does not provide real CAN functionality.
+        """
         class BusABC:
+            """
+            Dummy placeholder for the can.BusABC class from the python-can library.
+            Represents an abstract CAN bus.
+            """
             pass
 
         class Message:
+            """
+            Dummy placeholder for the can.Message class from the python-can library.
+            Represents a single CAN message with minimal attributes.
+            """
             def __init__(
                 self,
                 arbitration_id=0,
@@ -31,6 +43,16 @@ except ImportError:
                 timestamp=0.0,
                 dlc=None # Added dlc to dummy
             ):
+                """
+                Initializes a dummy CAN Message object.
+
+                Args:
+                    arbitration_id (int): The arbitration ID of the message.
+                    data (Optional[bytes]): The data payload of the message. Defaults to empty bytes.
+                    is_extended_id (bool): Flag indicating if an extended ID is used.
+                    timestamp (float): Timestamp of the message.
+                    dlc (Optional[int]): Data Length Code. If None, it's derived from data.
+                """
                 self.arbitration_id = arbitration_id
                 self.data = data if data is not None else b"" # Changed to b""
                 if dlc is None:
@@ -45,11 +67,19 @@ except ImportError:
                 self.is_remote_frame = False
 
         class CanError(Exception):
+            """
+            Dummy placeholder for the can.CanError exception from python-can.
+            Base class for CAN-related errors in the dummy module.
+            """
             pass
 
         class CanOperationError(
             CanError
         ):
+            """
+            Dummy placeholder for the can.CanOperationError exception from python-can.
+            Indicates an error during a CAN operation.
+            """
             pass
 
 
@@ -546,6 +576,15 @@ class CANInterface:
 
     @property
     def is_connected(self) -> bool:
+        """
+        Checks if the CAN interface is currently connected.
+
+        For simulator mode, it checks if the stream writer is active and not closing.
+        For hardware mode, it checks if the python-can bus object exists.
+
+        Returns:
+            True if connected, False otherwise.
+        """
         if self.use_simulator:
             return (
                 self._sim_writer is not None

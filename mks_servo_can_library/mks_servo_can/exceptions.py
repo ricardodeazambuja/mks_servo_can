@@ -1,4 +1,3 @@
-# mks_servo_can/mks_servo_can_library/mks_servo_can/exceptions.py
 """
 Custom exceptions for the MKS Servo CAN library.
 """
@@ -7,6 +6,16 @@ Custom exceptions for the MKS Servo CAN library.
 class MKSServoError(Exception):
     """Base exception class for all MKS Servo library errors."""
     def __init__(self, message, *args, error_code=None, can_id=None, **kwargs):
+        """
+        Initializes the base MKS Servo library error.
+
+        Args:
+            message (str): The primary error message.
+            *args: Additional positional arguments for the base Exception.
+            error_code (Optional[int]): An optional error code associated with the error.
+            can_id (Optional[int]): The CAN ID of the motor involved, if applicable.
+            **kwargs: Additional keyword arguments.
+        """
         super().__init__(message, *args)  # Pass message and any other positional args to parent Exception
         self.message = message  # Store message for direct access if needed
         self.error_code = error_code
@@ -15,6 +24,9 @@ class MKSServoError(Exception):
         # self.additional_kwargs = kwargs
 
     def __str__(self):
+        """
+        Returns a string representation of the error, including CAN ID and error code if available.
+        """
         # Get the base message from Exception's __str__
         base_message = super().__str__()
 
@@ -57,11 +69,22 @@ class MotorError(MKSServoError):
     """Exception for errors reported by the motor controller itself."""
 
     def __init__(self, message, error_code=None, can_id=None):
+        """
+        Initializes a motor-specific error.
+
+        Args:
+            message (str): The primary error message.
+            error_code (Optional[int]): The error code reported by the motor, if any.
+            can_id (Optional[int]): The CAN ID of the motor that reported the error.
+        """
         # Call the enhanced MKSServoError constructor which now handles these keywords
         super().__init__(message, error_code=error_code, can_id=can_id)
         # self.message, self.error_code, and self.can_id are now set by the parent.
 
     def __str__(self):
+        """
+        Returns a string representation of the motor error, including CAN ID and error code.
+        """
         # To maintain MotorError's specific " - " formatting:
         parts = [self.message]  # Access self.message set by MKSServoError
         if self.can_id is not None: # Access self.can_id set by MKSServoError
@@ -84,10 +107,23 @@ class MultiAxisError(MKSServoError):
     """Errors specific to the MultiAxisController operations."""
 
     def __init__(self, message, individual_errors=None):
+        """
+        Initializes an error related to multi-axis operations.
+
+        Args:
+            message (str): The primary error message.
+            individual_errors (Optional[dict]): A dictionary where keys are axis identifiers
+                                                 (e.g., names or CAN IDs) and values are
+                                                 the specific errors related to that axis.
+        """
         super().__init__(message)
         self.individual_errors = individual_errors or {}
 
     def __str__(self):
+        """
+        Returns a string representation of the multi-axis error,
+        including details of individual axis errors if present.
+        """
         base_msg = super().__str__()
         if self.individual_errors:
             err_details = "; ".join(
@@ -130,4 +166,4 @@ class LimitError(MotorError):
 
 class StallError(MotorError):
     """Errors related to motor stall detection."""
-
+    

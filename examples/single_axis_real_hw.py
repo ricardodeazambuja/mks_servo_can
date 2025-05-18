@@ -1,5 +1,3 @@
-# mks_servo_can/examples/single_axis_real_hw.py
-# This line indicates the path to an example script.
 # This script demonstrates how to control a single MKS Servo motor using a real, physical CAN hardware interface.
 # It serves as a practical guide for users looking to integrate the library with actual hardware.
 
@@ -125,7 +123,7 @@ async def main():
         return # Exits the main function if connection fails.
     except Exception as e:  # pylint: disable=broad-except
         # Catches any other unexpected exceptions during connection.
-        # 'pylint: disable=broad-except' is used to acknowledge that catching generic 'Exception'
+        # disable=broad-except is used to acknowledge that catching generic 'Exception'
         # is sometimes necessary at a high level but should generally be more specific.
         logger.error(
             "An unexpected error occurred during CAN connection: %s", e

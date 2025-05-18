@@ -1,3 +1,12 @@
+"""
+Setup script for the mks-servo-can Python library.
+
+This script uses setuptools to package and distribute the mks-servo-can library,
+which provides tools for controlling MKS SERVO42D and MKS SERVO57D motors
+via a CAN interface. It includes metadata such as package name, version, author,
+dependencies, and classifiers.
+"""
+
 # mks_servo_can_project/mks_servo_can_library/setup.py
 import re
 import os

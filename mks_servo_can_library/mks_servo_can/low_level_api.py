@@ -1,4 +1,3 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/low_level_api.py
 """
 Low-Level API for MKS Servo CAN commands.
 Implements functions to construct, send, and parse responses for each
@@ -14,9 +13,23 @@ try:
 except ImportError:
 
     class CanMessage:  # type: ignore
+        """
+        A dummy class representing a CAN message, used when python-can is not installed.
+        This allows the library to be imported and type-checked even if the full
+        CAN hardware support is unavailable.
+        """
         def __init__(
             self, arbitration_id=0, data=None, is_extended_id=False, dlc=0 # type: ignore
         ):
+            """
+            Initializes a dummy CanMessage object.
+
+            Args:
+                arbitration_id: The CAN message arbitration ID.
+                data: The data payload of the message. Defaults to empty bytes.
+                is_extended_id: Whether the message uses an extended ID.
+                dlc: Data Length Code. Calculated if not provided.
+            """
             self.arbitration_id = arbitration_id
             self.data = data if data is not None else b""
             self.is_extended_id = is_extended_id
@@ -50,6 +63,12 @@ class LowLevelAPI:
     """
 
     def __init__(self, can_interface: CANInterface):
+        """
+        Initializes the LowLevelAPI with a CANInterface instance.
+
+        Args:
+            can_interface: An instance of CANInterface for sending/receiving messages.
+        """
         self.can_if = can_interface
 
     async def _send_command_and_get_response(
@@ -60,6 +79,34 @@ class LowLevelAPI:
         expected_dlc: Optional[int] = None,
         timeout: float = const.CAN_TIMEOUT_SECONDS,
     ) -> CanMessage:
+        """
+        Sends a command to the motor and waits for a response.
+
+        This method constructs a CAN message with the given command code and data,
+        calculates the CRC, sends it, and then waits for a matching response
+        from the motor. It validates the response's command code echo, CRC,
+        and optionally the DLC.
+
+        Args:
+            can_id: The CAN ID of the target motor (0-2047).
+            command_code: The command code byte.
+            data: An optional list of integer data bytes to send with the command.
+            expected_dlc: An optional integer specifying the expected Data Length Code
+                          of the response message. If provided, the response DLC
+                          will be validated against this value.
+            timeout: Timeout in seconds for waiting for the response.
+
+        Returns:
+            A CanMessage object representing the valid response from the motor.
+
+        Raises:
+            ParameterError: If the provided CAN ID is invalid.
+            CommunicationError: If a timeout occurs while waiting for the response,
+                                or other communication issues arise.
+            CommandError: If the response is malformed (e.g., too short, command code
+                          mismatch, DLC mismatch).
+            CRCError: If the CRC of the received response message is invalid.
+        """
         if not (const.BROADCAST_ADDRESS <= can_id <= 0x7FF):
             raise ParameterError(
                 f"Invalid CAN ID: {can_id}. Must be 0-2047 (0x7FF)."
@@ -143,6 +190,23 @@ class LowLevelAPI:
         data: Optional[List[int]] = None,
         timeout: float = const.CAN_TIMEOUT_SECONDS,
     ):
+        """
+        Sends a command to the motor without waiting for or processing a specific response.
+
+        This is typically used for commands where no direct acknowledgment is expected
+        or when sending broadcast messages.
+
+        Args:
+            can_id: The CAN ID of the target motor or broadcast address (0-2047).
+            command_code: The command code byte.
+            data: An optional list of integer data bytes to send with the command.
+            timeout: Timeout in seconds for the send operation itself (if supported
+                     by the underlying CAN interface).
+
+        Raises:
+            ParameterError: If the provided CAN ID is invalid.
+            CANError: If an error occurs during the CAN send operation.
+        """
         if not (const.BROADCAST_ADDRESS <= can_id <= 0x7FF):
             raise ParameterError(
                 f"Invalid CAN ID: {can_id}. Must be 0-2047 (0x7FF)."
@@ -167,6 +231,22 @@ class LowLevelAPI:
 
     # --- Part 5.1: Read Status Parameter Commands ---
     async def read_encoder_value_carry(self, can_id: int) -> Tuple[int, int]:
+        """
+        Reads the encoder value with carry (Command 0x30).
+
+        This command returns the encoder's carry count and the current value within
+        a single revolution range (0-0x3FFF).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            A tuple (carry, value), where 'carry' is the int32_t carry value
+            and 'value' is the uint16_t current encoder value (0-16383).
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_ENCODER_CARRY, expected_dlc=8
         )
@@ -175,6 +255,21 @@ class LowLevelAPI:
         return carry, value
 
     async def read_encoder_value_addition(self, can_id: int) -> int:
+        """
+        Reads the accumulated encoder value (addition) (Command 0x31).
+
+        This command returns the total accumulated encoder pulses as a signed
+        48-bit integer (transmitted as 6 bytes).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            The accumulated encoder value as an integer.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_ENCODER_ADDITION, expected_dlc=8
         )
@@ -186,6 +281,21 @@ class LowLevelAPI:
         return struct.unpack("<q", val_bytes)[0]
 
     async def read_motor_speed_rpm(self, can_id: int) -> int:
+        """
+        Reads the real-time speed of the motor in RPM (Command 0x32).
+
+        The speed is returned as a signed 16-bit integer. Positive for CCW,
+        negative for CW rotation.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            The motor speed in RPM as an integer.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_MOTOR_SPEED_RPM, expected_dlc=4
         )
@@ -193,6 +303,21 @@ class LowLevelAPI:
         return speed
 
     async def read_pulses_received(self, can_id: int) -> int:
+        """
+        Reads the number of pulses received by the motor (Command 0x33).
+
+        This typically applies when the motor is in a pulse control mode.
+        Returns as a signed 32-bit integer.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            The number of pulses received as an integer.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_PULSES_RECEIVED, expected_dlc=6
         )
@@ -200,6 +325,20 @@ class LowLevelAPI:
         return pulses
 
     async def read_io_status(self, can_id: int) -> Dict[str, int]:
+        """
+        Reads the status of the I/O ports (Command 0x34).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            A dictionary containing the status of IN_1, IN_2, OUT_1, OUT_2,
+            and the raw status byte. Values are 0 or 1.
+            Example: {'IN_1': 0, 'IN_2': 1, 'OUT_1': 0, 'OUT_2': 0, 'raw_byte': 0x02}
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_IO_STATUS, expected_dlc=3
         )
@@ -213,6 +352,21 @@ class LowLevelAPI:
         }
 
     async def read_raw_encoder_value_addition(self, can_id: int) -> int:
+        """
+        Reads the RAW accumulated encoder value (addition) (Command 0x35).
+
+        Similar to command 0x31, this returns the total accumulated encoder pulses
+        as a signed 48-bit integer.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            The raw accumulated encoder value as an integer.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_RAW_ENCODER_ADDITION, expected_dlc=8
         )
@@ -224,18 +378,60 @@ class LowLevelAPI:
         return struct.unpack("<q", val_bytes)[0]
 
     async def read_shaft_angle_error(self, can_id: int) -> int:
+        """
+        Reads the error of the motor shaft angle (Command 0x39).
+
+        Returns the difference between the target angle and the real-time angle
+        as a signed 32-bit integer. The scaling is 51200 counts for 360 degrees.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            The shaft angle error value.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_SHAFT_ANGLE_ERROR, expected_dlc=6
         )
         return struct.unpack("<i", response.data[1:5])[0]
 
     async def read_en_pin_status(self, can_id: int) -> bool:
+        """
+        Reads the EN (enable) pin status (Command 0x3A).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            True if the motor is enabled, False otherwise.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_EN_PIN_STATUS, expected_dlc=3
         )
         return response.data[1] == 0x01
 
     async def read_power_on_zero_status(self, can_id: int) -> int:
+        """
+        Reads the status of the "go back to zero when power on" function (Command 0x3B).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            An integer status code:
+            - 0: Going to zero.
+            - 1: Go back to zero success.
+            - 2: Go back to zero fail.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_POWER_ON_ZERO_STATUS, expected_dlc=3
         )
@@ -247,6 +443,19 @@ class LowLevelAPI:
         return status
 
     async def release_stall_protection(self, can_id: int) -> bool:
+        """
+        Releases the motor shaft locked-rotor protection state (Command 0x3D).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            True if release was successful, False if release failed (status 0).
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            CommandError: If an unexpected status is returned.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_RELEASE_STALL_PROTECTION, expected_dlc=3
         )
@@ -264,6 +473,19 @@ class LowLevelAPI:
             )
 
     async def read_motor_protection_state(self, can_id: int) -> bool:
+        """
+        Reads the motor shaft protection state (Command 0x3E).
+        Indicates if stall or position error protection is active.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            True if the motor is in a protected state, False otherwise.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_READ_MOTOR_PROTECTION_STATE, expected_dlc=3
         )
@@ -271,6 +493,18 @@ class LowLevelAPI:
 
     # --- Part 5.2: Set system parameters command ---
     async def calibrate_encoder(self, can_id: int) -> None:
+        """
+        Calibrates the encoder (Command 0x80).
+        The motor must be unloaded for calibration.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            CalibrationError: If the motor reports calibration failure.
+            CommandError: If an unexpected status is returned from the motor.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_CALIBRATE_ENCODER, data=[0x00], expected_dlc=3
         )
@@ -289,6 +523,18 @@ class LowLevelAPI:
             )
             
     async def set_work_mode(self, can_id: int, mode: int) -> None:
+        """
+        Sets the working mode of the motor (Command 0x82).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            mode: The work mode code (0-5). Refer to `const.MODE_*`.
+
+        Raises:
+            ParameterError: If the mode value is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the work mode.
+        """
         if not (const.MODE_CR_OPEN <= mode <= const.MODE_SR_VFOC):
             raise ParameterError(f"Invalid work mode: {mode}. Must be 0-5.")
         response = await self._send_command_and_get_response(
@@ -302,6 +548,18 @@ class LowLevelAPI:
             )
 
     async def set_working_current(self, can_id: int, current_ma: int) -> None:
+        """
+        Sets the working current of the motor (Command 0x83).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            current_ma: The working current in mA (uint16_t). Max values vary by motor.
+
+        Raises:
+            ParameterError: If the current value seems out of a typical safe range.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the working current.
+        """
         if not (0 <= current_ma <= 6000):
             raise ParameterError(f"Invalid working current: {current_ma}mA. Seems out of typical range.")
         current_bytes = list(struct.pack("<H", current_ma))
@@ -321,6 +579,19 @@ class LowLevelAPI:
     async def set_holding_current_percentage(
         self, can_id: int, percentage_code: int
     ) -> None:
+        """
+        Sets the holding current percentage (Command 0x9B).
+        Valid for OPEN and CLOSE modes.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            percentage_code: Code for holding current (0x00 for 10% to 0x08 for 90%).
+
+        Raises:
+            ParameterError: If the percentage_code is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the holding current.
+        """
         if not (0x00 <= percentage_code <= 0x08):
             raise ParameterError(
                 f"Invalid holding current code: {percentage_code}. Must be 0-8."
@@ -339,6 +610,18 @@ class LowLevelAPI:
             )
 
     async def set_subdivision(self, can_id: int, microsteps: int) -> None:
+        """
+        Sets the motor subdivision (microsteps) (Command 0x84).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            microsteps: The subdivision value (0-255).
+
+        Raises:
+            ParameterError: If the microsteps value is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the subdivision.
+        """
         if not (0 <= microsteps <= 255):
             raise ParameterError(f"Invalid microsteps value: {microsteps}. Must be 0-255.")
         response = await self._send_command_and_get_response(
@@ -352,6 +635,21 @@ class LowLevelAPI:
             )
             
     async def set_en_pin_active_level(self, can_id: int, level_code: int) -> None:
+        """
+        Sets the active level of the EN (enable) pin (Command 0x85).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            level_code: The active level code:
+                        - `const.EN_ACTIVE_LOW` (0x00): Low level active.
+                        - `const.EN_ACTIVE_HIGH` (0x01): High level active.
+                        - `const.EN_ACTIVE_ALWAYS` (0x02): Always active (Hold).
+
+        Raises:
+            ParameterError: If the level_code is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the EN pin active level.
+        """
         if level_code not in [
             const.EN_ACTIVE_LOW,
             const.EN_ACTIVE_HIGH,
@@ -374,6 +672,20 @@ class LowLevelAPI:
             )
 
     async def set_motor_direction(self, can_id: int, direction_code: int) -> None:
+        """
+        Sets the positive direction of motor rotation for pulse interface (Command 0x86).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            direction_code: The direction code:
+                            - `const.DIR_CW` (0x00): Clockwise rotation is positive.
+                            - `const.DIR_CCW` (0x01): Counter-clockwise rotation is positive.
+
+        Raises:
+            ParameterError: If the direction_code is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the direction.
+        """
         if direction_code not in [const.DIR_CW, const.DIR_CCW]:
             raise ParameterError(
                 f"Invalid motor direction code: {direction_code}. Must be 0 (CW) or 1 (CCW)."
@@ -389,6 +701,17 @@ class LowLevelAPI:
             )
 
     async def set_auto_screen_off(self, can_id: int, enable: bool) -> None:
+        """
+        Sets the auto screen off function for the motor's display (Command 0x87).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            enable: True to enable auto screen off, False to disable.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the auto screen off function.
+        """
         enable_code = 0x01 if enable else 0x00
         response = await self._send_command_and_get_response(
             can_id, const.CMD_SET_AUTO_SCREEN_OFF, data=[enable_code], expected_dlc=3
@@ -401,6 +724,17 @@ class LowLevelAPI:
             )
 
     async def set_stall_protection(self, can_id: int, enable: bool) -> None:
+        """
+        Sets the motor shaft locked-rotor protection function (Command 0x88).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            enable: True to enable stall protection, False to disable.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set stall protection.
+        """
         enable_code = 0x01 if enable else 0x00
         response = await self._send_command_and_get_response(
             can_id, const.CMD_SET_STALL_PROTECTION, data=[enable_code], expected_dlc=3
@@ -413,6 +747,17 @@ class LowLevelAPI:
             )
             
     async def set_subdivision_interpolation(self, can_id: int, enable: bool) -> None:
+        """
+        Sets the internal 256 subdivision interpolation function (Command 0x89).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            enable: True to enable interpolation, False to disable.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set subdivision interpolation.
+        """
         enable_code = 0x01 if enable else 0x00
         response = await self._send_command_and_get_response(
             can_id, const.CMD_SET_SUBDIVISION_INTERPOLATION, data=[enable_code], expected_dlc=3
@@ -425,6 +770,22 @@ class LowLevelAPI:
             )
 
     async def set_can_bitrate(self, can_id: int, bitrate_code: int) -> None:
+        """
+        Sets the CAN bus bitrate for the motor (Command 0x8A).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            bitrate_code: The bitrate code:
+                          - `const.CAN_BITRATE_125K` (0x00)
+                          - `const.CAN_BITRATE_250K` (0x01)
+                          - `const.CAN_BITRATE_500K` (0x02)
+                          - `const.CAN_BITRATE_1M` (0x03)
+
+        Raises:
+            ParameterError: If the bitrate_code is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the CAN bitrate.
+        """
         if bitrate_code not in [
             const.CAN_BITRATE_125K,
             const.CAN_BITRATE_250K,
@@ -443,6 +804,18 @@ class LowLevelAPI:
             )
 
     async def set_can_id(self, current_can_id: int, new_can_id: int) -> None:
+        """
+        Sets a new CAN ID for the motor (Command 0x8B).
+
+        Args:
+            current_can_id: The current CAN ID of the motor to address.
+            new_can_id: The new CAN ID to set (0-2047).
+
+        Raises:
+            ParameterError: If the new_can_id is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the new CAN ID.
+        """
         if not (0 <= new_can_id <= 0x7FF):
             raise ParameterError(f"Invalid new CAN ID: {new_can_id}. Must be 0-2047.")
         id_bytes = list(struct.pack("<H", new_can_id))
@@ -463,6 +836,19 @@ class LowLevelAPI:
     async def set_slave_respond_active(
         self, can_id: int, respond_enabled: bool, active_enabled: bool
     ) -> None:
+        """
+        Sets the slave response and active data initiation behavior (Command 0x8C).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            respond_enabled: True to enable motor responses, False to disable.
+            active_enabled: True to enable active data initiation by the motor
+                            (e.g., sending move completion messages), False to disable.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the parameters.
+        """
         respond_code = 0x01 if respond_enabled else 0x00
         active_code = 0x01 if active_enabled else 0x00
         data = [respond_code, active_code]
@@ -477,6 +863,19 @@ class LowLevelAPI:
             )
 
     async def set_group_id(self, can_id: int, group_id: int) -> None:
+        """
+        Sets the group ID for the motor (Command 0x8D).
+        Allows the motor to respond to commands sent to this group ID.
+
+        Args:
+            can_id: The specific CAN ID of the target motor.
+            group_id: The group ID to set (1-2047).
+
+        Raises:
+            ParameterError: If the group_id is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the group ID.
+        """
         if not (0x01 <= group_id <= 0x7FF):
             raise ParameterError(f"Invalid group ID: {group_id}. Must be 1-2047.")
         group_id_bytes = list(struct.pack("<H", group_id))
@@ -492,6 +891,17 @@ class LowLevelAPI:
             )
 
     async def set_key_lock(self, can_id: int, lock_enabled: bool) -> None:
+        """
+        Locks or unlocks the motor's physical keys/buttons (Command 0x8F).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            lock_enabled: True to lock the keys, False to unlock.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the key lock state.
+        """
         enable_code = 0x01 if lock_enabled else 0x00
         response = await self._send_command_and_get_response(
             can_id, const.CMD_SET_KEY_LOCK, data=[enable_code], expected_dlc=3
@@ -512,6 +922,27 @@ class LowLevelAPI:
         out1_mask_action: int = 2,
         out2_mask_action: int = 2
     ) -> None:
+        """
+        Writes to the motor's output IO ports (OUT1, OUT2) (Command 0x36).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            out1_value: Value for OUT1 (0 or 1). Required if out1_mask_action is 1.
+            out2_value: Value for OUT2 (0 or 1). Required if out2_mask_action is 1.
+            out1_mask_action: Action for OUT1.
+                              0: Do not write to OUT1.
+                              1: Write out1_value to OUT1.
+                              2: OUT1 value remains unchanged (default).
+            out2_mask_action: Action for OUT2.
+                              0: Do not write to OUT2.
+                              1: Write out2_value to OUT2.
+                              2: OUT2 value remains unchanged (default).
+
+        Raises:
+            ParameterError: If mask actions or values are invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to write to the IO port.
+        """
         if not (0 <= out1_mask_action <= 2 and 0 <= out2_mask_action <= 2):
             raise ParameterError("Mask actions must be 0, 1, or 2.")
 
@@ -557,6 +988,22 @@ class LowLevelAPI:
         end_limit_enabled: bool,
         home_mode: int
     ) -> None:
+        """
+        Sets the parameters for the homing operation (Command 0x90).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            home_trig_level: Effective level of the end stop (0: Low, 1: High).
+            home_dir: Direction of homing (0: CW, 1: CCW).
+            home_speed_rpm: Speed of homing in RPM (0-3000).
+            end_limit_enabled: True to enable endstop limit during homing, False otherwise.
+            home_mode: Homing method (0: Use Limit switch, 1: No Limit switch).
+
+        Raises:
+            ParameterError: If any parameter value is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the home parameters.
+        """
         if home_trig_level not in [0, 1]:
             raise ParameterError("home_trig_level must be 0 (Low) or 1 (High).")
         if home_dir not in [0, 1]:
@@ -585,6 +1032,22 @@ class LowLevelAPI:
             )
 
     async def go_home(self, can_id: int) -> int:
+        """
+        Commands the motor to perform the homing sequence (Command 0x91).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            The initial status code from the motor:
+            - `const.HOME_START` (1): Homing started.
+            - `const.HOME_SUCCESS` (2): Homing completed successfully (if immediate).
+            (Note: `const.HOME_FAIL` (0) will raise MotorError).
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor reports immediate failure to start homing.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_GO_HOME, expected_dlc=3
         )
@@ -597,6 +1060,17 @@ class LowLevelAPI:
         return status
         
     async def set_current_axis_to_zero(self, can_id: int) -> None:
+        """
+        Sets the current motor position as the zero point (Command 0x92).
+        This is like "GoHome" without running the motor.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the current axis to zero.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_SET_CURRENT_AXIS_TO_ZERO, expected_dlc=3
         )
@@ -610,6 +1084,20 @@ class LowLevelAPI:
     async def set_nolimit_home_params(
         self, can_id: int, reverse_angle_pulses: int, home_current_ma: int
     ) -> None:
+        """
+        Sets parameters for "no limit switch" homing (Command 0x94).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            reverse_angle_pulses: The angle (in pulses, uint32_t) to reverse
+                                  after stall during no-limit homing.
+            home_current_ma: The current (mA, uint16_t) to use during no-limit homing stall.
+
+        Raises:
+            ParameterError: If parameter values are out of range.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the parameters.
+        """
         if not (0 <= reverse_angle_pulses <= 0xFFFFFFFF):
             raise ParameterError("reverse_angle_pulses must be a uint32_t value.")
         if not (0 <= home_current_ma <= 0xFFFF):
@@ -630,6 +1118,18 @@ class LowLevelAPI:
             )
 
     async def set_limit_port_remap(self, can_id: int, enable_remap: bool) -> None:
+        """
+        Enables or disables limit port remapping (Command 0x9E).
+        In serial control mode, this can remap IN_1 to En and IN_2 to Dir.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            enable_remap: True to enable remapping, False to disable.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the limit port remap state.
+        """
         enable_code = 0x01 if enable_remap else 0x00
         response = await self._send_command_and_get_response(
             can_id, const.CMD_SET_LIMIT_PORT_REMAP, data=[enable_code], expected_dlc=3
@@ -650,6 +1150,21 @@ class LowLevelAPI:
         speed_code: int,
         direction_code: int
     ) -> None:
+        """
+        Sets parameters for the power-on auto-zero mode (Command 0x9A).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            mode: 0_Mode behavior (0: Disable, 1: DirMode, 2: NearMode).
+            set_zero_action: Action for setting zero point (0: Clean, 1: Set Current, 2: No Modify).
+            speed_code: Speed for auto-zero (0: slowest to 4: fastest).
+            direction_code: Direction for auto-zero (0: CW, 1: CCW).
+
+        Raises:
+            ParameterError: If any parameter value is invalid.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the 0_Mode parameters.
+        """
         if mode not in [0, 1, 2]:
             raise ParameterError("Invalid 0_Mode 'mode'. Must be 0, 1, or 2.")
         if set_zero_action not in [0, 1, 2]:
@@ -673,6 +1188,17 @@ class LowLevelAPI:
 
     # --- Part 5.6: Restore Default Parameters ---
     async def restore_default_parameters(self, can_id: int) -> None:
+        """
+        Restores the motor's parameters to their factory defaults (Command 0x3F).
+        The motor will restart and require calibration after this command.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to restore default parameters.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_RESTORE_DEFAULT_PARAMETERS, expected_dlc=3
         )
@@ -686,6 +1212,16 @@ class LowLevelAPI:
 
     # --- Part 5.7: Restart Motor ---
     async def restart_motor(self, can_id: int) -> None:
+        """
+        Restarts the motor controller (Command 0x41).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to restart.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_RESTART_MOTOR, expected_dlc=3
         )
@@ -706,6 +1242,22 @@ class LowLevelAPI:
         error_detection_time_ms_units: int,
         error_threshold_pulses: int
     ) -> None:
+        """
+        Configures EN-triggered zero return and position error protection (Command 0x9D).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            enable_en_trigger_zero: True to enable EN-triggered single-turn zero return.
+            enable_pos_error_protection: True to enable position error protection.
+            error_detection_time_ms_units: Time length for error statistics (uint16_t,
+                                           1 unit approx. 15ms).
+            error_threshold_pulses: Number of error pulses to trigger protection (uint16_t).
+
+        Raises:
+            ParameterError: If time or pulse values are out of uint16_t range.
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor fails to set the parameters.
+        """
         if not (0 <= error_detection_time_ms_units <= 0xFFFF):
             raise ParameterError("error_detection_time_ms_units out of range (uint16_t).")
         if not (0 <= error_threshold_pulses <= 0xFFFF):
@@ -733,6 +1285,23 @@ class LowLevelAPI:
     async def read_system_parameter(
         self, can_id: int, parameter_command_code: int
     ) -> Tuple[int, bytes]:
+        """
+        Reads a system parameter from the motor using the generic read command (0x00).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            parameter_command_code: The command code of the parameter to be read
+                                    (e.g., `const.CMD_SET_WORK_MODE` (0x82) to read work mode).
+
+        Returns:
+            A tuple (echoed_command_code, parameter_data_bytes).
+            'echoed_command_code' should match `parameter_command_code`.
+            'parameter_data_bytes' is a bytes object containing the value(s) of the parameter.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+            MotorError: If the motor indicates the parameter cannot be read (responds with 0xFF 0xFF).
+        """
         response_msg = await self._send_command_and_get_response(
             can_id,
             const.CMD_READ_SYSTEM_PARAMETER_PREFIX,
@@ -755,6 +1324,21 @@ class LowLevelAPI:
     async def _run_motor_command(
         self, can_id: int, command_code: int, data: List[int]
     ) -> int:
+        """
+        Internal helper to send a motor run command and process its initial response.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            command_code: The specific run command code (e.g., 0xFD, 0xFE).
+            data: The data payload for the run command.
+
+        Returns:
+            The status code from the motor's initial response (e.g., POS_RUN_STARTING).
+
+        Raises:
+            MotorError: If the motor reports immediate failure (status 0x00).
+            CommunicationError, CommandError, CRCError: On communication or response issues.
+        """
         logger.info(f"LowLevelAPI._run_motor_command: Preparing to send CMD={command_code:02X} to CAN_ID={can_id:03X} with DataForCmd={data}")
         response = await self._send_command_and_get_response(
             can_id, command_code, data=data, expected_dlc=3
@@ -777,6 +1361,24 @@ class LowLevelAPI:
         acceleration: int,
         pulses: int,
     ) -> int:
+        """
+        Runs the motor in position mode by a relative number of pulses (Command 0xFD).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            ccw_direction: True for Counter-Clockwise (positive direction),
+                           False for Clockwise (negative direction).
+            speed: Speed parameter (0-3000).
+            acceleration: Acceleration parameter (0-255).
+            pulses: Number of pulses to move (0 - 16,777,215).
+
+        Returns:
+            The initial status code from the motor (e.g., `const.POS_RUN_STARTING`).
+
+        Raises:
+            ParameterError: If input parameters are out of range.
+            CommunicationError, CommandError, CRCError, MotorError: On issues.
+        """
         logger.info(
             f"LowLevelAPI.run_position_mode_relative_pulses: CAN_ID={can_id:03X}, "
             f"CCW={ccw_direction}, SpeedParam={speed}, AccelParam={acceleration}, Pulses={pulses}"
@@ -802,6 +1404,23 @@ class LowLevelAPI:
     async def run_position_mode_absolute_pulses(
         self, can_id: int, speed: int, acceleration: int, absolute_pulses: int
     ) -> int:
+        """
+        Runs the motor in position mode to an absolute pulse position (Command 0xFE).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            speed: Speed parameter (0-3000).
+            acceleration: Acceleration parameter (0-255).
+            absolute_pulses: Target absolute pulse position (signed 24-bit,
+                             -8,388,608 to +8,388,607).
+
+        Returns:
+            The initial status code from the motor (e.g., `const.POS_RUN_STARTING`).
+
+        Raises:
+            ParameterError: If input parameters are out of range.
+            CommunicationError, CommandError, CRCError, MotorError: On issues.
+        """
         logger.info(
             f"LowLevelAPI.run_position_mode_absolute_pulses: CAN_ID={can_id:03X}, "
             f"SpeedParam={speed}, AccelParam={acceleration}, AbsPulses={absolute_pulses}"
@@ -830,6 +1449,22 @@ class LowLevelAPI:
     async def run_speed_mode(
         self, can_id: int, ccw_direction: bool, speed: int, acceleration: int
     ) -> int:
+        """
+        Runs the motor in speed mode (Command 0xF6).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            ccw_direction: True for Counter-Clockwise, False for Clockwise.
+            speed: Speed parameter (0-3000).
+            acceleration: Acceleration parameter (0-255).
+
+        Returns:
+            The initial status code from the motor (e.g., `const.POS_RUN_STARTING`).
+
+        Raises:
+            ParameterError: If input parameters are out of range.
+            CommunicationError, CommandError, CRCError, MotorError: On issues.
+        """
         logger.info(
             f"LowLevelAPI.run_speed_mode: CAN_ID={can_id:03X}, CCW={ccw_direction}, "
             f"SpeedParam={speed}, AccelParam={acceleration}"
@@ -850,6 +1485,21 @@ class LowLevelAPI:
         )
 
     async def stop_speed_mode(self, can_id: int, acceleration: int) -> int:
+        """
+        Stops the motor when in speed mode (uses Command 0xF6 with speed 0).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            acceleration: Deceleration parameter (0-255). 0 for immediate stop.
+
+        Returns:
+            The initial status code from the motor (e.g., `const.POS_RUN_STARTING`
+            indicating stop has started).
+
+        Raises:
+            ParameterError: If acceleration is out of range.
+            CommunicationError, CommandError, CRCError, MotorError: On issues.
+        """
         logger.info(f"LowLevelAPI.stop_speed_mode: CAN_ID={can_id:03X}, AccelParam={acceleration}")
         if not (0 <= acceleration <= 255):
             raise ParameterError(f"Acceleration parameter {acceleration} out of range (0-255) for stop.")
@@ -864,6 +1514,16 @@ class LowLevelAPI:
         )
         
     async def emergency_stop(self, can_id: int) -> None:
+        """
+        Commands an emergency stop for the motor (Command 0xF7).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication issues.
+            MotorError: If the motor reports failure to stop.
+        """
         logger.info(f"LowLevelAPI.emergency_stop: CAN_ID={can_id:03X}")
         response = await self._send_command_and_get_response(
             can_id, const.CMD_EMERGENCY_STOP, expected_dlc=3
@@ -876,6 +1536,17 @@ class LowLevelAPI:
             )
             
     async def enable_motor(self, can_id: int, enable: bool) -> None:
+        """
+        Enables or disables the motor (Command 0xF3).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            enable: True to enable the motor, False to disable.
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication issues.
+            MotorError: If the motor fails to enable/disable.
+        """
         enable_code = 0x01 if enable else 0x00
         response = await self._send_command_and_get_response(
             can_id, const.CMD_ENABLE_MOTOR, data=[enable_code], expected_dlc=3
@@ -888,6 +1559,20 @@ class LowLevelAPI:
             )
 
     async def query_motor_status(self, can_id: int) -> int:
+        """
+        Queries the current status of the motor (Command 0xF1).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+
+        Returns:
+            The motor status code (e.g., `const.MOTOR_STATUS_STOPPED`,
+            `const.MOTOR_STATUS_FULL_SPEED`).
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication issues.
+            MotorError: If the motor reports a query failure.
+        """
         response = await self._send_command_and_get_response(
             can_id, const.CMD_QUERY_MOTOR_STATUS, expected_dlc=3
         )
@@ -902,6 +1587,24 @@ class LowLevelAPI:
     async def run_position_mode_relative_axis(
         self, can_id: int, speed: int, acceleration: int, relative_axis: int
     ) -> int:
+        """
+        Runs the motor in position mode by a relative axis value (Command 0xF4).
+        The 'axis' value is typically raw encoder counts.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            speed: Speed parameter (0-3000).
+            acceleration: Acceleration parameter (0-255).
+            relative_axis: Relative axis value to move (signed 24-bit,
+                           -8,388,608 to +8,388,607).
+
+        Returns:
+            The initial status code from the motor (e.g., `const.POS_RUN_STARTING`).
+
+        Raises:
+            ParameterError: If input parameters are out of range.
+            CommunicationError, CommandError, CRCError, MotorError: On issues.
+        """
         logger.info(
             f"LowLevelAPI.run_position_mode_relative_axis: CAN_ID={can_id:03X}, "
             f"SpeedParam={speed}, AccelParam={acceleration}, RelAxis={relative_axis}"
@@ -930,6 +1633,21 @@ class LowLevelAPI:
         )
 
     async def stop_position_mode_relative_axis(self, can_id: int, acceleration: int) -> int:
+        """
+        Stops the motor when in relative axis position mode (uses Command 0xF4
+        with speed 0 and relative_axis 0).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            acceleration: Deceleration parameter (0-255). 0 for immediate stop.
+
+        Returns:
+            The initial status code from the motor.
+
+        Raises:
+            ParameterError: If acceleration is out of range.
+            CommunicationError, CommandError, CRCError, MotorError: On issues.
+        """
         logger.info(
             f"LowLevelAPI.stop_position_mode_relative_axis: CAN_ID={can_id:03X}, AccelParam={acceleration}"
         )
@@ -948,6 +1666,24 @@ class LowLevelAPI:
     async def run_position_mode_absolute_axis(
         self, can_id: int, speed: int, acceleration: int, absolute_axis: int
     ) -> int:
+        """
+        Runs the motor in position mode to an absolute axis value (Command 0xF5).
+        The 'axis' value is typically raw encoder counts. Supports real-time updates.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            speed: Speed parameter (0-3000).
+            acceleration: Acceleration parameter (0-255).
+            absolute_axis: Target absolute axis value (signed 24-bit,
+                           -8,388,608 to +8,388,607).
+
+        Returns:
+            The initial status code from the motor (e.g., `const.POS_RUN_STARTING`).
+
+        Raises:
+            ParameterError: If input parameters are out of range.
+            CommunicationError, CommandError, CRCError, MotorError: On issues.
+        """
         logger.info(
             f"LowLevelAPI.run_position_mode_absolute_axis: CAN_ID={can_id:03X}, "
             f"SpeedParam={speed}, AccelParam={acceleration}, AbsAxis={absolute_axis}"
@@ -976,6 +1712,21 @@ class LowLevelAPI:
         )
 
     async def stop_position_mode_absolute_axis(self, can_id: int, acceleration: int) -> int:
+        """
+        Stops the motor when in absolute axis position mode (uses Command 0xF5
+        with speed 0 and absolute_axis 0).
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            acceleration: Deceleration parameter (0-255). 0 for immediate stop.
+
+        Returns:
+            The initial status code from the motor.
+
+        Raises:
+            ParameterError: If acceleration is out of range.
+            CommunicationError, CommandError, CRCError, MotorError: On issues.
+        """
         logger.info(
             f"LowLevelAPI.stop_position_mode_absolute_axis: CAN_ID={can_id:03X}, AccelParam={acceleration}"
         )
@@ -994,7 +1745,16 @@ class LowLevelAPI:
     async def save_or_clean_speed_mode_params(self, can_id: int, save: bool) -> None:
         """
         Saves or cleans the parameters in speed mode (Command 0xFF).
-        Manual Ref: Page 42
+        If saved, motor may run at constant speed on power-on.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            save: True to save current speed mode parameters (action 0xC8),
+                  False to clean them (action 0xCA).
+
+        Raises:
+            CommunicationError, CommandError, CRCError: On communication issues.
+            MotorError: If the motor fails to save/clean parameters.
         """
         action_code = const.SPEED_MODE_PARAM_SAVE if save else const.SPEED_MODE_PARAM_CLEAN
         
@@ -1011,3 +1771,4 @@ class LowLevelAPI:
                 can_id=can_id,
             )
         logger.info(f"CAN ID {can_id}: {'Save' if save else 'Clean'} speed mode parameters successful.")
+        
