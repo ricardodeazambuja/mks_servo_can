@@ -4,6 +4,7 @@
 # Specify a comma-separated list of plugins to load and their argument strings.
 # For example, to use a plugin for checking Google style docstrings (if available and installed).
 # load-plugins=
+load-plugins=pylint.extensions.docparams
 
 # Add paths to ignore (comma-separated list of regular expressions).
 # The regexes are matched against the absolute path of every module/package found.
@@ -45,7 +46,7 @@ disable=
 [FORMAT]
 # Maximum number of characters on a single line.
 # Consistent with Google Python Style Guide.
-max-line-length=80
+max-line-length=999
 
 # Maximum number of lines in a module.
 max-module-lines=1000
