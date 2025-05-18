@@ -867,11 +867,13 @@ class CANInterface:
                 self._response_futures[key] = [(f, p) for f, p in self._response_futures[key] if f is not future or f.done()]
                 if not self._response_futures[key]:
                     del self._response_futures[key]
-
+            
+            cmd_byte_str = f"{msg_to_send.data[0]:02X}" if msg_to_send.data else "N/A"
+            payload_str = msg_to_send.data.hex() if msg_to_send.data else "N/A"
             error_msg = (
-                f"Timeout waiting for response to command {msg_to_send.data[0]:02X if msg_to_send.data else 'N/A'} "
+                f"Timeout waiting for response to command {cmd_byte_str} "
                 f"from CAN ID {expected_response_can_id:03X} (expected echoed cmd code "
-                f"{expected_response_command_code:02X}). Sent: {msg_to_send.data.hex() if msg_to_send.data else 'N/A'}"
+                f"{expected_response_command_code:02X}). Sent: {payload_str}"
             )
             logger.warning(error_msg)
             raise CommunicationError(error_msg) from exc
