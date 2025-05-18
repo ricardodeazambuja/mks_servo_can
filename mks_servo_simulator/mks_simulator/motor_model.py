@@ -10,6 +10,8 @@ import logging
 import struct
 import time
 
+logger = logging.getLogger("SimulatedMotor") # Changed from __name__ for clarity if file is moved/copied
+
 # Attempt to import from the main library
 try:
     from mks_servo_can import constants as const_module
@@ -19,7 +21,6 @@ try:
     # from mks_servo_can.exceptions import ParameterError
 
     const = const_module
-    # logger.info("SIMULATOR: Successfully imported constants from mks_servo_can.")
 except ImportError:
     logger.warning(
         "SIMULATOR WARNING: Could not import from mks_servo_can. Using placeholder constants/crc. Ensure library is installed or in PYTHONPATH."
@@ -147,8 +148,6 @@ except ImportError:
     class MKSServoError(Exception): # Basic fallback
         pass
 
-
-logger = logging.getLogger("SimulatedMotor") # Changed from __name__ for clarity if file is moved/copied
 SIM_TIME_STEP_MS = 10
 SIM_MAX_SPEED_PARAM = 3000 # Used for RPM conversion, matches VFOC for SR_VFOC
 SIM_MAX_ACCEL_PARAM = 255
