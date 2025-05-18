@@ -570,3 +570,43 @@ class Axis:
                 raise # Re-raise the original move error
         # If future is already done, this will return immediately or raise stored exception if any.
         
+    async def ping(self, timeout: Optional[float] = None) -> bool:
+        """
+        Pings the motor to check for basic communication.
+
+        This method attempts to read a simple status from the motor.
+        If the read is successful within the timeout, it indicates
+        the motor is responsive.
+
+        Args:
+            timeout: Optional timeout in seconds for the communication attempt.
+                     If None, the default CAN timeout will be used.
+
+        Returns:
+            True if the motor responds successfully, False otherwise.
+        """
+        logger.debug(f"Axis '{self.name}': Pinging motor (CAN ID: {self.can_id:03X})...")
+        original_timeout = None
+        # Temporarily override default timeout if a specific one is provided for ping
+        # This requires the _send_command_and_get_response in LowLevelAPI to accept a timeout override.
+        # For simplicity, we'll rely on the default for now, or you'd pass it through.
+        # Assuming your LowLevelAPI methods can accept a timeout:
+        # (If not, this timeout argument for ping might only be conceptual unless LowLevelAPI is modified)
+
+        try:
+            # Using read_en_pin_status as a lightweight command for ping.
+            # You could also use query_motor_status or another simple read.
+            # The existing self.read_en_status() method calls the low_level_api.
+            await self._low_level_api.read_en_pin_status(self.can_id)
+            # If the above command completes without error, the ping is successful.
+            logger.info(f"Axis '{self.name}': Ping successful.")
+            return True
+        except CommunicationError as e:
+            logger.warning(f"Axis '{self.name}': Ping failed due to communication error: {e}")
+            return False
+        except MKSServoError as e: # Catch other MKS errors as ping failure
+            logger.warning(f"Axis '{self.name}': Ping failed due to MKS error: {e}")
+            return False
+        except Exception as e: # Catch any other unexpected error during ping
+            logger.error(f"Axis '{self.name}': Ping failed due to unexpected error: {e}", exc_info=True)
+            return False

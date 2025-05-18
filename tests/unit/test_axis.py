@@ -12,6 +12,7 @@ from mks_servo_can.exceptions import CalibrationError
 from mks_servo_can.exceptions import CommunicationError
 from mks_servo_can.exceptions import LimitError
 from mks_servo_can.exceptions import ParameterError
+from mks_servo_can.exceptions import MotorError
 from mks_servo_can.kinematics import RotaryKinematics
 from mks_servo_can.low_level_api import LowLevelAPI
 
@@ -347,3 +348,62 @@ class TestAxisMovement:
                 100, speed_param=100, accel_param=50, wait=False
             )
             mock_exec_move.assert_called_once()
+@pytest.mark.asyncio
+class TestAxisPing: # Or add to an existing test class like TestAxisBasicOps
+    async def test_ping_success(self, axis_instance, mock_low_level_api):
+        """Test that ping returns True when the low-level call succeeds."""
+        # Configure the mock to simulate a successful read
+        mock_low_level_api.read_en_pin_status.return_value = True # Actual return value doesn't matter, just no error
+
+        result = await axis_instance.ping()
+
+        assert result is True
+        mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
+
+    async def test_ping_failure_communication_error(self, axis_instance, mock_low_level_api):
+        """Test that ping returns False when a CommunicationError occurs."""
+        # Configure the mock to simulate a communication error
+        mock_low_level_api.read_en_pin_status.side_effect = CommunicationError("Simulated communication failure")
+
+        result = await axis_instance.ping()
+
+        assert result is False
+        mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
+
+    async def test_ping_failure_other_mks_servo_error(self, axis_instance, mock_low_level_api):
+        """Test that ping returns False when another MKSServoError occurs."""
+        # Configure the mock to simulate a different MKS Servo error
+        # Using MotorError as an example, though read_en_pin_status might not typically raise this specific one.
+        mock_low_level_api.read_en_pin_status.side_effect = MotorError("Simulated MKS error during ping")
+
+        result = await axis_instance.ping()
+
+        assert result is False
+        mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
+
+    async def test_ping_failure_unexpected_exception(self, axis_instance, mock_low_level_api):
+        """Test that ping returns False when an unexpected Exception occurs."""
+        # Configure the mock to simulate an unexpected error
+        mock_low_level_api.read_en_pin_status.side_effect = Exception("Unexpected problem during ping")
+
+        result = await axis_instance.ping()
+
+        assert result is False
+        mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
+
+    async def test_ping_with_timeout_param(self, axis_instance, mock_low_level_api):
+        """
+        Test that ping can be called with a timeout parameter.
+        Note: This test assumes the underlying low-level call could theoretically use the timeout.
+        The current ping implementation doesn't pass the timeout through, so this test mainly
+        checks that the ping method accepts the argument without error.
+        """
+        mock_low_level_api.read_en_pin_status.return_value = True
+
+        # Call with a timeout value
+        result = await axis_instance.ping(timeout=0.5)
+
+        assert result is True
+        mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
+        # If you modify ping to pass the timeout to the low_level_api,
+        # you would also assert that `read_en_pin_status` was called with that timeout.
