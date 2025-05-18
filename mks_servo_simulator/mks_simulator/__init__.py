@@ -1,4 +1,3 @@
-# mks_servo_can/mks_servo_simulator/mks_simulator/__init__.py
 """
 MKS Servo CAN Simulator Package.
 

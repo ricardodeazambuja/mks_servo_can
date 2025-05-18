@@ -1,6 +1,3 @@
-# mks_servo_can/tests/determinism/benchmark_command_latency.py
-# (Also aliased or intended to be examples/timing_benchmark.py)
-# This line indicates the original or alternative path for this benchmark script.
 # It's designed to measure the round-trip time (latency) of commands sent to MKS servo motors.
 # This is useful for understanding system responsiveness and can be part of determinism testing.
 

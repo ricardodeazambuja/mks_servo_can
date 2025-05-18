@@ -1,5 +1,3 @@
-# mks_servo_can/examples/multi_axis_simulator.py
-# This line indicates the path to an example script.
 # This script demonstrates how to control multiple MKS Servo motors simultaneously
 # using the mks-servo-simulator. It showcases the MultiAxisController for coordinated actions.
 

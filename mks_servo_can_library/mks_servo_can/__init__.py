@@ -1,4 +1,3 @@
-# mks_servo_can_project/mks_servo_can_library/mks_servo_can/__init__.py
 """
 MKS Servo CAN Communication Library
 ===================================
