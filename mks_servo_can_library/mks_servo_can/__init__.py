@@ -7,44 +7,84 @@ via a CAN interface. It includes low-level command APIs, high-level Axis
 and MultiAxisController objects, and utilities for kinematics and simulation.
 """
 
-# Import other key components
-# Import the constants module and alias it as 'const' for patterned access (e.g., const.CAN_DEFAULT_BITRATE)
+# Import the constants module and alias it as 'const' for patterned access
 from . import constants as const
-from . import crc  # Import the module itself
-from . import exceptions  # Import the module itself
+
+# Import other key components from submodules
 from .axis import Axis
 from .can_interface import CANInterface
-
-# Also make individual constants available directly from the package if desired,
-# e.g., from mks_servo_can import CAN_DEFAULT_BITRATE.
-# The __all__ list will control what 'from mks_servo_can import *' imports.
-from .constants import *  # This makes them available directly in this namespace.
-from .kinematics import EccentricKinematics
-from .kinematics import Kinematics
-from .kinematics import LinearKinematics
-from .kinematics import RotaryKinematics
 from .low_level_api import LowLevelAPI
 from .multi_axis_controller import MultiAxisController
 
-__version__ = "0.1.0"
+# Import kinematics classes
+from .kinematics import (
+    Kinematics,
+    LinearKinematics,
+    RotaryKinematics,
+    EccentricKinematics,
+)
+
+# Import robot kinematics classes
+from .robot_kinematics import (
+    RobotModelBase,
+    TwoLinkArmPlanar,
+    CartesianRobot
+)
+
+# Import CRC functions explicitly if they are to be exported
+from .crc import calculate_crc, verify_crc
+
+# Import all exception classes explicitly if they are to be exported
+from .exceptions import (
+    MKSServoError,
+    CANError,
+    CRCError,
+    CommandError,
+    ParameterError,
+    MotorError,
+    CommunicationError,
+    MultiAxisError,
+    SimulatorError,
+    KinematicsError,
+    ConfigurationError,
+    HomingError,
+    CalibrationError,
+    LimitError,
+    StallError,
+)
+
+# Make all constants available directly in the package's namespace
+# This allows users to do 'from mks_servo_can import CAN_DEFAULT_BITRATE'
+from .constants import *
+
+__version__ = "0.1.1" # Assuming a patch version bump for fixes/additions
 
 __all__ = [
     # Export the 'const' alias for the constants module
     "const",
+
     # Export key classes
     "CANInterface",
     "LowLevelAPI",
     "Axis",
     "MultiAxisController",
+
+    # Kinematics classes
     "Kinematics",
     "LinearKinematics",
     "RotaryKinematics",
     "EccentricKinematics",
-    # Export utility functions or specific exceptions if needed directly
-    "calculate_crc",  # from crc module (assuming crc.py has this function)
-    # "verify_crc", # from crc module (add if needed in public API)
-    # Export specific exceptions if they are commonly caught directly
-    # (These should be defined in exceptions.py and imported above)
+
+    # Robot Kinematics classes
+    "RobotModelBase",
+    "TwoLinkArmPlanar",
+    "CartesianRobot",
+
+    # Export utility functions from crc module
+    "calculate_crc",
+    "verify_crc", # Added verify_crc as it's often useful
+
+    # Export specific exceptions (already imported above)
     "MKSServoError",
     "CANError",
     "CRCError",
@@ -60,38 +100,23 @@ __all__ = [
     "CalibrationError",
     "LimitError",
     "StallError",
-    # Export all constants made available by 'from .constants import *'
-    # This can be long. Alternatively, users can use 'const.CONSTANT_NAME'.
-    # If you want `from mks_servo_can import *` to bring in all constants,
-    # you'd need to list them or dynamically populate __all__ from constants.py.
-    # For now, focusing on making `import const` work.
-    # Example of exporting a few key constants directly (these are already covered by 'from .constants import *'):
-    # "CAN_DEFAULT_BITRATE",
-    # "MODE_SR_VFOC",
-    # "ENCODER_PULSES_PER_REVOLUTION",
-    # ... (add other frequently used constants here if desired for direct import via *)
+
+    # --- Dynamically export all constants from .constants module ---
+    # This section ensures that any constant defined in .constants
+    # is also exported if a user does 'from mks_servo_can import *'
+    # and makes them available for direct import like 'from mks_servo_can import SOME_CONSTANT'.
 ]
 
-# To make all constants from constants.py available via "from ... import *"
-# and also have them listed in __all__ if you prefer explicit control:
-#
-# import inspect as _inspect
-# from . import constants as _constants_module_for_all
-#
-# _constants_to_export = []
-# for _name, _val in _inspect.getmembers(_constants_module_for_all):
-#     if not _name.startswith("_") and isinstance(_val, (int, str, float, tuple, dict, bool)): # Check type
-#         globals()[_name] = _val # Make it available in this module's scope
-#         _constants_to_export.append(_name)
-#
-# __all__.extend(_constants_to_export) # Add all constants to __all__
-#
-# del _inspect, _constants_module_for_all, _constants_to_export, _name, _val # Clean up
-#
-# Note: The above dynamic __all__ population is more advanced.
-# The current setup with 'from .constants import *' and manually listing key ones in __all__
-# (or relying on users to use `const.X`) is simpler to start with.
-# The `from .constants import *` makes them available, but `__all__` controls `import *`.
+# Dynamically add all constants from the .constants module to __all__
+# This ensures that `from mks_servo_can import *` also imports all constants.
+# It also satisfies linters that check if __all__ entries are defined in the module.
+# The `from .constants import *` above already brought them into the namespace.
+_constants_to_export = [
+    item for item in dir(const) if not item.startswith("_")
+]
+__all__.extend(_constants_to_export)
+# Clean up to avoid polluting the module's namespace with loop variables
+del _constants_to_export
 
-# Removed the print("MKS Servo CAN Library Initialized") to keep __init__.py cleaner.
+# Note: The print statement was removed as per previous good practice.
 # Use logging if initialization messages are needed for debugging.
