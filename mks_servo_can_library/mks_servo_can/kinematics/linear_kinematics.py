@@ -1,7 +1,8 @@
-# mks_servo_can/mks_servo_can_library/mks_servo_can/kinematics/linear_kinematics.py
 """
 Linear kinematics: converts between linear distance (e.g., mm) and motor steps.
 """
+
+import logging # Added for warning
 
 from mks_servo_can.constants import \
     MAX_RPM_VFOC_MODE  # Default max RPM
@@ -9,6 +10,7 @@ from mks_servo_can.exceptions import KinematicsError
 
 from .base_kinematics import Kinematics
 
+logger = logging.getLogger(__name__) # Added for warning
 
 class LinearKinematics(Kinematics):
     """
@@ -54,21 +56,36 @@ class LinearKinematics(Kinematics):
         """
         Convert motor steps to linear distance (in self.units).
         """
+        if self.steps_per_user_unit == 0:
+            # Avoid division by zero if pitch or steps_per_revolution were such that this becomes zero.
+            # This case should ideally be caught by earlier validation (e.g. pitch > 0).
+            raise KinematicsError("steps_per_user_unit is zero, cannot convert steps to user units.")
         return steps_value / self.steps_per_user_unit
 
     def user_speed_to_motor_speed(self, user_speed: float) -> int:
         """
         Convert linear speed (user_value_per_second) to MKS motor speed parameter (0-3000).
-        This is an approximation as the MKS speed parameter is not directly linear with RPM
-        across all microstepping settings. It's calibrated for 16/32/64 microsteps according to manual.
-        Assumes the 0-3000 range corresponds to a max RPM (e.g., 3000 RPM in VFOC mode).
+
+        Note:
+            This conversion is an approximation. The MKS speed parameter (0-3000)
+            is not perfectly linear with physical RPM across all work modes and microstepping
+            settings. The MKS manual (V1.0.6, Part 6.1) states the speed parameter is
+            calibrated based on 16/32/64 subdivisions. This implementation assumes a
+            simplified proportional mapping, typically to `const.MAX_RPM_VFOC_MODE` (3000 RPM)
+            when the parameter is 3000, which is most applicable in VFOC modes.
+            For high precision, users might need to calibrate this mapping for their
+            specific setup and motor configuration if not using VFOC mode or if using
+            other microstepping values.
 
         Args:
             user_speed: Linear speed in user_units / second.
 
         Returns:
-            MKS motor speed parameter (0-3000).
+            MKS motor speed parameter (0-3000), clamped to this range.
         """
+        if self.pitch == 0: # Avoid division by zero
+            return 0
+            
         # Revolutions of the output shaft per second
         output_revs_per_second = user_speed / self.pitch
         # Revolutions of the motor per second
@@ -76,56 +93,46 @@ class LinearKinematics(Kinematics):
         # Motor RPM
         motor_rpm = motor_revs_per_second * 60
 
-        # Convert motor_rpm to the MKS speed parameter (0-3000)
-        # This mapping needs to be based on the MKS manual's definition of the speed parameter.
-        # If the speed parameter directly maps to a certain RPM range:
-        # Example: If 3000 parameter value = MAX_RPM_VFOC_MODE (3000 RPM)
-        # This is a simplification; the actual relationship might be more complex.
-        # The manual (6.1) states the speed parameter (0-3000) makes the motor rotate faster.
-        # For SR_VFOC, max speed is 3000 RPM.
-        # Let's assume the 0-3000 parameter maps somewhat proportionally to 0-MAX_RPM_VFOC_MODE
-        # This is a major simplification.
-        # A more accurate conversion would consider how the MKS controller firmware interprets this value.
-        # Given the documentation in 6.1 regarding subdivisions effect on speed, this is tricky.
-        # "speed value is calibrated based on 16/32/64 subdivisions"
-        # For now, let's assume a direct scaling for the default microstepping assumption (16/32/64)
-
-        # If we assume the parameter 0-3000 maps to 0-3000 RPM (in modes like VFOC)
-        # then mks_speed_param = motor_rpm
-        # However, this needs to be clamped and scaled by MAX_RPM for that parameter.
-        # The MKS Speed parameter in commands (e.g. F6, FD) is 0-3000.
-        # This parameter itself is not RPM directly, but a value that results in speed.
-        # The manual (Part 6.1) is a bit vague on direct conversion to this parameter from physical units.
-        # Let's assume for now:
-        #   mks_speed_param = (motor_rpm / MAX_RPM_FOR_PARAM) * 3000
-        #   If MAX_RPM_FOR_PARAM is also 3000 (like in VFOC mode), then mks_speed_param is approx motor_rpm.
-
         mks_speed_param = int(
             round(motor_rpm)
-        )  # Simplistic: assume param is roughly RPM in VFOC mode
+        )
 
-        # Clamp to the 0-3000 range for the parameter itself
         mks_speed_param = max(0, min(mks_speed_param, 3000))
         return mks_speed_param
 
     def motor_speed_to_user_speed(self, motor_speed_param: int) -> float:
         """
         Convert MKS motor speed parameter (0-3000) to linear speed (user_units / second).
-        Uses similar assumptions as user_speed_to_motor_speed.
+
+        Note:
+            This conversion shares the same approximations and assumptions as
+            `user_speed_to_motor_speed`. It's most representative in VFOC modes
+            where the 0-3000 parameter range often corresponds more directly to RPM.
+            The conversion assumes `motor_speed_param` is roughly equivalent to motor RPM
+            in VFOC mode or similar high-performance modes.
+
+        Args:
+            motor_speed_param: MKS motor speed parameter (0-3000).
+
+        Returns:
+            Equivalent linear speed in user_units / second.
         """
         if not (0 <= motor_speed_param <= 3000):
             # Allow it, but it might be outside effective range
-            pass
+            logger.warning(f"motor_speed_param {motor_speed_param} is outside typical 0-3000 range.")
 
-        # Assume motor_speed_param is roughly motor_rpm in modes like VFOC
-        motor_rpm = float(motor_speed_param)  # Simplistic
 
-        motor_revs_per_second = motor_rpm / 60
+        motor_rpm = float(motor_speed_param)
+
+        motor_revs_per_second = motor_rpm / 60.0
+        if self.gear_ratio == 0: # Avoid division by zero
+            return 0.0
         output_revs_per_second = motor_revs_per_second / self.gear_ratio
         user_speed = output_revs_per_second * self.pitch
         return user_speed
 
     def get_parameters(self) -> dict:
+        """Return the parameters of this kinematic model."""
         params = super().get_parameters()
         params.update(
             {
@@ -135,3 +142,4 @@ class LinearKinematics(Kinematics):
             }
         )
         return params
+    

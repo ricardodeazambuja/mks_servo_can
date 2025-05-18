@@ -1,5 +1,3 @@
-# mks_servo_can_project/tests/unit/test_low_level_api.py
-# This line specifies the path to the unit test file for the LowLevelAPI class.
 # These tests are designed to verify the functionality of individual methods within the LowLevelAPI,
 # focusing on how it constructs CAN messages, processes responses, and handles errors,
 # typically by mocking the CANInterface.

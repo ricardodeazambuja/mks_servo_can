@@ -1,5 +1,3 @@
-# mks_servo_can/tests/unit/test_kinematics.py
-# This line specifies the path to the unit test file for the kinematics classes.
 # Kinematics classes are responsible for converting between user-defined physical units
 # (like mm or degrees) and the motor's native units (encoder steps or pulses).
 # These unit tests verify the correctness of these conversions and the initialization logic

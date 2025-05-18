@@ -1,5 +1,3 @@
-# mks_servo_can_project/tests/unit/test_crc.py
-# This line indicates the path to the unit test file for CRC (Cyclic Redundancy Check) functionality.
 # Unit tests are designed to test individual components or functions in isolation.
 
 import pytest
