@@ -24,14 +24,50 @@ except ImportError:
         checking or offline development, but it does not provide real CAN functionality.
         """
         class Listener: # Add dummy Listener
-            """Dummy can.Listener."""
-            def on_message_received(self, msg): pass
-            def on_error(self, exc): pass
+            """
+            Dummy placeholder for the can.Listener class from python-can.
+            Intended to be subclassed by user-defined listeners for CAN messages.
+            """
+            def on_message_received(self, msg):
+                """
+                Dummy method called when a message is received. Subclasses should override this.
+
+                Args:
+                    msg: The received CAN message.
+                """
+                pass
+            def on_error(self, exc):
+                """
+                Dummy method called when an error occurs. Subclasses should override this.
+
+                Args:
+                    exc: The exception that occurred.
+                """
+                pass
 
         class Notifier: # Add dummy Notifier
-             """Dummy can.Notifier."""
-             def __init__(self, bus, listeners, timeout=None): pass
-             def stop(self, timeout=None): pass
+             """
+             Dummy placeholder for the can.Notifier class from python-can.
+             Manages message distribution from a bus to a list of listeners.
+             """
+             def __init__(self, bus, listeners, timeout=None):
+                 """
+                 Initializes a dummy Notifier.
+
+                 Args:
+                     bus: The CAN bus to listen to (dummy).
+                     listeners: A list of listener objects (dummy).
+                     timeout (Optional[float]): An optional timeout.
+                 """
+                 pass
+             def stop(self, timeout=None):
+                 """
+                 Stops the dummy Notifier.
+
+                 Args:
+                     timeout (Optional[float]): An optional timeout for stopping.
+                 """
+                 pass
 
         class BusABC:
             """
@@ -106,16 +142,20 @@ logger = logging.getLogger(__name__)
 class AsyncioCanListener(can.Listener if CAN_AVAILABLE else object): # type: ignore[misc] # if can is dummy
     """
     A can.Listener that puts received messages onto an asyncio.Queue.
-    This acts as a bridge between the synchronous `python-can` notifier thread
-    and the asyncio event loop.
+
+    This class acts as a bridge between the synchronous `python-can` notifier thread
+    (which calls `on_message_received` and `on_error`) and an asyncio event loop.
+    It allows asynchronous processing of CAN messages within an asyncio application.
     """
     def __init__(self, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
         """
-        Initializes the listener.
+        Initializes the AsyncioCanListener.
 
         Args:
-            queue: The asyncio.Queue to put messages onto.
-            loop: The asyncio event loop where the queue is consumed.
+            queue: The asyncio.Queue instance where received CAN messages will be placed.
+                   This queue should be consumed by an asyncio task.
+            loop: The asyncio event loop that the queue and its consumer are running in.
+                  This is used to schedule the `put_nowait` call safely from the notifier thread.
         """
         self.queue = queue
         self.loop = loop
@@ -123,8 +163,13 @@ class AsyncioCanListener(can.Listener if CAN_AVAILABLE else object): # type: ign
 
     def on_message_received(self, msg: can.Message): # type: ignore[name-defined]
         """
-        Called by python-can when a message is received.
-        Puts the message onto the asyncio queue in a thread-safe manner.
+        Callback method invoked by `python-can`'s Notifier when a new CAN message is received.
+
+        This method places the received message onto the asyncio.Queue in a thread-safe manner,
+        allowing it to be processed by an asyncio task running in the event loop.
+
+        Args:
+            msg: The `can.Message` object received from the bus.
         """
         if self.loop.is_running():
             self.loop.call_soon_threadsafe(self.queue.put_nowait, msg)
@@ -133,7 +178,13 @@ class AsyncioCanListener(can.Listener if CAN_AVAILABLE else object): # type: ign
 
     def on_error(self, exc: Exception) -> None:
         """
-        Called by python-can if an error occurs in the listener/notifier.
+        Callback method invoked by `python-can`'s Notifier if an error occurs
+        within the Notifier's internal mechanisms or the bus it's attached to.
+
+        Logs the received exception.
+
+        Args:
+            exc: The Exception object that occurred.
         """
         logger.error(f"AsyncioCanListener: Error in CAN listener/notifier: {exc}", exc_info=True)
 
@@ -141,6 +192,12 @@ class AsyncioCanListener(can.Listener if CAN_AVAILABLE else object): # type: ign
 class CANInterface:
     """
     Manages CAN communication, supporting both real hardware and a simulator.
+
+    This class provides a unified interface for sending and receiving CAN messages,
+    abstracting the differences between a physical CAN bus (via `python-can`)
+    and a TCP-based simulator. It handles connection management, message queuing,
+    response future management for request-response patterns, and allows registration
+    of general message handlers.
     """
 
     def __init__(
@@ -157,16 +214,20 @@ class CANInterface:
         Initializes the CAN interface.
 
         Args:
-            interface_type: Type of CAN interface (e.g., 'canable', 'kvaser', 'socketcan').
-                            Only used if use_simulator is False.
-            channel: Channel specific to the interface (e.g., 'slcan0', '/dev/ttyUSB0').
-                     Only used if use_simulator is False.
-            bitrate: CAN bus bitrate (e.g., 125000, 250000, 500000, 1000000).
-                     Only used if use_simulator is False.
-            simulator_host: Hostname for the simulator. Used if use_simulator is True.
-            simulator_port: Port for the simulator. Used if use_simulator is True.
-            use_simulator: If True, connects to a simulator instead of real hardware.
-            loop: asyncio event loop.
+            interface_type (str): Type of CAN interface (e.g., 'canable', 'kvaser', 'socketcan').
+                                  Only used if `use_simulator` is False.
+            channel (Optional[str]): Channel specific to the interface (e.g., 'slcan0', '/dev/ttyUSB0').
+                                     Only used if `use_simulator` is False.
+            bitrate (int): CAN bus bitrate (e.g., 125000, 250000, 500000, 1000000).
+                           Only used if `use_simulator` is False.
+            simulator_host (str): Hostname or IP address for the simulator.
+                                  Used if `use_simulator` is True.
+            simulator_port (int): TCP port for the simulator.
+                                  Used if `use_simulator` is True.
+            use_simulator (bool): If True, connects to a simulator instead of real hardware.
+                                  Defaults to False.
+            loop (Optional[asyncio.AbstractEventLoop]): The asyncio event loop to use.
+                                                        If None, `asyncio.get_event_loop()` is called.
         """
         self.use_simulator = use_simulator
         self.bus: Optional[can.BusABC] = None # type: ignore[name-defined]
@@ -206,7 +267,20 @@ class CANInterface:
             )
 
     async def connect(self):
-        """Establishes connection to the CAN bus or simulator."""
+        """
+        Establishes the connection to the configured CAN bus (real hardware) or simulator.
+
+        If connecting to hardware, it initializes the `python-can` bus and sets up
+        a notifier with `AsyncioCanListener` to process incoming messages asynchronously.
+        If connecting to the simulator, it establishes a TCP connection.
+        Starts the message listening loop upon successful connection.
+
+        Raises:
+            SimulatorError: If connection to the simulator fails (e.g., connection refused, other network errors).
+            CANError: If initialization of the `python-can` bus fails for hardware (e.g., adapter not found, driver issues).
+            ConfigurationError: If `python-can` is required but not installed, or if essential parameters like
+                                `channel` are missing for hardware mode.
+        """
         if self.is_connected:
             logger.info(f"CANInterface already connected {'to simulator' if self.use_simulator else 'to hardware'}.")
             return
@@ -277,7 +351,12 @@ class CANInterface:
         self.start_listening()
 
     async def disconnect(self):
-        """Disconnects from the CAN bus or simulator."""
+        """
+        Disconnects from the CAN bus or simulator and cleans up resources.
+
+        This stops the message listener, closes any open connections (TCP for simulator,
+        `python-can` bus shutdown for hardware), and clears internal handlers and futures.
+        """
         self.stop_listening() # Ensure listener task is stopped first
         if self._listener_task and not self._listener_task.done():
             try:
@@ -330,7 +409,17 @@ class CANInterface:
 
 
     def _can_message_to_sim_protocol(self, msg: can.Message) -> bytes: # type: ignore[name-defined]
-        """Converts a python-can Message object to a simulator protocol string/bytes."""
+        """
+        Converts a `python-can.Message` object to the string/bytes protocol format expected by the simulator.
+
+        The simulator protocol is: "SIM_CAN_SEND <id_hex> <dlc_int> <data_hex_no_space>\n".
+
+        Args:
+            msg: The `can.Message` object to convert.
+
+        Returns:
+            A bytes object representing the message in simulator protocol format.
+        """
         if msg.dlc == 0: # type: ignore[union-attr] # if can is dummy
             data_str = ""
         else:
@@ -338,7 +427,18 @@ class CANInterface:
         return f"SIM_CAN_SEND {msg.arbitration_id:03X} {msg.dlc} {data_str}\n".encode() # type: ignore[union-attr]
 
     def _sim_protocol_to_can_message(self, line: str) -> Optional[can.Message]: # type: ignore[name-defined]
-        """Converts a simulator protocol string/bytes to a python-can Message object."""
+        """
+        Converts a simulator protocol string back into a `python-can.Message` object.
+
+        The simulator sends messages prefixed with "SIM_CAN_RECV".
+        Format: "SIM_CAN_RECV <id_hex> <dlc_int> <data_hex_no_space>"
+
+        Args:
+            line: The string line received from the simulator.
+
+        Returns:
+            A `can.Message` object if parsing is successful, otherwise None.
+        """
         parts = line.strip().split()
         if not parts or parts[0] != "SIM_CAN_RECV" or len(parts) < 3: 
             logger.warning(
@@ -373,7 +473,18 @@ class CANInterface:
         self, msg: can.Message, timeout: float = CAN_TIMEOUT_SECONDS # type: ignore[name-defined]
     ):
         """
-        Sends a CAN message.
+        Sends a CAN message to the connected bus or simulator.
+
+        Args:
+            msg: The `can.Message` object to send.
+            timeout: Timeout in seconds for the send operation.
+                     For hardware, this is passed to `bus.send()`.
+                     For the simulator, this is used for `writer.drain()`.
+
+        Raises:
+            SimulatorError: If not connected to the simulator, or if sending to the simulator fails.
+            CANError: If not connected to a hardware CAN bus, or if `bus.send()` fails.
+            CommunicationError: If the send operation times out (applies to simulator drain).
         """
         if self.use_simulator:
             if not self._sim_writer or self._sim_writer.is_closing():
@@ -413,7 +524,14 @@ class CANInterface:
                 raise CANError(f"Failed to send CAN message: {e}") from e
 
     async def _listen_for_messages_hw(self):
-        """Internal task for listening to messages from hardware CAN bus using Notifier and Queue."""
+        """
+        Internal background task for listening to messages from the hardware CAN bus.
+
+        This task runs in the asyncio event loop. It consumes messages from an
+        `asyncio.Queue` which is populated by the `AsyncioCanListener` (which, in turn,
+        is driven by the `python-can` Notifier running in a separate thread).
+        Received messages are then passed to `_process_received_message`.
+        """
         if not self._message_queue:
             logger.error("Hardware listener: Message queue not initialized.")
             self._is_listening = False # Ensure it's marked as not listening
@@ -445,7 +563,14 @@ class CANInterface:
 
 
     async def _listen_for_messages_sim(self):
-        """Internal task for listening to messages from the simulator."""
+        """
+        Internal background task for listening to messages from the simulator.
+
+        This task runs in the asyncio event loop, reading lines from the TCP
+        connection to the simulator. Each line is parsed using
+        `_sim_protocol_to_can_message` and then processed by
+        `_process_received_message`.
+        """
         if not self._sim_reader:
             logger.error("Simulator listener: Reader not initialized.")
             self._is_listening = False
@@ -488,7 +613,17 @@ class CANInterface:
 
 
     async def _process_received_message(self, msg: can.Message): # type: ignore[name-defined]
-        """Processes a received CAN message and dispatches it."""
+        """
+        Processes a received CAN message (from hardware or simulator).
+
+        It attempts to resolve any pending response futures that match the message's
+        CAN ID and command code. If a predicate was associated with the future,
+        it's also checked. If no future handles the message, it's passed to
+        any general message handlers registered for that CAN ID.
+
+        Args:
+            msg: The `can.Message` object that was received.
+        """
         cmd_str = f"{msg.data[0]:02X}" if msg.data else "N/A"
         logger.info(
             f"CANInterface: Processing received: ID={msg.arbitration_id:03X}, CMD={cmd_str}, Data={msg.data.hex()}"
@@ -545,7 +680,17 @@ class CANInterface:
     def add_message_handler(
         self, can_id: int, handler: Callable[[can.Message], Any] # type: ignore[name-defined]
     ):
-        """Registers a handler function for messages with a specific CAN ID."""
+        """
+        Registers a handler function to be called for any message received with a specific CAN ID.
+
+        This is for general, unsolicited message handling, not for specific request-response pairs
+        (which use response futures).
+
+        Args:
+            can_id: The CAN ID to listen for.
+            handler: A callable (function or coroutine function) that takes a `can.Message`
+                     as its argument.
+        """
         if can_id not in self._message_handlers:
             self._message_handlers[can_id] = []
         if handler not in self._message_handlers[can_id]: # Avoid duplicate handlers
@@ -555,7 +700,13 @@ class CANInterface:
     def remove_message_handler(
         self, can_id: int, handler: Callable[[can.Message], Any] # type: ignore[name-defined]
     ):
-        """Removes a specific handler for a CAN ID."""
+        """
+        Removes a previously registered message handler for a specific CAN ID.
+
+        Args:
+            can_id: The CAN ID the handler was registered for.
+            handler: The handler function to remove.
+        """
         if (
             can_id in self._message_handlers
             and handler in self._message_handlers[can_id]
@@ -570,7 +721,20 @@ class CANInterface:
         response_predicate: Optional[Callable[[can.Message], bool]] = None # type: ignore[name-defined]
     ) -> asyncio.Future:
         """
-        Creates and stores a future for an expected response, optionally with a predicate.
+        Creates and stores an `asyncio.Future` that will be resolved when a message
+        matching the given `can_id` and `command_code` is received.
+
+        An optional `response_predicate` can be provided for more fine-grained matching
+        of the response message. This is used by `send_and_wait_for_response`.
+
+        Args:
+            can_id: The expected CAN ID of the response message.
+            command_code: The expected command code (first data byte) in the response message.
+            response_predicate: An optional callable that takes a `can.Message` and returns
+                                True if it's the desired specific response, False otherwise.
+
+        Returns:
+            An `asyncio.Future` object that the caller can await.
         """
         key_tuple = (can_id, command_code)
         
@@ -593,7 +757,11 @@ class CANInterface:
         return future
 
     def start_listening(self):
-        """Starts the background message listening task."""
+        """
+        Starts the background message listening task appropriate for the mode (hardware or simulator).
+
+        If not already listening and connected, it creates and schedules the listener task.
+        """
         if not self.is_connected: # Check connection status
             logger.warning("Cannot start listener: CANInterface not connected.")
             return
@@ -627,7 +795,9 @@ class CANInterface:
             logger.info("Message listener already running.")
 
     def stop_listening(self):
-        """Stops the background message listening task."""
+        """
+        Signals the background message listening task to stop and cancels it if running.
+        """
         if self._is_listening:
             self._is_listening = False 
             if self._listener_task and not self._listener_task.done():
@@ -644,7 +814,29 @@ class CANInterface:
         timeout: float = CAN_TIMEOUT_SECONDS,
         response_predicate: Optional[Callable[[can.Message], bool]] = None # type: ignore[name-defined]
     ) -> can.Message: # type: ignore[name-defined]
-        """Sends a message and waits for a specific response, optionally filtered by a predicate."""
+        """
+        Sends a CAN message and waits for a specific response from the bus/simulator.
+
+        This is a core method for request-response communication patterns.
+        It uses `create_response_future` to set up an expectation for a particular
+        response (matching CAN ID and command code, plus optional predicate).
+
+        Args:
+            msg_to_send: The `can.Message` to send.
+            expected_response_can_id: The CAN ID expected in the response message.
+            expected_response_command_code: The command code (first data byte) expected
+                                            in the response message.
+            timeout: Maximum time in seconds to wait for the response after sending.
+            response_predicate: An optional callable to further filter incoming messages
+                                for a more specific match.
+
+        Returns:
+            The received `can.Message` object that matches the criteria.
+
+        Raises:
+            CommunicationError: If not connected, if the send operation fails,
+                                if the wait times out, or if the wait is cancelled.
+        """
         if not self.is_connected:
             raise CommunicationError("Cannot send message: Not connected.")
         if not self._is_listening:
@@ -692,10 +884,15 @@ class CANInterface:
     @property
     def is_connected(self) -> bool:
         """
-        Checks if the CAN interface is currently connected.
+        Checks if the CAN interface is currently connected and operational.
 
         For simulator mode, it checks if the stream writer is active and not closing.
-        For hardware mode, it checks if the python-can bus object exists and notifier is active.
+        For hardware mode, it primarily checks if the `python-can` bus object exists
+        and, if `python-can` is fully available, that the notifier is also set up
+        (implying a successful `connect()` call).
+
+        Returns:
+            True if the interface is considered connected, False otherwise.
         """
         if self.use_simulator:
             return (
