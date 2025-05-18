@@ -11,17 +11,6 @@ import signal
 from .motor_model import SimulatedMotor
 from .virtual_can_bus import VirtualCANBus
 
-# Assuming the main library's constants are accessible for defaults
-try:
-    from mks_servo_can import constants as lib_const
-except ImportError:
-    # Minimal fallback if library not in path
-    class lib_const:  # type: ignore
-        ENCODER_PULSES_PER_REVOLUTION = 16384  # Default from MKS manual
-        MOTOR_TYPE_SERVO42D = "SERVO42D"
-        MOTOR_TYPE_SERVO57D = "SERVO57D"
-
-
 # Basic logging setup for the simulator
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +18,18 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("MKSSimulatorCLI")
+
+# Assuming the main library's constants are accessible for defaults
+try:
+    from mks_servo_can import constants as lib_const
+except ImportError as exc:
+    # Minimal fallback if library not in path
+    logger.warning(f"Exception: {exc}")
+    logger.warning(f"Bypassing the import...")
+    class lib_const:  # type: ignore
+        ENCODER_PULSES_PER_REVOLUTION = 16384  # Default from MKS manual
+        MOTOR_TYPE_SERVO42D = "SERVO42D"
+        MOTOR_TYPE_SERVO57D = "SERVO57D"
 
 
 async def shutdown(sig, loop, server_task, bus):
