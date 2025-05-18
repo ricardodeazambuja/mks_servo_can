@@ -19,7 +19,16 @@ from typing import List, Dict, Tuple, Optional, Union, Sequence
 
 from .axis import Axis
 from .multi_axis_controller import MultiAxisController
-from .exceptions import KinematicsError, ConfigurationError, MKSServoError
+from .exceptions import KinematicsError, ConfigurationError, MKSServoError, MultiAxisError
+
+__all__ = [
+    "RobotModelBase",
+    "TwoLinkArmPlanar",
+    "CartesianRobot",
+    "RRRArm",
+    "CartesianPose",
+    "JointStates"
+]
 
 logger = logging.getLogger(__name__)
 
@@ -487,6 +496,187 @@ class CartesianRobot(RobotModelBase):
             self.x_axis_name: target_x_joint,
             self.y_axis_name: target_y_joint,
             self.z_axis_name: target_z_joint,
+        }
+
+class RRRArm(RobotModelBase):
+    """
+    A 3-DOF RRR (Revolute-Revolute-Revolute) robot arm.
+    This class implements the forward and inverse kinematics for a specific
+    RRR configuration.
+
+    Common RRR Configuration Assumed:
+    - Joint 1 (theta1, base): Rotates around the global Z-axis.
+    - Joint 2 (theta2, shoulder): Rotates around an axis perpendicular to Z (e.g., Y-axis in J1's frame),
+                                 causing link 1 to move up/down.
+    - Joint 3 (theta3, elbow): Rotates around an axis parallel to Joint 2's axis, bending link 2
+                               relative to link 1.
+
+    Args:
+        multi_axis_controller (MultiAxisController): The controller for the arm's motors.
+        axis_names (List[str]): A list of three axis names, corresponding to
+                                [base_joint, shoulder_joint, elbow_joint].
+        link1_length (float): Length of the link between the shoulder joint (J2) and elbow joint (J3).
+        link2_length (float): Length of the link between the elbow joint (J3) and the end-effector.
+        origin_offset (Tuple[float, float, float], optional): (x, y, z) offset of the robot's base
+                                                              (J1 axis origin) from the world origin.
+                                                              Defaults to (0.0, 0.0, 0.0).
+    """
+
+    def __init__(
+        self,
+        multi_axis_controller: MultiAxisController,
+        axis_names: List[str],
+        link1_length: float, # Length from shoulder (J2) to elbow (J3)
+        link2_length: float, # Length from elbow (J3) to end-effector (EE)
+        origin_offset: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    ):
+        if len(axis_names) != 3:
+            raise ConfigurationError(
+                "RRRArm requires exactly three axis names (for base, shoulder, and elbow joints)."
+            )
+        super().__init__(multi_axis_controller, axis_names)
+        
+        if link1_length <= 0 or link2_length <= 0:
+            raise ConfigurationError("Link lengths must be positive for RRRArm.")
+            
+        self.l1 = link1_length # Length of the "upper arm" (shoulder to elbow)
+        self.l2 = link2_length # Length of the "forearm" (elbow to end-effector)
+        self.origin_x, self.origin_y, self.origin_z = origin_offset
+
+        logger.info(
+            f"Initialized RRRArm: L1 (Shoulder-Elbow)={self.l1}, L2 (Elbow-EE)={self.l2}, "
+            f"Axes: Base='{self.axis_names_in_order[0]}', Shoulder='{self.axis_names_in_order[1]}', Elbow='{self.axis_names_in_order[2]}'"
+        )
+
+    async def forward_kinematics(
+        self, joint_states: Union[Sequence[float], Dict[str, float]]
+    ) -> CartesianPose:
+        """
+        Calculates the (x, y, z) position of the end-effector from joint angles.
+        Joint angles are expected in degrees.
+
+        Args:
+            joint_states: [theta1_deg, theta2_deg, theta3_deg] or a dictionary.
+                          theta1: Base rotation around Z.
+                          theta2: Shoulder rotation (angle of L1 from XY plane, in the vertical plane).
+                          theta3: Elbow rotation (angle of L2 relative to L1).
+
+        Returns:
+            CartesianPose: {'x': float, 'y': float, 'z': float}
+        """
+        ordered_states = self._resolve_joint_states_to_list(joint_states)
+        theta1_deg, theta2_deg, theta3_deg = ordered_states[0], ordered_states[1], ordered_states[2]
+
+        t1 = math.radians(theta1_deg) # Base rotation
+        t2 = math.radians(theta2_deg) # Shoulder angle
+        t3 = math.radians(theta3_deg) # Elbow angle (relative to link 1 extended)
+
+        # Forward Kinematics Equations for a common RRR configuration:
+        # x = cos(t1) * (l1 * cos(t2) + l2 * cos(t2 + t3))
+        # y = sin(t1) * (l1 * cos(t2) + l2 * cos(t2 + t3))
+        # z = l1 * sin(t2) + l2 * sin(t2 + t3)
+        # Note: Ensure these equations match YOUR RRR arm's specific geometry.
+        # This assumes t2 is the angle of l1 with the XY plane (after t1 rotation),
+        # and t3 is the angle of l2 with respect to l1 extended.
+
+        x_val = math.cos(t1) * (self.l1 * math.cos(t2) + self.l2 * math.cos(t2 + t3))
+        y_val = math.sin(t1) * (self.l1 * math.cos(t2) + self.l2 * math.cos(t2 + t3))
+        z_val = self.l1 * math.sin(t2) + self.l2 * math.sin(t2 + t3)
+        
+        return {
+            'x': x_val + self.origin_x,
+            'y': y_val + self.origin_y,
+            'z': z_val + self.origin_z
+        }
+
+    async def inverse_kinematics(
+        self, target_pose: CartesianPose
+    ) -> Dict[str, float]:
+        """
+        Calculates joint angles (degrees) for a target (x, y, z) position.
+        This is a placeholder and requires specific implementation for your RRR arm.
+        It can be complex and may have multiple solutions.
+
+        Args:
+            target_pose: CartesianPose dictionary {'x': float, 'y': float, 'z': float}.
+
+        Returns:
+            Dict[str, float]: Mapping axis names to calculated joint angles in degrees.
+
+        Raises:
+            KinematicsError: If the pose is unreachable or IK fails.
+        """
+        if 'x' not in target_pose or 'y' not in target_pose or 'z' not in target_pose:
+            raise KinematicsError("Target pose for RRRArm must include 'x', 'y', and 'z'.")
+
+        px = target_pose['x'] - self.origin_x
+        py = target_pose['y'] - self.origin_y
+        pz = target_pose['z'] - self.origin_z
+        
+        l1_sq = self.l1**2
+        l2_sq = self.l2**2
+
+        # --- Calculate theta1 (Base Joint) ---
+        theta1_rad = math.atan2(py, px)
+
+        # --- Solve for theta2 and theta3 (Shoulder and Elbow Joints) ---
+        # This part is for a 2R planar arm in the vertical plane after base rotation.
+        # r is the projection of the target onto the XY plane, distance from J1 axis.
+        r = math.sqrt(px**2 + py**2)
+        # If your shoulder (J2) has an offset from J1 along X or Y *before* J1 rotation,
+        # 'r' would need to be calculated relative to J2's projection.
+        # For this example, assume J2's axis of rotation passes through J1's Z-axis when viewed from top.
+
+        # Distance squared from shoulder joint (J2) to end-effector (P) in the vertical plane.
+        # Here, 'r' is the horizontal component in this plane, 'pz' is the vertical.
+        dist_sq_j2_to_p = r**2 + pz**2 
+
+        # Calculate theta3 (Elbow angle) using Law of Cosines
+        # (l1^2 + l2^2 - dist_sq_j2_to_p) / (2 * l1 * l2) is for angle opposite to dist_j2_to_p
+        # We need angle at elbow: cos_val_theta3 = (l1^2 + l2^2 - (r^2 + pz^2)) / (2 * l1 * l2)
+        # This formula is for theta3 as the angle *between* l1 and l2 when they form a triangle with j2-to-p.
+        # A common convention is theta3 as the relative angle of l2 to l1 extended.
+        # So, theta3_conv = pi - acos(cos_val_theta3)
+        
+        cos_theta3_num = (r**2 + pz**2 - l1_sq - l2_sq)
+        cos_theta3_den = (2 * self.l1 * self.l2)
+
+        if abs(cos_theta3_den) < 1e-9: # Avoid division by zero if l1 or l2 is zero
+            raise KinematicsError("Link lengths l1 or l2 are zero in RRRArm.")
+        
+        cos_theta3 = cos_theta3_num / cos_theta3_den
+
+        if not (-1.000001 <= cos_theta3 <= 1.000001): # Check reachability
+            raise KinematicsError(f"Target pose unreachable by RRRArm (cos_theta3 = {cos_theta3:.4f}). Check link lengths and target.")
+        cos_theta3 = max(-1.0, min(1.0, cos_theta3)) # Clamp for safety
+
+        # theta3_rad is the angle at the elbow.
+        # For "elbow up" configuration (common choice), sin(theta3_rad) is positive.
+        # A positive theta3 implies the elbow bends "outwards" or "upwards".
+        theta3_rad = math.acos(cos_theta3) # This gives theta3 in [0, pi]
+
+        # Calculate theta2 (Shoulder angle)
+        # theta2 = atan2(pz, r) - atan2(l2 * sin(theta3_rad), l1 + l2 * cos_theta3_rad)
+        # This form for theta2 often assumes theta2 is angle from horizontal (XY plane).
+        s3 = math.sin(theta3_rad) # sin(theta3_rad)
+        c3 = cos_theta3          # cos(theta3_rad)
+
+        # Numerator and denominator for atan2 for the component of theta2
+        beta_num = self.l2 * s3
+        beta_den = self.l1 + self.l2 * c3
+        
+        gamma = math.atan2(pz, r) # Angle of the vector from shoulder to target in the vertical plane
+        beta = math.atan2(beta_num, beta_den) # Angle correction due to elbow bend
+
+        # For an "elbow up" configuration where theta3_rad is positive (bending "outwards")
+        theta2_rad = gamma - beta
+        # An "elbow down" solution would be: theta3_rad_down = -theta3_rad_up
+        # And theta2_rad_down = gamma + beta (if beta was derived using positive theta3_rad_up)
+
+        return {
+            self.axis_names_in_order[0]: math.degrees(theta1_rad),
+            self.axis_names_in_order[1]: math.degrees(theta2_rad),
+            self.axis_names_in_order[2]: math.degrees(theta3_rad) # elbow relative to link1 extended
         }
 
 # Future robot models (e.g., SCARA, Delta, 6-DOF Articulated) would be added here.

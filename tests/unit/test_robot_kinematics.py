@@ -11,7 +11,7 @@ import asyncio
 import math
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict
+from typing import Dict, Tuple
 
 from mks_servo_can import CANInterface
 
@@ -21,16 +21,19 @@ from mks_servo_can import (
     RotaryKinematics,
     LinearKinematics,
     const,
-    exceptions
 )
 from mks_servo_can.robot_kinematics import (
     RobotModelBase,
     TwoLinkArmPlanar,
     CartesianRobot,
+    RRRArm,
     CartesianPose,
     KinematicsError,
     ConfigurationError
 )
+
+LINK_1_LENGTH = 100
+LINK_2_LENGTH = 50
 
 # --- Fixtures ---
 
@@ -102,6 +105,49 @@ def cartesian_robot_axes(mock_can_interface: MagicMock) -> Dict[str, Axis]:
     
     return {axis_x.name: axis_x, axis_y.name: axis_y, axis_z.name: axis_z}
 
+@pytest.fixture
+def rrr_arm_axes(mock_can_interface: MagicMock) -> Dict[str, Axis]:
+    """Creates mock Axis objects for an RRR arm."""
+    # All joints in an RRR arm are rotary
+    kin_deg = RotaryKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION)
+    
+    axis_j1 = MagicMock(spec=Axis)
+    axis_j1.name = "J1_Base"
+    axis_j1.can_id = 1 # Ensure unique CAN IDs if testing multiple robots simultaneously, though typically one robot per test class
+    axis_j1.kinematics = kin_deg
+    axis_j1._can_if = mock_can_interface # For RobotModelBase constructor check
+
+    axis_j2 = MagicMock(spec=Axis)
+    axis_j2.name = "J2_Shoulder"
+    axis_j2.can_id = 2
+    axis_j2.kinematics = kin_deg
+    axis_j2._can_if = mock_can_interface
+
+    axis_j3 = MagicMock(spec=Axis)
+    axis_j3.name = "J3_Elbow"
+    axis_j3.can_id = 3
+    axis_j3.kinematics = kin_deg
+    axis_j3._can_if = mock_can_interface
+    
+    return {axis_j1.name: axis_j1, axis_j2.name: axis_j2, axis_j3.name: axis_j3}
+
+@pytest.fixture
+def rrr_robot_model(mock_multi_axis_controller: MultiAxisController, rrr_arm_axes: Dict[str, Axis]) -> RRRArm:
+    """Fixture for an RRRArm instance with specific link lengths."""
+    mock_multi_axis_controller.axes = rrr_arm_axes # Add mock axes to the controller
+    
+    # Define your RRR arm's link lengths for testing
+    # These should match the geometry for which you'll calculate test cases
+    link1_len = LINK_1_LENGTH  # Example: Shoulder to Elbow
+    link2_len = LINK_2_LENGTH   # Example: Elbow to End-Effector
+    
+    return RRRArm(
+        multi_axis_controller=mock_multi_axis_controller,
+        axis_names=["J1_Base", "J2_Shoulder", "J3_Elbow"], # Ensure order matches your kinematic implementation
+        link1_length=link1_len,
+        link2_length=link2_len,
+        # origin_offset=(0.0, 0.0, 0.0) # Default, or specify if needed
+    )
 
 # --- Tests for RobotModelBase ---
 
@@ -361,3 +407,205 @@ async def test_robot_model_base_get_current_pose(arm_robot: TwoLinkArmPlanar, mo
     assert math.isclose(actual_pose['x'], expected_pose['x'], abs_tol=1e-6)
     assert math.isclose(actual_pose['y'], expected_pose['y'], abs_tol=1e-6)
 
+
+# In tests/unit/test_robot_kinematics.py
+
+# ... (other imports and existing code up to the TestRRRArm class) ...
+
+# These constants are already defined at the top of your file:
+# LINK_1_LENGTH = 100
+# LINK_2_LENGTH = 50
+
+# Helper function to calculate FK for test parametrization (can be defined at module level or within the test class)
+def _calculate_rrr_fk_for_test(theta1_deg: float, theta2_deg: float, theta3_deg: float, l1: float, l2: float, origin_offset: Tuple[float, float, float] = (0.0, 0.0, 0.0)):
+    """
+    Calculates the expected FK for the RRR arm based on the RRRArm class's FK logic.
+    Ensure this matches the FK implementation in your RRRArm class.
+    """
+    t1 = math.radians(theta1_deg)
+    t2 = math.radians(theta2_deg)
+    t3 = math.radians(theta3_deg)
+
+    # These equations must exactly match your RRRArm.forward_kinematics implementation
+    x_val = math.cos(t1) * (l1 * math.cos(t2) + l2 * math.cos(t2 + t3))
+    y_val = math.sin(t1) * (l1 * math.cos(t2) + l2 * math.cos(t2 + t3))
+    z_val = l1 * math.sin(t2) + l2 * math.sin(t2 + t3)
+    
+    return {
+        'x': x_val + origin_offset[0],
+        'y': y_val + origin_offset[1],
+        'z': z_val + origin_offset[2]
+    }
+
+class TestRRRArm:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("theta1_deg, theta2_deg, theta3_deg", [
+        (0, 0, 0),
+        (90, 0, 0),
+        (0, 90, 0),
+        (0, 45, -30),
+        (45, 30, 45), # Another varied case
+        (0, -30, 60), # Case with negative shoulder angle
+        # Add more diverse test cases for angles
+    ])
+    async def test_rrr_arm_forward_kinematics(
+        self,
+        rrr_robot_model: RRRArm, # Uses the fixture which now uses LINK_1_LENGTH, LINK_2_LENGTH
+        theta1_deg: float, theta2_deg: float, theta3_deg: float,
+    ):
+        """Tests RRRArm forward kinematics for various joint configurations."""
+        joint_states_list = [theta1_deg, theta2_deg, theta3_deg]
+
+        # Calculate expected pose using the helper and the constants
+        # Assuming rrr_robot_model fixture correctly uses LINK_1_LENGTH and LINK_2_LENGTH
+        # and has an origin_offset if your RRRArm class uses it.
+        # The rrr_robot_model fixture will have self.l1 and self.l2 set from these constants.
+        expected_pose_dict = _calculate_rrr_fk_for_test(
+            theta1_deg, theta2_deg, theta3_deg,
+            rrr_robot_model.l1, # Accessing the actual link lengths from the model instance
+            rrr_robot_model.l2,
+            (rrr_robot_model.origin_x, rrr_robot_model.origin_y, rrr_robot_model.origin_z) # Use model's origin
+        )
+        expected_x = expected_pose_dict['x']
+        expected_y = expected_pose_dict['y']
+        expected_z = expected_pose_dict['z']
+
+        pose = await rrr_robot_model.forward_kinematics(joint_states_list)
+        
+        assert math.isclose(pose.get('x', float('nan')), expected_x, abs_tol=1e-3), f"FK X failed for {joint_states_list}"
+        assert math.isclose(pose.get('y', float('nan')), expected_y, abs_tol=1e-3), f"FK Y failed for {joint_states_list}"
+        assert math.isclose(pose.get('z', float('nan')), expected_z, abs_tol=1e-3), f"FK Z failed for {joint_states_list}"
+
+        # Test with dict input
+        joint_states_dict = {
+            rrr_robot_model.axis_names_in_order[0]: theta1_deg,
+            rrr_robot_model.axis_names_in_order[1]: theta2_deg,
+            rrr_robot_model.axis_names_in_order[2]: theta3_deg
+        }
+        pose_dict_input = await rrr_robot_model.forward_kinematics(joint_states_dict)
+        assert math.isclose(pose_dict_input.get('x', float('nan')), expected_x, abs_tol=1e-3)
+        assert math.isclose(pose_dict_input.get('y', float('nan')), expected_y, abs_tol=1e-3)
+        assert math.isclose(pose_dict_input.get('z', float('nan')), expected_z, abs_tol=1e-3)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target_pose_coords", [
+        # Target poses derived from FK calculations with LINK_1_LENGTH, LINK_2_LENGTH
+        # Example: (0,0,0) joints -> FK gives (L1+L2, 0, 0) if origin is (0,0,0)
+        _calculate_rrr_fk_for_test(0, 0, 0, LINK_1_LENGTH, LINK_2_LENGTH),
+        _calculate_rrr_fk_for_test(30, 20, 10, LINK_1_LENGTH, LINK_2_LENGTH),
+        _calculate_rrr_fk_for_test(0, 45, 45, LINK_1_LENGTH, LINK_2_LENGTH), # Elbow bent forward
+        _calculate_rrr_fk_for_test(0, 60, -30, LINK_1_LENGTH, LINK_2_LENGTH),
+        # Add a few more varied, reachable points
+    ])
+    async def test_rrr_arm_inverse_kinematics_reachable(
+        self,
+        rrr_robot_model: RRRArm,
+        target_pose_coords: Dict[str, float] # This will be {'x': val, 'y': val, 'z': val}
+    ):
+        """Tests RRRArm inverse kinematics for reachable points by checking FK(IK(pose)) == pose."""
+        target_pose: CartesianPose = target_pose_coords # Already a dict
+        
+        try:
+            joint_angles_dict = await rrr_robot_model.inverse_kinematics(target_pose)
+            
+            joint_angles_for_fk = [
+                joint_angles_dict[rrr_robot_model.axis_names_in_order[0]],
+                joint_angles_dict[rrr_robot_model.axis_names_in_order[1]],
+                joint_angles_dict[rrr_robot_model.axis_names_in_order[2]],
+            ]
+            # Recalculate pose using the robot model's FK, which uses its configured link lengths
+            calculated_pose = await rrr_robot_model.forward_kinematics(joint_angles_for_fk)
+            
+            assert math.isclose(calculated_pose.get('x', float('nan')), target_pose['x'], abs_tol=1e-3), f"IK->FK X mismatch for target {target_pose}"
+            assert math.isclose(calculated_pose.get('y', float('nan')), target_pose['y'], abs_tol=1e-3), f"IK->FK Y mismatch for target {target_pose}"
+            assert math.isclose(calculated_pose.get('z', float('nan')), target_pose['z'], abs_tol=1e-3), f"IK->FK Z mismatch for target {target_pose}"
+
+        except KinematicsError as e:
+            pytest.fail(f"IK failed for a supposedly reachable target {target_pose} (derived from FK): {e}")
+
+    @pytest.mark.asyncio
+    async def test_rrr_arm_ik_unreachable(self, rrr_robot_model: RRRArm):
+        """Tests RRRArm IK for points that should be unreachable."""
+        # Max reach is based on the link lengths in the rrr_robot_model instance
+        max_reach = rrr_robot_model.l1 + rrr_robot_model.l2
+        
+        target_pose_far: CartesianPose = {
+            'x': (max_reach + 50.0) + rrr_robot_model.origin_x, # Add origin offset to ensure it's far in world frame
+            'y': 0.0 + rrr_robot_model.origin_y,
+            'z': 0.0 + rrr_robot_model.origin_z
+        }
+        with pytest.raises(KinematicsError, match="(?i)unreachable"): # Case-insensitive match for "unreachable"
+            await rrr_robot_model.inverse_kinematics(target_pose_far)
+
+        # Example: A point potentially too close (inside dead zone, if one exists and IK handles it)
+        # This depends on the specific RRR geometry (e.g. if l1 > l2 or vice-versa, how it folds)
+        # and whether your IK implementation explicitly checks for this.
+        # For a typical RRR, a point very close to the base along Z might be hard if l1 is large.
+        # target_pose_near: CartesianPose = {
+        #     'x': 0.1 + rrr_robot_model.origin_x,
+        #     'y': 0.1 + rrr_robot_model.origin_y,
+        #     'z': 0.1 + rrr_robot_model.origin_z
+        # }
+        # if abs(rrr_robot_model.l1 - rrr_robot_model.l2) > 0.2: # Simplified check for a potential dead zone
+        #     with pytest.raises(KinematicsError, match="(?i)unreachable"):
+        #         await rrr_robot_model.inverse_kinematics(target_pose_near)
+
+
+    @pytest.mark.asyncio
+    async def test_rrr_arm_move_to_cartesian_pose(
+        self, rrr_robot_model: RRRArm, mock_multi_axis_controller: MultiAxisController
+    ):
+        """Tests the move_to_cartesian_pose method of RRRArm."""
+        # Define a reachable target pose using the model's link lengths (which come from constants)
+        # Use the FK helper to get a known reachable point if origin is zero
+        target_coords = _calculate_rrr_fk_for_test(10, 30, 20, rrr_robot_model.l1, rrr_robot_model.l2,
+                                                   (rrr_robot_model.origin_x, rrr_robot_model.origin_y, rrr_robot_model.origin_z))
+        target_pose: CartesianPose = {'x': target_coords['x'], 'y': target_coords['y'], 'z': target_coords['z']}
+        
+        # Mock the IK to return predictable joint targets for this test
+        expected_joint_targets_dict = {
+            rrr_robot_model.axis_names_in_order[0]: 10.0, # Corresponds to theta1=10
+            rrr_robot_model.axis_names_in_order[1]: 30.0, # Corresponds to theta2=30
+            rrr_robot_model.axis_names_in_order[2]: 20.0  # Corresponds to theta3=20
+        }
+        # Patch the robot model's IK method for this test
+        rrr_robot_model.inverse_kinematics = AsyncMock(return_value=expected_joint_targets_dict)
+
+        await rrr_robot_model.move_to_cartesian_pose(target_pose, wait_for_all=True)
+
+        rrr_robot_model.inverse_kinematics.assert_called_once_with(target_pose)
+        mock_multi_axis_controller.move_all_to_positions_abs_user.assert_called_once_with(
+            positions_user=expected_joint_targets_dict,
+            speeds_user=None,
+            wait_for_all=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_rrr_arm_get_current_pose(
+        self, rrr_robot_model: RRRArm, mock_multi_axis_controller: MultiAxisController
+    ):
+        """Tests the get_current_pose method of RRRArm."""
+        current_joint_states_dict = {
+            rrr_robot_model.axis_names_in_order[0]: 15.0,
+            rrr_robot_model.axis_names_in_order[1]: 25.0,
+            rrr_robot_model.axis_names_in_order[2]: 35.0
+        }
+        
+        mock_multi_axis_controller.get_all_positions_user = AsyncMock(return_value=current_joint_states_dict)
+        
+        # Calculate expected pose using the same method as in FK test, but with model's actual link lengths
+        expected_pose_from_fk = _calculate_rrr_fk_for_test(
+            current_joint_states_dict[rrr_robot_model.axis_names_in_order[0]],
+            current_joint_states_dict[rrr_robot_model.axis_names_in_order[1]],
+            current_joint_states_dict[rrr_robot_model.axis_names_in_order[2]],
+            rrr_robot_model.l1,
+            rrr_robot_model.l2,
+            (rrr_robot_model.origin_x, rrr_robot_model.origin_y, rrr_robot_model.origin_z)
+        )
+
+        actual_pose = await rrr_robot_model.get_current_pose()
+        
+        mock_multi_axis_controller.get_all_positions_user.assert_called_once()
+        assert math.isclose(actual_pose.get('x', float('nan')), expected_pose_from_fk['x'], abs_tol=1e-3)
+        assert math.isclose(actual_pose.get('y', float('nan')), expected_pose_from_fk['y'], abs_tol=1e-3)
+        assert math.isclose(actual_pose.get('z', float('nan')), expected_pose_from_fk['z'], abs_tol=1e-3)

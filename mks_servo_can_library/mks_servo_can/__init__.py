@@ -28,7 +28,8 @@ from .kinematics import (
 from .robot_kinematics import (
     RobotModelBase,
     TwoLinkArmPlanar,
-    CartesianRobot
+    CartesianRobot,
+    RRRArm
 )
 
 # Import CRC functions explicitly if they are to be exported
@@ -79,6 +80,7 @@ __all__ = [
     "RobotModelBase",
     "TwoLinkArmPlanar",
     "CartesianRobot",
+    "RRRArm",
 
     # Export utility functions from crc module
     "calculate_crc",
