@@ -47,6 +47,7 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
         * [`virtual_can_bus.py`](api_reference/simulator/virtual_can_bus.md)
 
 5.  **Tutorials & Examples**
+    * [CAN on Linux: A Quick Survival Guide](tutorials/survival_guide_can_on_linux.md)
     * [Controlling a Single Axis (Simulator)](tutorials/single_axis_sim.md)
     * [Controlling a Single Axis (Real Hardware)](tutorials/single_axis_hw.md)
     * [Synchronizing Multiple Axes](tutorials/multi_axis_sync.md)
