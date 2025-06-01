@@ -55,13 +55,13 @@ logger = logging.getLogger(__name__)
 # This is a crucial comment prompting the user to update the following constants
 # to match their specific hardware setup.
 CAN_INTERFACE_TYPE = (
-    "canable"  # e.g., 'canable', 'socketcan', 'kvaser', 'pcan', 'usb2can'
+    "socketcan"  # e.g., 'canable', 'socketcan', 'kvaser', 'pcan', 'usb2can'
 )
 # Defines the type of CAN adapter being used. 'canable' is a common choice.
 # Other examples are provided, indicating compatibility with various 'python-can' backends.
 
 CAN_CHANNEL = (
-    "/dev/ttyACM0"  # e.g., 'slcan0', '/dev/ttyUSB0', 'PCAN_USBBUS1', 'can0'
+    "can0"  # e.g., 'slcan0', '/dev/ttyUSB0', 'PCAN_USBBUS1', 'can0'
 )
 # Defines the specific channel or port for the CAN adapter.
 # For 'canable' with slcan firmware on Linux, this is often a serial port like '/dev/ttyACM0' or '/dev/ttyUSB0'.
