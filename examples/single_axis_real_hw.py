@@ -171,6 +171,7 @@ async def main():
         logger.info("Getting current position...")
         # Logs the intent to read the current position.
         pos_user = await axis1.get_current_position_user()
+        pos_steps = await axis1.get_current_position_steps()
         # Reads the motor's current position in user units (degrees, due to RotaryKinematics).
         kin_units = (
             axis1.kinematics.units # Accesses the 'units' attribute from the kinematics object.
@@ -178,7 +179,8 @@ async def main():
             else "degrees" # Fallback if 'units' is not found (though it should be for standard kinematics).
         )
         # Retrieves the units string from the kinematics object for logging.
-        logger.info("Current position: %.2f %s", pos_user, kin_units)
+        logger.info("Current position (user): %.2f %s", pos_user, kin_units)
+        logger.info("Current position (pulses): %.2f", pos_steps)
         # Logs the current position.
 
         # --- Example move ---
@@ -186,7 +188,8 @@ async def main():
         # Users can uncomment it to test actual movement.
         # target_angle_degrees = pos_user + 30.0
         # Calculates a target angle 30 degrees from the current position.
-        # logger.info("Moving to %.2f degrees...", target_angle_degrees)
+        # logger.info("Moving to %.2f degrees (%d pulses)...", target_angle_degrees, 
+        #             axis1.kinematics.user_to_steps(target_angle_degrees))
         # Logs the target move.
         # await axis1.move_to_position_abs_user(
         # target_angle_degrees, speed_user=90.0, wait=True
@@ -196,7 +199,7 @@ async def main():
         # new_pos_log = await axis1.get_current_position_user()
         # Reads the position again after the move.
         # logger.info("Move complete. New position: %.2f %s",
-        # new_pos_log, kin_units)
+        #             new_pos_log, kin_units)
         # Logs the new position.
 
         logger.info("Example finished. Disabling motor.")
