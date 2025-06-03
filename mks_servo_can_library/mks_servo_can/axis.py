@@ -60,7 +60,8 @@ class Axis:
     This class encapsulates the logic for sending commands to an MKS servo motor,
     managing its state (e.g., position, speed, enabled status), and handling
     communication timeouts and errors. It integrates with a kinematics system
-    for unit conversions.
+    for unit conversions and considers motor microstepping settings for pulse-based
+    commands.
     """
 
     def __init__(
@@ -70,6 +71,8 @@ class Axis:
         name: str = "default_axis",
         motor_type: str = const.MOTOR_TYPE_SERVO42D,
         kinematics: Optional[Kinematics] = None,
+        mstep_value: int = 16, 
+        base_motor_steps_per_rev: int = 200,
         default_speed_param: int = 500,
         default_accel_param: int = 100,
         loop: Optional[asyncio.AbstractEventLoop] = None,
@@ -88,8 +91,16 @@ class Axis:
                         This may influence default parameters or behavior in future extensions.
                         Defaults to `const.MOTOR_TYPE_SERVO42D`.
             kinematics: A `Kinematics` object for converting between user-defined physical
-                        units (e.g., mm, degrees) and raw motor steps. If None, defaults
-                        to `RotaryKinematics` using `const.ENCODER_PULSES_PER_REVOLUTION`.
+                        units (e.g., mm, degrees) and raw motor encoder steps (16384/rev).
+                        If None, defaults to `RotaryKinematics` using
+                        `const.ENCODER_PULSES_PER_REVOLUTION`.
+            mstep_value: The microstep setting for the motor (e.g., 8, 16, 32). This is
+                         used for commands that expect pulse counts based on microstepping.
+                         The value provided should be the actual microstepping factor.
+                         Defaults to 16.
+            base_motor_steps_per_rev: The number of full steps the physical stepper motor
+                                      takes per revolution (e.g., 200 for 1.8 deg/step motors).
+                                      Defaults to 200.
             default_speed_param: Default MKS speed parameter (0-3000) to be used for
                                  movement commands if no speed is explicitly provided.
                                  Defaults to 500.
@@ -101,6 +112,7 @@ class Axis:
 
         Raises:
             ParameterError: If `motor_can_id` is outside the valid range (1-2047).
+            ConfigurationError: If `mstep_value` or `base_motor_steps_per_rev` are invalid.
         """
         if not (
             const.BROADCAST_ADDRESS < motor_can_id <= 0x7FF # type: ignore[operator] # const.BROADCAST_ADDRESS can be an int
@@ -108,6 +120,13 @@ class Axis:
             raise ParameterError(
                 f"Invalid motor_can_id: {motor_can_id}. Must be 1-2047."
             )
+        # MKS Manual for 0x84 (Set Subdivision) implies micstep(00~FF), typical values are powers of 2.
+        # We'll assume mstep_value is the actual desired subdivision factor.
+        if not (0 < mstep_value <= 256): 
+            raise ConfigurationError(f"Invalid mstep_value: {mstep_value}. Must be positive and typically up to 256.")
+        if not (base_motor_steps_per_rev > 0):
+            raise ConfigurationError(f"Invalid base_motor_steps_per_rev: {base_motor_steps_per_rev}. Must be positive.")
+
 
         self.name = name
         self.can_id = motor_can_id
@@ -119,18 +138,31 @@ class Axis:
         if kinematics is None:
             logger.info(
                 f"Axis '{name}': No kinematics provided, defaulting to RotaryKinematics "
-                f"with {const.ENCODER_PULSES_PER_REVOLUTION} steps/rev (encoder pulses)."
+                f"with {const.ENCODER_PULSES_PER_REVOLUTION} raw encoder steps/rev."
             )
             self.kinematics: Kinematics = RotaryKinematics( # Explicitly type hint self.kinematics
-                steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION
+                steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION # This is raw encoder steps
             )
         else:
             self.kinematics = kinematics
+            if hasattr(self.kinematics, 'steps_per_revolution') and \
+               self.kinematics.steps_per_revolution != const.ENCODER_PULSES_PER_REVOLUTION:
+                logger.warning(
+                    f"Axis '{name}': Provided kinematics steps_per_revolution ({self.kinematics.steps_per_revolution}) "
+                    f"differs from standard ENCODER_PULSES_PER_REVOLUTION ({const.ENCODER_PULSES_PER_REVOLUTION}). "
+                    "Ensure this is intentional and correctly represents raw encoder feedback scaling per output revolution."
+                )
+
+
+        self.mstep_value = mstep_value
+        self.base_motor_steps_per_rev = base_motor_steps_per_rev
+        # Total microsteps per motor revolution for pulse-based commands (0xFD, 0xFE)
+        self._microsteps_per_motor_revolution_for_cmd = self.base_motor_steps_per_rev * self.mstep_value
 
         self.default_speed_param = default_speed_param
         self.default_accel_param = default_accel_param
 
-        self._current_position_steps: Optional[int] = None
+        self._current_position_steps: Optional[int] = None # Raw encoder steps (16384/rev base for motor shaft)
         self._current_speed_rpm: Optional[int] = None
         self._is_enabled: bool = False
         self._is_homed: bool = False
@@ -138,6 +170,21 @@ class Axis:
         self._active_move_future: Optional[asyncio.Future] = None
         self._error_state: Optional[MKSServoError] = None
 
+    def _raw_encoder_steps_to_command_microsteps(self, raw_encoder_steps: int) -> int:
+        """Converts raw encoder steps (16384/rev motor shaft base) to command microsteps."""
+        if const.ENCODER_PULSES_PER_REVOLUTION == 0:
+            raise ConfigurationError("ENCODER_PULSES_PER_REVOLUTION cannot be zero for conversion.")
+        motor_revolutions = float(raw_encoder_steps) / const.ENCODER_PULSES_PER_REVOLUTION
+        command_microsteps = int(round(motor_revolutions * self._microsteps_per_motor_revolution_for_cmd))
+        return command_microsteps
+
+    def _command_microsteps_to_raw_encoder_steps(self, command_microsteps: int) -> int:
+        """Converts command microsteps to equivalent raw encoder steps (16384/rev motor shaft base)."""
+        if self._microsteps_per_motor_revolution_for_cmd == 0:
+             raise ConfigurationError("_microsteps_per_motor_revolution_for_cmd cannot be zero for conversion.")
+        motor_revolutions = float(command_microsteps) / self._microsteps_per_motor_revolution_for_cmd
+        raw_encoder_steps = int(round(motor_revolutions * const.ENCODER_PULSES_PER_REVOLUTION))
+        return raw_encoder_steps
 
     async def initialize(
         self, calibrate: bool = False, home: bool = False
@@ -180,8 +227,6 @@ class Axis:
                 await self.calibrate_encoder() # Sets _is_calibrated on success
             else:
                 # If not calibrating, assume it's usable (e.g., previously calibrated).
-                # This behavior might need refinement based on how "calibrated" status is strictly defined.
-                # For now, successful communication implies it's in a usable state if calibration not requested.
                 self._is_calibrated = True 
             
             if home:
@@ -196,6 +241,34 @@ class Axis:
             logger.error(f"Axis '{self.name}': Initialization failed: {e}")
             raise
         logger.info(f"Axis '{self.name}' initialization complete.")
+
+    async def set_motor_subdivision(self, mstep_register_value: int) -> None:
+        """
+        Sets the motor's microstepping subdivision (MSTEP value).
+
+        This sends the command to the motor and updates the axis's internal
+        `mstep_value` and related calculation factors. The `mstep_register_value`
+        should be the actual desired microstepping factor (e.g., 16, 32, 64). [cite: 167]
+
+        Args:
+            mstep_register_value: The microstep setting to send to the motor (e.g., 16, 32).
+                                  Corresponds to the `micstep(00~FF)` parameter for command 0x84. [cite: 167]
+
+        Raises:
+            ParameterError: If the mstep_register_value is invalid (0-255 range for command). [cite: 167]
+            MotorError: If the motor fails to set the subdivision.
+            CommunicationError: On CAN communication issues.
+        """
+        logger.info(f"Axis '{self.name}': Setting motor subdivision to {mstep_register_value}.")
+        # LowLevelAPI's set_subdivision takes the value that the motor expects (0-255) [MKS SERVO42&57D_CAN User Manual V1.0.6.pdf, p. 22]
+        await self._low_level_api.set_subdivision(self.can_id, mstep_register_value)
+        
+        # Update internal state
+        self.mstep_value = mstep_register_value
+        self._microsteps_per_motor_revolution_for_cmd = self.base_motor_steps_per_rev * self.mstep_value
+        logger.info(f"Axis '{self.name}': Internal mstep_value updated to {self.mstep_value}, "
+                    f"command microsteps per motor rev: {self._microsteps_per_motor_revolution_for_cmd}")
+
 
     async def set_work_mode(self, mode_const: int) -> None:
         """
@@ -362,8 +435,8 @@ class Axis:
         Defines the motor's current physical position as the zero reference point (origin).
 
         This command directly instructs the motor to consider its current location
-        as the 0-pulse or 0-unit position. It typically also sets the homed status
-        of the axis to True, as a defined zero point is established.
+        as the 0-pulse or 0-unit position (raw encoder value is set to 0).
+        It also sets the homed status of the axis to True.
 
         Raises:
             MotorError: If the motor reports failure to set the current position as zero.
@@ -380,7 +453,7 @@ class Axis:
         move_command_func, # type: ignore
         command_const: int,
         success_status: int = const.POS_RUN_COMPLETE,
-        pulses_to_move: Optional[int] = None, 
+        pulses_to_move_for_timeout: Optional[int] = None, # Magnitude of move in units relevant to command_const
         speed_param_for_calc: Optional[int] = None,
     ) -> None:
         """
@@ -399,9 +472,10 @@ class Axis:
                                  (e.g., `const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES`).
             success_status (int): The expected status code from the motor upon successful
                                   completion of the move. Defaults to `const.POS_RUN_COMPLETE`.
-            pulses_to_move (Optional[int]): The absolute number of pulses for the move.
-                                            Used for calculating a dynamic timeout. If None,
-                                            a default timeout is used.
+            pulses_to_move_for_timeout (Optional[int]): The absolute number of pulses/steps for the move,
+                                           in units relevant to the command (microsteps for 0xFD/0xFE,
+                                           raw encoder steps for 0xF4/0xF5). Used for calculating
+                                           a dynamic timeout. If None, a default timeout is used.
             speed_param_for_calc (Optional[int]): The MKS speed parameter (0-3000) used for the move.
                                                   Also used for dynamic timeout calculation.
 
@@ -416,7 +490,7 @@ class Axis:
         if self._active_move_future and not self._active_move_future.done():
             logger.warning(f"Axis '{self.name}': Active move future exists. Cancelling previous move.")
             self._active_move_future.cancel("New move initiated")
-            await asyncio.sleep(0)
+            await asyncio.sleep(0) # Allow cancellation to propagate
 
 
         if not self.is_enabled():
@@ -429,23 +503,36 @@ class Axis:
         # Dynamic timeout calculation
         move_timeout: float = const.CAN_TIMEOUT_SECONDS * 10.0 # Default timeout
 
-        if pulses_to_move is not None and speed_param_for_calc is not None and speed_param_for_calc > 0:
+        if pulses_to_move_for_timeout is not None and speed_param_for_calc is not None and speed_param_for_calc > 0:
             try:
                 # Max motor RPM from constant, e.g., const.MAX_RPM_VFOC_MODE for VFOC
                 # The MKS speed parameter (0-3000) mapping to RPM depends on the work mode.
                 # We use MAX_RPM_VFOC_MODE as a general reference if not mode-specific.
-                max_rpm_reference = const.MAX_RPM_VFOC_MODE
+                max_rpm_reference = const.MAX_RPM_VFOC_MODE # TODO: Make this mode-dependent if possible
                 
                 estimated_motor_rpm = (float(speed_param_for_calc) / 3000.0) * max_rpm_reference
                 
                 if estimated_motor_rpm > 0.1: # Avoid division by zero or negligible speeds
                     motor_rps = estimated_motor_rpm / 60.0
-                    # pulses_to_move are raw motor steps (e.g. from _relative_pulses)
-                    # Use kinematics.steps_per_revolution which is motor shaft steps
-                    motor_shaft_steps_per_sec = motor_rps * self.kinematics.steps_per_revolution
                     
-                    if motor_shaft_steps_per_sec > 1.0: # Ensure meaningful speed
-                        estimated_duration_s = abs(pulses_to_move) / motor_shaft_steps_per_sec
+                    steps_per_rev_for_timeout_calc: float
+                    if command_const in [const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES, const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES]:
+                        steps_per_rev_for_timeout_calc = float(self._microsteps_per_motor_revolution_for_cmd)
+                    elif command_const in [const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS, const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS]:
+                        steps_per_rev_for_timeout_calc = float(const.ENCODER_PULSES_PER_REVOLUTION) # Raw encoder steps for these commands
+                    else:
+                        # Fallback for other commands, or if command type is unknown here
+                        steps_per_rev_for_timeout_calc = float(self.kinematics.steps_per_revolution) # This is raw encoder steps by default
+                        logger.warning(f"Axis '{self.name}': Timeout calculation for CMD {command_const:02X} using default kinematics steps_per_revolution ({steps_per_rev_for_timeout_calc}).")
+
+                    if steps_per_rev_for_timeout_calc == 0:
+                        raise ConfigurationError("Steps per revolution for timeout calculation is zero.")
+
+                    # pulses_to_move_for_timeout is the magnitude of the move in the units of steps_per_rev_for_timeout_calc
+                    motor_shaft_units_per_sec = motor_rps * steps_per_rev_for_timeout_calc
+                    
+                    if motor_shaft_units_per_sec > 1.0: # Ensure meaningful speed
+                        estimated_duration_s = abs(pulses_to_move_for_timeout) / motor_shaft_units_per_sec
                         # Buffer: e.g., 3x CAN_TIMEOUT_SECONDS + 25% of duration for processing/acceleration
                         buffer_s = const.CAN_TIMEOUT_SECONDS * 3.0 
                         calculated_timeout = estimated_duration_s * 1.25 + buffer_s 
@@ -453,7 +540,7 @@ class Axis:
                         move_timeout = max(calculated_timeout, const.CAN_TIMEOUT_SECONDS * 5.0) 
                         logger.debug(
                             f"Axis '{self.name}': Calculated move_timeout: {move_timeout:.2f}s "
-                            f"for {abs(pulses_to_move)} pulses at speed_param {speed_param_for_calc} "
+                            f"for {abs(pulses_to_move_for_timeout)} units (type for CMD {command_const:02X}) at speed_param {speed_param_for_calc} "
                             f"(est. duration: {estimated_duration_s:.2f}s)"
                         )
             except Exception as e_timeout_calc: # pylint: disable=broad-except
@@ -525,7 +612,7 @@ class Axis:
                     MotorError(msg, error_code=initial_status, can_id=self.can_id)
                 )
             
-            await self.get_current_position_steps()
+            await self.get_current_position_steps() # Update position after move attempt
 
         except asyncio.TimeoutError:
             msg = f"Axis '{self.name}': Timeout waiting for move (CMD={command_const:02X}) response/completion."
@@ -538,7 +625,7 @@ class Axis:
             )
             if not self._active_move_future.done():
                 self._active_move_future.set_exception(e)
-        except Exception as e: 
+        except Exception as e: # pylint: disable=broad-except
             logger.error(
                 f"Axis '{self.name}': Unexpected Exception during move (CMD={command_const:02X}): {e}", exc_info=True
             )
@@ -554,27 +641,27 @@ class Axis:
 
     async def move_to_position_abs_pulses(
         self,
-        target_pulses: int,
+        target_command_microsteps: int, 
         speed_param: Optional[int] = None,
         accel_param: Optional[int] = None,
         wait: bool = True,
     ):
         """
-        Moves the motor to an absolute target position specified in raw motor pulses/steps.
+        Moves the motor to an absolute target position specified in command microsteps.
 
-        This command uses the MKS "absolute motion by pulses" (e.g., 0xFE).
+        This command uses the MKS "absolute motion by pulses" (0xFE). The target
+        position is specified in microsteps as determined by the motor's MSTEP setting.
 
         Args:
-            target_pulses: The absolute target position in motor pulses (signed 24-bit).
+            target_command_microsteps: The absolute target position in command microsteps
+                                       (signed 24-bit, based on MSTEP * base_steps/rev).
             speed_param: MKS speed parameter (0-3000). If None, uses `self.default_speed_param`.
             accel_param: MKS acceleration parameter (0-255). If None, uses `self.default_accel_param`.
             wait: If True (default), the method waits for the move to complete before returning.
-                  If False, the move is initiated, and the method returns, allowing other
-                  operations to proceed concurrently. The completion can be awaited later
-                  via `wait_for_move_completion()` or by checking `is_move_complete()`.
+                  If False, the move is initiated, and the method returns.
 
         Raises:
-            ParameterError: If `speed_param`, `accel_param`, or `target_pulses` are out of range.
+            ParameterError: If `speed_param`, `accel_param`, or `target_command_microsteps` are out of range.
             CommunicationError: If CAN communication fails or times out.
             MotorError: If the motor reports an error starting or during the move.
             LimitError: If the motor reports hitting a limit switch during the move.
@@ -582,25 +669,27 @@ class Axis:
         sp = speed_param if speed_param is not None else self.default_speed_param
         ac = accel_param if accel_param is not None else self.default_accel_param
         
-        # For dynamic timeout, estimate pulses_to_move
-        current_pos_for_delta = self._current_position_steps
-        if current_pos_for_delta is None: # Fetch if not available
+        delta_microsteps_for_timeout: Optional[int] = None
+        current_pos_raw_steps = self._current_position_steps
+        if current_pos_raw_steps is None: # Fetch if not available
             try:
-                current_pos_for_delta = await self.get_current_position_steps()
+                current_pos_raw_steps = await self.get_current_position_steps()
             except MKSServoError: # If fetching fails, cannot calculate delta
-                current_pos_for_delta = None # Fallback to default timeout later
+                current_pos_raw_steps = None # Fallback to default timeout later
         
-        delta_pulses_for_timeout = abs(target_pulses - current_pos_for_delta) if current_pos_for_delta is not None else None
+        if current_pos_raw_steps is not None:
+            current_pos_cmd_microsteps = self._raw_encoder_steps_to_command_microsteps(current_pos_raw_steps)
+            delta_microsteps_for_timeout = abs(target_command_microsteps - current_pos_cmd_microsteps)
 
 
         logger.info(
-            f"Axis '{self.name}': Moving to absolute pulse position {target_pulses} (SpeedP: {sp}, AccelP: {ac})."
+            f"Axis '{self.name}': Moving to absolute command microstep position {target_command_microsteps} (SpeedP: {sp}, AccelP: {ac})."
         )
         cmd_func = lambda: self._low_level_api.run_position_mode_absolute_pulses(
-            self.can_id, sp, ac, target_pulses
+            self.can_id, sp, ac, target_command_microsteps 
         )
         await self._execute_move(cmd_func, const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES,
-                                 pulses_to_move=delta_pulses_for_timeout, speed_param_for_calc=sp)
+                                 pulses_to_move_for_timeout=delta_microsteps_for_timeout, speed_param_for_calc=sp)
         if wait and self._active_move_future:
             await self._active_move_future
 
@@ -613,14 +702,14 @@ class Axis:
         """
         Moves the motor to an absolute target position specified in user-defined units.
 
-        The user-defined position and speed are converted to motor pulses and MKS speed
-        parameters using the axis's configured kinematics object. This command then uses
-        the MKS "absolute motion by pulses" (e.g., 0xFE).
+        The user-defined position and speed are converted to motor command microsteps
+        and MKS speed parameters using the axis's configured kinematics object and MSTEP settings.
+        This command then uses the MKS "absolute motion by pulses" (0xFE).
 
         Args:
             target_pos_user: The absolute target position in user units (e.g., mm, degrees).
             speed_user: The desired speed in user units per second. If None, the axis's
-                        `default_speed_param` (converted via kinematics) is used.
+                        `default_speed_param` (MKS units) is used.
             wait: If True (default), waits for the move to complete. If False, initiates
                   the move and returns.
 
@@ -631,53 +720,60 @@ class Axis:
             MotorError: If the motor reports an error.
             LimitError: If a limit is hit.
         """
-        target_steps = self.kinematics.user_to_steps(target_pos_user)
+        # Convert user position to equivalent raw encoder steps first
+        target_raw_encoder_steps = self.kinematics.user_to_steps(target_pos_user)
+        # Then convert raw encoder steps to command microsteps for the 0xFE command
+        target_command_microsteps = self._raw_encoder_steps_to_command_microsteps(target_raw_encoder_steps)
+
         mks_speed_param = (
-            self.kinematics.user_speed_to_motor_speed(speed_user)
+            self.kinematics.user_speed_to_motor_speed(speed_user) # This should return MKS speed param
             if speed_user is not None
             else self.default_speed_param
         )
         mks_accel_param = self.default_accel_param # Kept for command, not used in current timeout calc
         
-        current_pos_steps_for_delta = self._current_position_steps
-        if current_pos_steps_for_delta is None:
+        delta_microsteps_for_timeout: Optional[int] = None
+        current_pos_raw_steps = self._current_position_steps
+        if current_pos_raw_steps is None:
             try:
-                current_pos_steps_for_delta = await self.get_current_position_steps()
+                current_pos_raw_steps = await self.get_current_position_steps()
             except MKSServoError:
-                current_pos_steps_for_delta = None
+                current_pos_raw_steps = None
         
-        delta_steps_for_timeout = abs(target_steps - current_pos_steps_for_delta) if current_pos_steps_for_delta is not None else None
+        if current_pos_raw_steps is not None:
+            current_pos_cmd_microsteps = self._raw_encoder_steps_to_command_microsteps(current_pos_raw_steps)
+            delta_microsteps_for_timeout = abs(target_command_microsteps - current_pos_cmd_microsteps)
+
 
         logger.info(
             f"Axis '{self.name}': Moving to user position {target_pos_user} ({getattr(self.kinematics, 'units', 'units')}) "
-            f"-> {target_steps} pulses (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
+            f"-> {target_command_microsteps} command microsteps (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
         )
         cmd_func = lambda: self._low_level_api.run_position_mode_absolute_pulses(
-            self.can_id, mks_speed_param, mks_accel_param, target_steps
+            self.can_id, mks_speed_param, mks_accel_param, target_command_microsteps
         )
         await self._execute_move(cmd_func, const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES,
-                                 pulses_to_move=delta_steps_for_timeout, speed_param_for_calc=mks_speed_param)
+                                 pulses_to_move_for_timeout=delta_microsteps_for_timeout, speed_param_for_calc=mks_speed_param)
         if wait and self._active_move_future:
             await self._active_move_future
 
     async def move_relative_pulses(
         self,
-        relative_pulses: int,
+        relative_command_microsteps: int,
         speed_param: Optional[int] = None,
         accel_param: Optional[int] = None,
         wait: bool = True,
     ):
         """
-        Moves the motor by a relative distance specified in raw motor pulses/steps.
+        Moves the motor by a relative distance specified in command microsteps.
 
-        This command uses the MKS "relative motion by pulses" (e.g., 0xFD).
-        A positive `relative_pulses` value typically corresponds to counter-clockwise (CCW)
-        motion, and a negative value to clockwise (CW), though this can be influenced
-        by motor configuration or wiring.
+        This command uses the MKS "relative motion by pulses" (0xFD).
+        The `relative_command_microsteps` argument is based on the motor's MSTEP setting.
 
         Args:
-            relative_pulses: The number of pulses to move relative to the current position.
-                             Positive for one direction, negative for the other.
+            relative_command_microsteps: The number of command microsteps to move relative
+                                         to the current position. Positive for one direction,
+                                         negative for the other.
             speed_param: MKS speed parameter (0-3000). If None, uses `self.default_speed_param`.
             accel_param: MKS acceleration parameter (0-255). If None, uses `self.default_accel_param`.
             wait: If True (default), waits for the move to complete.
@@ -690,18 +786,18 @@ class Axis:
         """
         sp = speed_param if speed_param is not None else self.default_speed_param
         ac = accel_param if accel_param is not None else self.default_accel_param
-        direction_ccw = relative_pulses >= 0 # Treat 0 as CCW for consistency if it means no move
-        num_pulses_for_cmd = abs(relative_pulses) # Command takes magnitude
-        num_pulses_for_timeout = num_pulses_for_cmd
-
+        direction_ccw = relative_command_microsteps >= 0 
+        num_microsteps_for_cmd = abs(relative_command_microsteps) # Command takes magnitude
+        
         logger.info(
-            f"Axis '{self.name}': Moving relative by {relative_pulses} pulses (SpeedP: {sp}, AccelP: {ac})."
+            f"Axis '{self.name}': Moving relative by {relative_command_microsteps} command microsteps (SpeedP: {sp}, AccelP: {ac})."
         )
         cmd_func = lambda: self._low_level_api.run_position_mode_relative_pulses(
-            self.can_id, direction_ccw, sp, ac, num_pulses_for_cmd
+            self.can_id, direction_ccw, sp, ac, num_microsteps_for_cmd
         )
+        # For timeout, pulses_to_move_for_timeout is the magnitude of the move in command microsteps
         await self._execute_move(cmd_func, const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES,
-                                 pulses_to_move=num_pulses_for_timeout, speed_param_for_calc=sp)
+                                 pulses_to_move_for_timeout=num_microsteps_for_cmd, speed_param_for_calc=sp)
         if wait and self._active_move_future:
             await self._active_move_future
 
@@ -714,15 +810,14 @@ class Axis:
         """
         Moves the motor by a relative distance specified in user-defined units.
 
-        The user-defined distance and speed are converted to motor pulses and MKS speed
-        parameters using the axis's kinematics. This command then uses the MKS
-        "relative motion by pulses" (e.g., 0xFD).
+        The user-defined distance and speed are converted to command microsteps and MKS speed
+        parameters. This command then uses the MKS "relative motion by pulses" (0xFD).
 
         Args:
             relative_dist_user: The distance to move in user units (e.g., mm, degrees).
                                 Positive for one direction, negative for the other.
             speed_user: The desired speed in user units per second. If None, the
-                        axis's default speed is used (converted via kinematics).
+                        axis's default speed (MKS param) is used.
             wait: If True (default), waits for the move to complete.
 
         Raises:
@@ -732,26 +827,29 @@ class Axis:
             MotorError: If the motor reports an error.
             LimitError: If a limit is hit.
         """
-        relative_steps = self.kinematics.user_to_steps(relative_dist_user)
+        # Convert user distance to equivalent raw encoder steps first
+        relative_raw_encoder_steps = self.kinematics.user_to_steps(relative_dist_user)
+        # Then convert raw encoder steps to command microsteps for the 0xFD command
+        relative_command_microsteps = self._raw_encoder_steps_to_command_microsteps(relative_raw_encoder_steps)
+
         mks_speed_param = (
             self.kinematics.user_speed_to_motor_speed(speed_user)
             if speed_user is not None
             else self.default_speed_param
         )
-        mks_accel_param = self.default_accel_param # Kept for command
-        direction_ccw = relative_steps >= 0
-        num_steps_for_cmd = abs(relative_steps)
-        num_steps_for_timeout = num_steps_for_cmd
+        mks_accel_param = self.default_accel_param 
+        direction_ccw = relative_command_microsteps >= 0
+        num_microsteps_for_cmd = abs(relative_command_microsteps)
 
         logger.info(
             f"Axis '{self.name}': Moving relative by {relative_dist_user} {getattr(self.kinematics, 'units', 'units')} "
-            f"-> {relative_steps} pulses (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
+            f"-> {relative_command_microsteps} command microsteps (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
         )
         cmd_func = lambda: self._low_level_api.run_position_mode_relative_pulses(
-            self.can_id, direction_ccw, mks_speed_param, mks_accel_param, num_steps_for_cmd
+            self.can_id, direction_ccw, mks_speed_param, mks_accel_param, num_microsteps_for_cmd
         )
         await self._execute_move(cmd_func, const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES,
-                                 pulses_to_move=num_steps_for_timeout, speed_param_for_calc=mks_speed_param)
+                                 pulses_to_move_for_timeout=num_microsteps_for_cmd, speed_param_for_calc=mks_speed_param)
         if wait and self._active_move_future:
             await self._active_move_future
             
@@ -770,11 +868,9 @@ class Axis:
         Args:
             speed_user: The desired speed in user-defined units per second (e.g., mm/s, deg/s).
                         A positive value typically results in counter-clockwise (CCW) rotation,
-                        and a negative value in clockwise (CW) rotation, subject to motor
+                        and a negative value in clockwise (CW), subject to motor
                         and kinematics configuration.
             accel_user (Optional[float]): Desired acceleration in user units per second squared.
-                                          If provided, this would ideally be converted to an MKS
-                                          acceleration parameter via kinematics.
                                           (Note: Current implementation uses `default_accel_param`
                                           as direct conversion from `accel_user` to MKS `accel_param`
                                           is not fully implemented in standard kinematics classes.)
@@ -983,7 +1079,11 @@ class Axis:
 
         This method actively queries the motor using the MKS command 0x31
         (Read Encoder Accumulated Value). The internal `_current_position_steps`
-        state of the axis object is updated with the result.
+        state of the axis object is updated with the result. This value represents
+        the raw encoder count (e.g., 16384 pulses per motor shaft revolution).
+        The method inverts the value read from `read_encoder_value_addition`
+        as per previous implementation convention.
+
 
         Returns:
             The current motor position as an integer number of encoder steps.
@@ -992,7 +1092,7 @@ class Axis:
             CommunicationError: On CAN communication issues (e.g., timeout).
             MotorError: For motor-reported errors during the read attempt.
         """
-        pos_steps = await self._low_level_api.read_encoder_value_addition(self.can_id)
+        pos_steps = - await self._low_level_api.read_encoder_value_addition(self.can_id) # type: ignore
         self._current_position_steps = pos_steps
         return pos_steps
 
@@ -1116,7 +1216,8 @@ class Axis:
             `'name'`, `'can_id'`, `'timestamp'`, `'position_steps'`, `'position_user'`,
             `'position_units'`, `'is_enabled'`, `'is_homed'`, `'is_calibrated'`,
             `'motor_status_code'`, `'motor_status_str'`, `'error_state'`,
-            `'active_move_in_progress'`.
+            `'active_move_in_progress'`, `'mstep_value'`,
+            `'_microsteps_per_motor_revolution_for_cmd'`.
             If fetching status fails, a partial dictionary with an
             `'error_during_status_fetch'` key may be returned.
 
@@ -1156,9 +1257,11 @@ class Axis:
             "name": self.name,
             "can_id": self.can_id,
             "timestamp": timestamp,
-            "position_steps": pos_steps,
+            "position_steps": pos_steps, # Raw encoder steps
             "position_user": pos_user,
             "position_units": getattr(self.kinematics, "units", "unknown"),
+            "mstep_value": self.mstep_value,
+            "_microsteps_per_motor_revolution_for_cmd": self._microsteps_per_motor_revolution_for_cmd,
             "is_enabled": is_en,
             "is_homed": self._is_homed, # Uses cached after homing operations
             "is_calibrated": self._is_calibrated, # Uses cached after calibration
@@ -1280,7 +1383,7 @@ class Axis:
         # unless low_level_api.read_en_pin_status itself takes and uses a timeout parameter.
         # If `timeout` here is meant to cap the entire operation:
         async def _do_ping():
-            await self._low_level_api.read_en_pin_status(self.can_id)
+            await self._low_level_api.read_en_pin_status(self.can_id) # type: ignore
             return True # Indicate success
 
         try:
