@@ -6,7 +6,7 @@ asynchronous interface for controlling a single MKS SERVO42D/57D motor.
 It abstracts away the low-level CAN command details and manages motor state,
 kinematic conversions, and error handling.
 """
-from typing import Any, Dict, Optional, Callable # Added Callable
+from typing import Any, Dict, Optional, Callable
 import math
 import asyncio
 import logging
@@ -648,9 +648,9 @@ class Axis:
     ):
         """
         Moves the motor to an absolute target position specified in command microsteps.
-
-        This command uses the MKS "absolute motion by pulses" (0xFE). The target
-        position is specified in microsteps as determined by the motor's MSTEP setting.
+        This method emulates absolute positioning by leveraging the motor's relative
+        pulse movement command (0xFD) as a workaround for potential issues with the
+        direct absolute motion command (0xFE).
 
         Args:
             target_command_microsteps: The absolute target position in command microsteps
@@ -668,30 +668,85 @@ class Axis:
         """
         sp = speed_param if speed_param is not None else self.default_speed_param
         ac = accel_param if accel_param is not None else self.default_accel_param
-        
-        delta_microsteps_for_timeout: Optional[int] = None
-        current_pos_raw_steps = self._current_position_steps
-        if current_pos_raw_steps is None: # Fetch if not available
-            try:
-                current_pos_raw_steps = await self.get_current_position_steps()
-            except MKSServoError: # If fetching fails, cannot calculate delta
-                current_pos_raw_steps = None # Fallback to default timeout later
-        
-        if current_pos_raw_steps is not None:
-            current_pos_cmd_microsteps = self._raw_encoder_steps_to_command_microsteps(current_pos_raw_steps)
-            delta_microsteps_for_timeout = abs(target_command_microsteps - current_pos_cmd_microsteps)
-
 
         logger.info(
-            f"Axis '{self.name}': Moving to absolute command microstep position {target_command_microsteps} (SpeedP: {sp}, AccelP: {ac})."
+            f"Axis '{self.name}': Moving to absolute command microstep position {target_command_microsteps} (via relative) "
+            f"(SpeedP: {sp}, AccelP: {ac})."
         )
-        cmd_func = lambda: self._low_level_api.run_position_mode_absolute_pulses(
-            self.can_id, sp, ac, target_command_microsteps 
+
+        # 1. Fetch current position in raw encoder steps
+        try:
+            # Ensure self._current_position_steps is up-to-date or fetch it.
+            # It's crucial this reflects the true current position before calculating delta.
+            # The get_current_position_steps() method updates self._current_position_steps.
+            current_raw_encoder_steps = await self.get_current_position_steps()
+            logger.debug(f"Axis '{self.name}': Current raw encoder steps for abs->rel move: {current_raw_encoder_steps}")
+        except MKSServoError as e:
+            msg = f"Axis '{self.name}': Failed to get current position for absolute move via relative. Error: {e}"
+            logger.error(msg)
+            if self._active_move_future and not self._active_move_future.done():
+                self._active_move_future.set_exception(CommunicationError(msg, can_id=self.can_id))
+            # Or re-raise depending on desired error propagation
+            raise CommunicationError(msg, can_id=self.can_id) from e
+
+        # 2. Convert current raw encoder steps to current command microsteps
+        current_command_microsteps = self._raw_encoder_steps_to_command_microsteps(current_raw_encoder_steps)
+        logger.debug(f"Axis '{self.name}': Current command microsteps: {current_command_microsteps}")
+
+
+        # 3. Calculate relative delta
+        relative_delta_microsteps = target_command_microsteps - current_command_microsteps
+        logger.debug(f"Axis '{self.name}': Target command microsteps: {target_command_microsteps}, Relative delta: {relative_delta_microsteps}")
+
+
+        if abs(relative_delta_microsteps) == 0:
+            logger.info(f"Axis '{self.name}': Target position is current position. No move needed.")
+            # If a move future already exists from a previous call, and it's not done,
+            # we should mark it as complete. If no future, then nothing to do.
+            if self._active_move_future and not self._active_move_future.done():
+                 self._active_move_future.set_result(True)
+            return  # No move needed
+
+
+        # 4. Determine direction and magnitude for relative move command
+        # The MKS "Dir" setting (0x86) determines physical CCW/CW.
+        # The relative command's `direction_ccw` parameter refers to the encoder's natural CCW+ direction.
+        # If motor "Dir" is CCW, then `relative_delta_microsteps > 0` means CCW physical.
+        # If motor "Dir" is CW, then `relative_delta_microsteps > 0` (target > current in CCW frame)
+        # means the motor needs to move *less CW* or *more CCW* to reach the target.
+        # The `run_position_mode_relative_pulses` command expects `direction_ccw` to be True if
+        # the *change in encoder value* should be positive (CCW).
+        
+        direction_ccw_for_relative_cmd = relative_delta_microsteps >= 0
+        num_microsteps_for_relative_cmd = abs(relative_delta_microsteps)
+
+        logger.info(
+            f"Axis '{self.name}': Calculated relative move: {num_microsteps_for_relative_cmd} microsteps, "
+            f"Direction CCW (for encoder): {direction_ccw_for_relative_cmd}."
         )
-        await self._execute_move(cmd_func, const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES,
-                                 pulses_to_move_for_timeout=delta_microsteps_for_timeout, speed_param_for_calc=sp)
+        
+        # 5. Execute Relative Move using existing _execute_move helper
+        cmd_func = lambda: self._low_level_api.run_position_mode_relative_pulses(
+            self.can_id, direction_ccw_for_relative_cmd, sp, ac, num_microsteps_for_relative_cmd
+        )
+        
+        # Pass the magnitude of the relative move for timeout calculation
+        await self._execute_move(
+            cmd_func,
+            const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES,  # Command const for logging/response predicate
+            pulses_to_move_for_timeout=num_microsteps_for_relative_cmd,
+            speed_param_for_calc=sp
+        )
+
         if wait and self._active_move_future:
             await self._active_move_future
+        
+        # After the move, update the internal position belief to the target.
+        # This is an optimistic update. A read-back (get_current_position_steps)
+        # could confirm, but might be slow for rapid commands.
+        # The _execute_move already calls get_current_position_steps at the end.
+        # self._current_position_steps = self._command_microsteps_to_raw_encoder_steps(target_command_microsteps)
+        logger.debug(f"Axis '{self.name}': Optimistically updated _current_position_steps to reflect target after emulated absolute move.")
 
     async def move_to_position_abs_user(
         self,
@@ -732,30 +787,18 @@ class Axis:
         )
         mks_accel_param = self.default_accel_param # Kept for command, not used in current timeout calc
         
-        delta_microsteps_for_timeout: Optional[int] = None
-        current_pos_raw_steps = self._current_position_steps
-        if current_pos_raw_steps is None:
-            try:
-                current_pos_raw_steps = await self.get_current_position_steps()
-            except MKSServoError:
-                current_pos_raw_steps = None
-        
-        if current_pos_raw_steps is not None:
-            current_pos_cmd_microsteps = self._raw_encoder_steps_to_command_microsteps(current_pos_raw_steps)
-            delta_microsteps_for_timeout = abs(target_command_microsteps - current_pos_cmd_microsteps)
-
-
         logger.info(
             f"Axis '{self.name}': Moving to user position {target_pos_user} ({getattr(self.kinematics, 'units', 'units')}) "
             f"-> {target_command_microsteps} command microsteps (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
         )
-        cmd_func = lambda: self._low_level_api.run_position_mode_absolute_pulses(
-            self.can_id, mks_speed_param, mks_accel_param, target_command_microsteps
+        
+        # This call will now invoke the modified move_to_position_abs_pulses
+        await self.move_to_position_abs_pulses(
+            target_command_microsteps,
+            speed_param=mks_speed_param,
+            accel_param=mks_accel_param,
+            wait=wait
         )
-        await self._execute_move(cmd_func, const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES,
-                                 pulses_to_move_for_timeout=delta_microsteps_for_timeout, speed_param_for_calc=mks_speed_param)
-        if wait and self._active_move_future:
-            await self._active_move_future
 
     async def move_relative_pulses(
         self,
