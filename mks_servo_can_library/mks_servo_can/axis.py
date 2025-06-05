@@ -1092,7 +1092,7 @@ class Axis:
             CommunicationError: On CAN communication issues (e.g., timeout).
             MotorError: For motor-reported errors during the read attempt.
         """
-        pos_steps = - await self._low_level_api.read_encoder_value_addition(self.can_id) # type: ignore
+        pos_steps = await self._low_level_api.read_encoder_value_addition(self.can_id) # type: ignore
         self._current_position_steps = pos_steps
         return pos_steps
 
