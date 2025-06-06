@@ -414,19 +414,19 @@ class SimulatedMotor:
                 self.original_can_id, response_can_payload
             )
             
-    def _pack_int24(self, value: int) -> List[int]:
-        """Packs a signed 24-bit integer into 3 bytes, little-endian."""
+    def _pack_int24_be(self, value: int) -> List[int]:
+        """Packs a signed 24-bit integer into 3 bytes, big-endian (MSB first)."""
         unsigned_val = value & 0xFFFFFF
         return [
-            unsigned_val & 0xFF,
-            (unsigned_val >> 8) & 0xFF,
-            (unsigned_val >> 16) & 0xFF,
+            (unsigned_val >> 16) & 0xFF, # MSB
+            (unsigned_val >> 8) & 0xFF,  # Mid
+            unsigned_val & 0xFF,         # LSB
         ]
 
     def _get_param_data_bytes(self, param_cmd_code: int) -> Optional[List[int]]:
         """ Helper to get data bytes for read_system_parameter. """
         if param_cmd_code == const.CMD_SET_WORK_MODE: return [self.work_mode]
-        if param_cmd_code == const.CMD_SET_WORKING_CURRENT: return list(struct.pack("<H", self.working_current_ma))
+        if param_cmd_code == const.CMD_SET_WORKING_CURRENT: return list(struct.pack(">H", self.working_current_ma))
         if param_cmd_code == const.CMD_SET_SUBDIVISION: return [self.microsteps]
         if param_cmd_code == const.CMD_SET_EN_PIN_ACTIVE_LEVEL: return [self.en_pin_active_level]
         if param_cmd_code == const.CMD_SET_MOTOR_DIRECTION: return [self.motor_direction_setting]
@@ -434,10 +434,10 @@ class SimulatedMotor:
         if param_cmd_code == const.CMD_SET_STALL_PROTECTION: return [0x01 if self.stall_protection_enabled else 0x00]
         if param_cmd_code == const.CMD_SET_SUBDIVISION_INTERPOLATION: return [0x01 if self.subdivision_interpolation_enabled else 0x00]
         if param_cmd_code == const.CMD_SET_CAN_BITRATE: return [self.can_bitrate_code]
-        if param_cmd_code == const.CMD_SET_CAN_ID: return list(struct.pack("<H", self.can_id)) # Current listening ID
+        if param_cmd_code == const.CMD_SET_CAN_ID: return list(struct.pack(">H", self.can_id)) # Current listening ID
         if param_cmd_code == const.CMD_SET_SLAVE_RESPOND_ACTIVE:
             return [0x01 if self.slave_respond_enabled else 0x00, 0x01 if self.slave_active_initiation_enabled else 0x00]
-        if param_cmd_code == const.CMD_SET_GROUP_ID: return list(struct.pack("<H", self.group_id))
+        if param_cmd_code == const.CMD_SET_GROUP_ID: return list(struct.pack(">H", self.group_id))
         if param_cmd_code == const.CMD_SET_KEY_LOCK: return [0x01 if self.is_key_locked else 0x00]
         if param_cmd_code == const.CMD_SET_HOLDING_CURRENT_PERCENTAGE: return [self.holding_current_percentage_code]
         # Add more readable parameters here as needed
@@ -696,25 +696,25 @@ class SimulatedMotor:
         elif command_code == const.CMD_READ_ENCODER_CARRY: # 0x30
             carry = 0 # Simplified
             value = int(round(self.position_steps)) & 0x3FFF # Lower 14 bits
-            response_data_for_payload = list(struct.pack("<iH", carry, value))
+            response_data_for_payload = list(struct.pack(">iH", carry, value)) # Changed to big-endian
         elif command_code == const.CMD_READ_ENCODER_ADDITION: # 0x31
             pos_bytes_48bit = bytearray(8)
-            struct.pack_into("<q", pos_bytes_48bit, 0, int(round(self.position_steps)))
+            struct.pack_into(">q", pos_bytes_48bit, 0, int(round(self.position_steps))) # Changed to big-endian
             response_data_for_payload = list(pos_bytes_48bit[:6])
         elif command_code == const.CMD_READ_MOTOR_SPEED_RPM: # 0x32
-            response_data_for_payload = list(struct.pack("<h", int(round(self.current_rpm))))
+            response_data_for_payload = list(struct.pack(">h", int(round(self.current_rpm)))) # Changed to big-endian
         elif command_code == const.CMD_READ_PULSES_RECEIVED: # 0x33
-            response_data_for_payload = list(struct.pack("<i", 0)) # Placeholder
+            response_data_for_payload = list(struct.pack(">i", 0)) # Placeholder # Changed to big-endian
         elif command_code == const.CMD_READ_IO_STATUS: # 0x34
             status_byte = (self.io_out2_value << 3) | (self.io_out1_value << 2) | (0 << 1) | (0 << 0) # Assuming IN are 0
             response_data_for_payload = [status_byte]
         elif command_code == const.CMD_READ_RAW_ENCODER_ADDITION: # 0x35 (Same as 0x31 for sim)
             pos_bytes_48bit = bytearray(8)
-            struct.pack_into("<q", pos_bytes_48bit, 0, int(round(self.position_steps)))
+            struct.pack_into(">q", pos_bytes_48bit, 0, int(round(self.position_steps))) # Changed to big-endian
             response_data_for_payload = list(pos_bytes_48bit[:6])
         elif command_code == const.CMD_READ_SHAFT_ANGLE_ERROR: # 0x39
             error_val = 0 # Placeholder for shaft angle error
-            response_data_for_payload = list(struct.pack("<i", error_val))
+            response_data_for_payload = list(struct.pack(">i", error_val)) # Changed to big-endian
         elif command_code == const.CMD_READ_EN_PIN_STATUS: # 0x3A
             response_data_for_payload = [0x01 if self.is_enabled else 0x00]
         elif command_code == const.CMD_READ_POWER_ON_ZERO_STATUS: # 0x3B
@@ -737,7 +737,7 @@ class SimulatedMotor:
             else: response_status_override = const.STATUS_FAILURE
         elif command_code == const.CMD_SET_WORKING_CURRENT: # 0x83
             if data_from_payload and len(data_from_payload) >= 2:
-                self.working_current_ma = struct.unpack("<H", data_from_payload[:2])[0]
+                self.working_current_ma = struct.unpack(">H", data_from_payload[:2])[0] # Changed to big-endian
                 response_status_override = const.STATUS_SUCCESS
             else: response_status_override = const.STATUS_FAILURE
         elif command_code == const.CMD_SET_HOLDING_CURRENT_PERCENTAGE: # 0x9B
@@ -782,7 +782,7 @@ class SimulatedMotor:
             else: response_status_override = const.STATUS_FAILURE
         elif command_code == const.CMD_SET_CAN_ID: # 0x8B
             if data_from_payload and len(data_from_payload) >= 2:
-                new_id = struct.unpack("<H", data_from_payload[:2])[0]
+                new_id = struct.unpack(">H", data_from_payload[:2])[0] # Changed to big-endian
                 if 0 <= new_id <= 0x7FF:
                     logger.info(f"Motor {self.original_can_id}: CAN ID changed to {new_id:03X} by command. Simulator will still respond on original ID for this ack, but listens on new ID after.")
                     self.can_id = new_id # Update listening ID for VirtualCANBus (conceptual)
@@ -797,7 +797,7 @@ class SimulatedMotor:
             else: response_status_override = const.STATUS_FAILURE
         elif command_code == const.CMD_SET_GROUP_ID: # 0x8D
             if data_from_payload and len(data_from_payload) >= 2:
-                self.group_id = struct.unpack("<H", data_from_payload[:2])[0]
+                self.group_id = struct.unpack(">H", data_from_payload[:2])[0] # Changed to big-endian
                 response_status_override = const.STATUS_SUCCESS
             else: response_status_override = const.STATUS_FAILURE
         elif command_code == const.CMD_SET_KEY_LOCK: # 0x8F
@@ -825,7 +825,7 @@ class SimulatedMotor:
             if data_from_payload and len(data_from_payload) >= 6:
                 self.home_trig_level = data_from_payload[0]
                 self.home_dir = data_from_payload[1]
-                self.home_speed_rpm = struct.unpack("<H", data_from_payload[2:4])[0]
+                self.home_speed_rpm = struct.unpack(">H", data_from_payload[2:4])[0] # Changed to big-endian
                 self.end_limit_enabled_setting = (data_from_payload[4] == 0x01)
                 self.home_mode_setting = data_from_payload[5]
                 response_status_override = const.STATUS_SUCCESS
@@ -853,8 +853,8 @@ class SimulatedMotor:
             response_status_override = const.STATUS_SUCCESS
         elif command_code == const.CMD_SET_NOLIMIT_HOME_PARAMS: # 0x94
             if data_from_payload and len(data_from_payload) >= 6:
-                self.nolimit_home_reverse_angle = struct.unpack("<I", data_from_payload[0:4])[0]
-                self.nolimit_home_current_ma = struct.unpack("<H", data_from_payload[4:6])[0]
+                self.nolimit_home_reverse_angle = struct.unpack(">I", data_from_payload[0:4])[0] # Changed to big-endian
+                self.nolimit_home_current_ma = struct.unpack(">H", data_from_payload[4:6])[0] # Changed to big-endian
                 response_status_override = const.STATUS_SUCCESS
             else: response_status_override = const.STATUS_FAILURE
         elif command_code == const.CMD_SET_LIMIT_PORT_REMAP: # 0x9E
@@ -895,8 +895,8 @@ class SimulatedMotor:
                 byte2 = data_from_payload[0]
                 self.enable_en_trigger_zero = (byte2 & 0x02) != 0
                 self.enable_pos_error_protection = (byte2 & 0x01) != 0
-                self.error_detection_time_ms_units = struct.unpack("<H", data_from_payload[1:3])[0]
-                self.error_threshold_pulses = struct.unpack("<H", data_from_payload[3:5])[0]
+                self.error_detection_time_ms_units = struct.unpack(">H", data_from_payload[1:3])[0] # Changed to big-endian
+                self.error_threshold_pulses = struct.unpack(">H", data_from_payload[3:5])[0] # Changed to big-endian
                 response_status_override = const.STATUS_SUCCESS
             else: response_status_override = const.STATUS_FAILURE
 
@@ -971,7 +971,8 @@ class SimulatedMotor:
                 if command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES:
                     if data_from_payload and len(data_from_payload) >= 6:
                         b2,b3,b4 = data_from_payload[0],data_from_payload[1],data_from_payload[2]
-                        pulses_val = struct.unpack("<I", data_from_payload[3:6] + b'\x00')[0] & 0xFFFFFF
+                        # Pulses 24-bit, big-endian
+                        pulses_val = (data_from_payload[3] << 16) | (data_from_payload[4] << 8) | data_from_payload[5]
                         is_ccw = (b2 & 0x80) == 0
                         mks_speed_val = ((b2 & 0x0F) << 8) | b3
                         mks_accel_val = b4
@@ -980,27 +981,30 @@ class SimulatedMotor:
                         parsed_ok = True
                 elif command_code == const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES:
                     if data_from_payload and len(data_from_payload) >= 6:
-                        mks_speed_val = struct.unpack("<H", data_from_payload[0:2])[0]
+                        mks_speed_val = struct.unpack(">H", data_from_payload[0:2])[0] # Changed to big-endian
                         mks_accel_val = data_from_payload[2]
                         abs_pulses_bytes = data_from_payload[3:6]
-                        target_pos_abs_final = float(struct.unpack("<i", abs_pulses_bytes + (b'\xff' if abs_pulses_bytes[2] & 0x80 else b'\x00'))[0] & 0xFFFFFF | (~0xFFFFFF if abs_pulses_bytes[2] & 0x80 else 0) ) # signed 24bit
+                        # Signed 24-bit, big-endian:
+                        val_u24 = (abs_pulses_bytes[0] << 16) | (abs_pulses_bytes[1] << 8) | abs_pulses_bytes[2]
+                        target_pos_abs_final = float(val_u24 if not (val_u24 & 0x800000) else val_u24 - (1 << 24))
                         parsed_ok = True
                 elif command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS: # 0xF4
                     if data_from_payload and len(data_from_payload) >= 6:
-                        mks_speed_val = struct.unpack("<H", data_from_payload[0:2])[0]
+                        mks_speed_val = struct.unpack(">H", data_from_payload[0:2])[0] # Changed to big-endian
                         mks_accel_val = data_from_payload[2]
                         rel_axis_bytes = data_from_payload[3:6]
-                        # Signed 24-bit:
-                        val_u24 = rel_axis_bytes[0] | (rel_axis_bytes[1] << 8) | (rel_axis_bytes[2] << 16)
+                        # Signed 24-bit, big-endian:
+                        val_u24 = (rel_axis_bytes[0] << 16) | (rel_axis_bytes[1] << 8) | rel_axis_bytes[2]
                         rel_axis_val = val_u24 if not (val_u24 & 0x800000) else val_u24 - (1 << 24)
                         target_pos_abs_final = self.position_steps + float(rel_axis_val)
                         parsed_ok = True
                 elif command_code == const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS: # 0xF5
                     if data_from_payload and len(data_from_payload) >= 6:
-                        mks_speed_val = struct.unpack("<H", data_from_payload[0:2])[0]
+                        mks_speed_val = struct.unpack(">H", data_from_payload[0:2])[0] # Changed to big-endian
                         mks_accel_val = data_from_payload[2]
                         abs_axis_bytes = data_from_payload[3:6]
-                        val_u24 = abs_axis_bytes[0] | (abs_axis_bytes[1] << 8) | (abs_axis_bytes[2] << 16)
+                        # Signed 24-bit, big-endian:
+                        val_u24 = (abs_axis_bytes[0] << 16) | (abs_axis_bytes[1] << 8) | abs_axis_bytes[2]
                         target_pos_abs_final = float(val_u24 if not (val_u24 & 0x800000) else val_u24 - (1 << 24))
                         parsed_ok = True
             except struct.error as e:
@@ -1014,8 +1018,10 @@ class SimulatedMotor:
                 if command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES or \
                    command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS:
                     # For relative, stop means pulses/axis = 0, speed = 0
-                    if mks_speed_val == 0 and ( (command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES and pulses_val == 0) or \
-                                                (command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS and rel_axis_val == 0) ):
+                    # Note: pulses_val and rel_axis_val are only available if the command was parsed successfully above
+                    if mks_speed_val == 0 and ( \
+                        (command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES and 'pulses_val' in locals() and pulses_val == 0) or \
+                        (command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS and 'rel_axis_val' in locals() and rel_axis_val == 0) ):
                         is_stop_command = True
                 elif command_code == const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES or \
                      command_code == const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS:
@@ -1095,3 +1101,4 @@ class SimulatedMotor:
                 logger.error(f"SimulatedMotor {self.original_can_id} update task error during stop: {e}")
         self.is_running_task = None
         logger.info(f"SimulatedMotor {self.original_can_id} update task stopped.")
+        
