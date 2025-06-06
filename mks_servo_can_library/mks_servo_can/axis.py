@@ -137,7 +137,7 @@ class Axis:
 
         if kinematics is None:
             logger.info(
-                f"Axis '{name}': No kinematics provided, defaulting to RotaryKinematics "
+                f"Axis '{self.name}': No kinematics provided, defaulting to RotaryKinematics "
                 f"with {const.ENCODER_PULSES_PER_REVOLUTION} raw encoder steps/rev."
             )
             self.kinematics: Kinematics = RotaryKinematics( # Explicitly type hint self.kinematics
@@ -248,14 +248,14 @@ class Axis:
 
         This sends the command to the motor and updates the axis's internal
         `mstep_value` and related calculation factors. The `mstep_register_value`
-        should be the actual desired microstepping factor (e.g., 16, 32, 64). [cite: 167]
+        should be the actual desired microstepping factor (e.g., 16, 32, 64).
 
         Args:
             mstep_register_value: The microstep setting to send to the motor (e.g., 16, 32).
-                                  Corresponds to the `micstep(00~FF)` parameter for command 0x84. [cite: 167]
+                                  Corresponds to the `micstep(00~FF)` parameter for command 0x84.
 
         Raises:
-            ParameterError: If the mstep_register_value is invalid (0-255 range for command). [cite: 167]
+            ParameterError: If the mstep_register_value is invalid (0-255 range for command).
             MotorError: If the motor fails to set the subdivision.
             CommunicationError: On CAN communication issues.
         """
@@ -895,6 +895,191 @@ class Axis:
                                  pulses_to_move_for_timeout=num_microsteps_for_cmd, speed_param_for_calc=mks_speed_param)
         if wait and self._active_move_future:
             await self._active_move_future
+
+    async def move_to_position_abs_axis(
+        self,
+        target_encoder_steps: int,
+        speed_param: Optional[int] = None,
+        accel_param: Optional[int] = None,
+        wait: bool = True,
+    ) -> None:
+        """
+        Moves the motor to an absolute position specified in raw encoder steps/axis units.
+
+        This command uses the MKS "absolute motion by axis" command (0xF5), which works
+        directly with the motor's raw encoder coordinate system (e.g., 16384 steps/rev).
+
+        Args:
+            target_encoder_steps: The absolute target position in raw encoder steps
+                                  (signed 24-bit).
+            speed_param: MKS speed parameter (0-3000). If None, uses `self.default_speed_param`.
+            accel_param: MKS acceleration parameter (0-255). If None, uses `self.default_accel_param`.
+            wait: If True (default), waits for the move to complete.
+
+        Raises:
+            ParameterError: If parameters passed to the low-level API are out of range.
+            CommunicationError: On CAN communication issues.
+            MotorError: If the motor reports an error.
+            LimitError: If a limit is hit.
+        """
+        sp = speed_param if speed_param is not None else self.default_speed_param
+        ac = accel_param if accel_param is not None else self.default_accel_param
+
+        logger.info(
+            f"Axis '{self.name}': Moving to absolute axis position {target_encoder_steps} "
+            f"(SpeedP: {sp}, AccelP: {ac})."
+        )
+
+        cmd_func = lambda: self._low_level_api.run_position_mode_absolute_axis(
+            self.can_id, sp, ac, target_encoder_steps
+        )
+
+        await self._execute_move(
+            cmd_func,
+            const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
+            pulses_to_move_for_timeout=target_encoder_steps, # Used for magnitude
+            speed_param_for_calc=sp
+        )
+
+        if wait and self._active_move_future:
+            await self._active_move_future
+
+
+    async def move_relative_axis(
+        self,
+        relative_encoder_steps: int,
+        speed_param: Optional[int] = None,
+        accel_param: Optional[int] = None,
+        wait: bool = True,
+    ) -> None:
+        """
+        Moves the motor by a relative distance specified in raw encoder steps/axis units.
+
+        This command uses the MKS "relative motion by axis" command (0xF4), which works
+        directly with the motor's raw encoder coordinate system (e.g., 16384 steps/rev).
+
+        Args:
+            relative_encoder_steps: The number of raw encoder steps to move.
+                                    Positive for one direction, negative for the other.
+            speed_param: MKS speed parameter (0-3000). If None, uses `self.default_speed_param`.
+            accel_param: MKS acceleration parameter (0-255). If None, uses `self.default_accel_param`.
+            wait: If True (default), waits for the move to complete.
+
+        Raises:
+            ParameterError: If parameters are out of range.
+            CommunicationError: On CAN communication issues.
+            MotorError: If the motor reports an error.
+            LimitError: If a limit is hit.
+        """
+        sp = speed_param if speed_param is not None else self.default_speed_param
+        ac = accel_param if accel_param is not None else self.default_accel_param
+        
+        logger.info(
+            f"Axis '{self.name}': Moving relative by {relative_encoder_steps} axis steps "
+            f"(SpeedP: {sp}, AccelP: {ac})."
+        )
+
+        cmd_func = lambda: self._low_level_api.run_position_mode_relative_axis(
+            self.can_id, sp, ac, relative_encoder_steps
+        )
+
+        await self._execute_move(
+            cmd_func,
+            const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS,
+            pulses_to_move_for_timeout=relative_encoder_steps, # Used for magnitude
+            speed_param_for_calc=sp
+        )
+
+        if wait and self._active_move_future:
+            await self._active_move_future
+
+    async def move_to_position_abs_user_direct(
+        self,
+        target_pos_user: float,
+        speed_user: Optional[float] = None,
+        wait: bool = True,
+    ):
+        """
+        Moves the motor to an absolute position in user units using the direct axis command (0xF5).
+
+        This method converts the user position and speed into raw encoder steps and MKS speed
+        parameters, then executes the move using the motor's absolute axis positioning.
+        This provides a more direct control path than pulse-based emulation.
+
+        Args:
+            target_pos_user: The absolute target position in user units (e.g., mm, degrees).
+            speed_user: The desired speed in user units per second. If None, the axis's
+                        `default_speed_param` (MKS units) is used.
+            wait: If True (default), waits for the move to complete.
+
+        Raises:
+            KinematicsError: If conversion fails.
+            ParameterError: If converted parameters are out of range.
+            CommunicationError, MotorError, LimitError: On move execution issues.
+        """
+        target_encoder_steps = self.kinematics.user_to_steps(target_pos_user)
+        mks_speed_param = (
+            self.kinematics.user_speed_to_motor_speed(speed_user)
+            if speed_user is not None
+            else self.default_speed_param
+        )
+        mks_accel_param = self.default_accel_param
+        
+        logger.info(
+            f"Axis '{self.name}': Moving to user position {target_pos_user} "
+            f"({getattr(self.kinematics, 'units', 'units')}) via direct axis command "
+            f"-> {target_encoder_steps} steps (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
+        )
+        
+        await self.move_to_position_abs_axis(
+            target_encoder_steps,
+            speed_param=mks_speed_param,
+            accel_param=mks_accel_param,
+            wait=wait
+        )
+
+    async def move_relative_user_direct(
+        self,
+        relative_dist_user: float,
+        speed_user: Optional[float] = None,
+        wait: bool = True,
+    ):
+        """
+        Moves the motor by a relative distance in user units using the direct axis command (0xF4).
+
+        This method converts the user distance and speed into raw encoder steps and MKS speed
+        parameters, then executes the move using the motor's relative axis positioning.
+
+        Args:
+            relative_dist_user: The distance to move in user units (e.g., mm, degrees).
+            speed_user: The desired speed in user units per second. If None, the
+                        `default_speed_param` is used.
+            wait: If True (default), waits for the move to complete.
+
+        Raises:
+            KinematicsError: If conversion fails.
+            ParameterError, CommunicationError, MotorError, LimitError: On move execution issues.
+        """
+        relative_encoder_steps = self.kinematics.user_to_steps(relative_dist_user)
+        mks_speed_param = (
+            self.kinematics.user_speed_to_motor_speed(speed_user)
+            if speed_user is not None
+            else self.default_speed_param
+        )
+        mks_accel_param = self.default_accel_param
+        
+        logger.info(
+            f"Axis '{self.name}': Moving relative by {relative_dist_user} "
+            f"({getattr(self.kinematics, 'units', 'units')}) via direct axis command "
+            f"-> {relative_encoder_steps} steps (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
+        )
+        
+        await self.move_relative_axis(
+            relative_encoder_steps,
+            speed_param=mks_speed_param,
+            accel_param=mks_accel_param,
+            wait=wait
+        )
             
     async def set_speed_user(
         self, speed_user: float, accel_user: Optional[float] = None 

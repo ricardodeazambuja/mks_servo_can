@@ -139,6 +139,12 @@ def mock_low_level_api():
         return_value=const.POS_RUN_STARTING
     )
     # Mocks initiating an absolute pulse move, returning 'POS_RUN_STARTING' status.
+    mock.run_position_mode_relative_axis = AsyncMock(
+        return_value=const.POS_RUN_STARTING
+    )
+    mock.run_position_mode_absolute_axis = AsyncMock(
+        return_value=const.POS_RUN_STARTING
+    )
     mock.enable_motor = AsyncMock()
     # Mocks enabling the motor. Since it's an action, no specific return value
     # is typically needed beyond not raising an error for a successful mock call.
@@ -656,7 +662,77 @@ class TestAxisMovement:
             assert kwargs.get("pulses_to_move_for_timeout") == 100 # abs(relative_pulses)
             assert kwargs.get("speed_param_for_calc") == 100 # speed_param
 
+    async def test_move_to_position_abs_axis_success(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
+        """Tests that move_to_position_abs_axis calls the correct low-level command (0xF5)."""
+        # Patch the internal helper to isolate this method's logic
+        with patch.object(axis_instance, "_execute_move", new_callable=AsyncMock) as mock_exec_move:
+            target_steps = 10000
+            speed = 500
+            await axis_instance.move_to_position_abs_axis(target_steps, speed, wait=False)
+            
+            # Verify _execute_move was called with the right command constant and parameters
+            mock_exec_move.assert_called_once_with(
+                ANY,  # the lambda function
+                const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
+                pulses_to_move_for_timeout=target_steps,
+                speed_param_for_calc=speed
+            )
+            
+            # Verify the lambda calls the correct low-level API method
+            cmd_func_lambda = mock_exec_move.call_args[0][0]
+            await cmd_func_lambda() # Execute the captured lambda
+            mock_low_level_api.run_position_mode_absolute_axis.assert_called_with(
+                axis_instance.can_id, speed, axis_instance.default_accel_param, target_steps
+            )
 
+    async def test_move_relative_axis_success(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
+        """Tests that move_relative_axis calls the correct low-level command (0xF4)."""
+        with patch.object(axis_instance, "_execute_move", new_callable=AsyncMock) as mock_exec_move:
+            relative_steps = -5000
+            speed = 600
+            await axis_instance.move_relative_axis(relative_steps, speed, wait=False)
+            
+            mock_exec_move.assert_called_once_with(
+                ANY,
+                const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS,
+                pulses_to_move_for_timeout=relative_steps,
+                speed_param_for_calc=speed
+            )
+            
+            cmd_func_lambda = mock_exec_move.call_args[0][0]
+            await cmd_func_lambda()
+            mock_low_level_api.run_position_mode_relative_axis.assert_called_with(
+                axis_instance.can_id, speed, axis_instance.default_accel_param, relative_steps
+            )
+
+    async def test_move_to_position_abs_user_direct_success(self, axis_instance: Axis):
+        """Tests the user-facing direct absolute move method."""
+        # This axis instance has RotaryKinematics by default
+        target_pos_user = 90.0 # degrees
+        expected_steps = 4096 # 90/360 * 16384
+        
+        # Mock the method it's supposed to call
+        with patch.object(axis_instance, "move_to_position_abs_axis", new_callable=AsyncMock) as mock_move_abs_axis:
+            await axis_instance.move_to_position_abs_user_direct(target_pos_user, wait=False)
+            
+            mock_move_abs_axis.assert_called_once()
+            called_args, called_kwargs = mock_move_abs_axis.call_args
+            assert called_args[0] == expected_steps
+            assert called_kwargs.get("wait") is False
+
+    async def test_move_relative_user_direct_success(self, axis_instance: Axis):
+        """Tests the user-facing direct relative move method."""
+        target_pos_user = 180.0 # degrees
+        expected_steps = 8192 # 180/360 * 16384
+        
+        with patch.object(axis_instance, "move_relative_axis", new_callable=AsyncMock) as mock_move_rel_axis:
+            await axis_instance.move_relative_user_direct(target_pos_user, wait=False)
+            
+            mock_move_rel_axis.assert_called_once()
+            called_args, called_kwargs = mock_move_rel_axis.call_args
+            assert called_args[0] == expected_steps
+            assert called_kwargs.get("wait") is False
+            
 @pytest.mark.asyncio
 # Marks this class for asynchronous tests.
 class TestAxisPing: 
