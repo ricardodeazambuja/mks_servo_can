@@ -136,12 +136,14 @@ class LowLevelAPI:
         expected_response_can_id = can_id
         
         # Determine the expected command code in the response
-        # For CMD_READ_SYSTEM_PARAMETER_PREFIX (0x00), the motor echoes the parameter code being read.
         if command_code == const.CMD_READ_SYSTEM_PARAMETER_PREFIX and data:
+            # For CMD_READ_SYSTEM_PARAMETER_PREFIX (0x00), the motor echoes the parameter code being read.
             expected_response_command_code = data[0]
-        # For most commands, the motor echoes the original command code.
-        # For CMD_SAVE_CLEAN_SPEED_MODE_PARAMS (0xFF), the motor also echoes 0xFF. [MKS Servo42D CAN Manual] (Page 42, Uplink frame table shows byte1 (code) = FF)
+        elif command_code == const.CMD_SAVE_CLEAN_SPEED_MODE_PARAMS and data:
+            # For CMD_SAVE_CLEAN_SPEED_MODE_PARAMS (0xFF), the motor echoes the sub-command (e.g., 0xC8 or 0xCA).
+            expected_response_command_code = data[0]
         else:
+            # For most commands, the motor echoes the original command code.
             expected_response_command_code = command_code
 
         try:
@@ -1842,3 +1844,4 @@ class LowLevelAPI:
                 can_id=can_id,
             )
         logger.info(f"CAN ID {can_id}: {'Save' if save else 'Clean'} speed mode parameters successful.")
+        

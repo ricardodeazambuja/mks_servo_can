@@ -356,30 +356,34 @@ async def test_sim_axis_relative_move(sim_axis1: Axis):
     initial_pos_steps = await sim_axis1.get_current_position_steps()
     # Gets the starting position in steps.
 
-    relative_move_pulses = (
-        const.ENCODER_PULSES_PER_REVOLUTION // 4
-    )  # Move 1/4 revolution
+    delta_encoder_steps = const.ENCODER_PULSES_PER_REVOLUTION // 4 
+
+    relative_move_microsteps = sim_axis1._raw_encoder_steps_to_command_microsteps(
+        delta_encoder_steps
+    )
     # Calculates the number of pulses for a 1/4 revolution, using a constant for encoder pulses per revolution.
+
     sim_axis1.default_speed_param = 1000
     # Sets the default speed parameter for the axis instance for this test. This parameter (0-3000) influences motor RPM.
+    
     sim_axis1.default_accel_param = 150
     # Sets the default acceleration parameter (0-255).
 
-    await sim_axis1.move_relative_pulses(relative_move_pulses, wait=True)
+    await sim_axis1.move_relative_pulses(relative_move_microsteps, wait=True)
     # Commands the motor to move by 'relative_move_pulses'.
     # 'wait=True' means the function will not return until the simulated move is complete.
 
     final_pos_steps = await sim_axis1.get_current_position_steps()
     # Gets the position after the move.
     print(
-        f"test_sim_axis_relative_move: Initial={initial_pos_steps}, MovedBy={relative_move_pulses}, Final={final_pos_steps}"
+        f"test_sim_axis_relative_move: Initial={initial_pos_steps}, MovedBy={delta_encoder_steps}, Final={final_pos_steps}"
     )
     # Logs the initial, relative, and final positions for debugging.
 
     # Check if the final position reflects the relative move from the initial position
     # The simulator's internal position is float, so allow for small rounding differences.
     # This comment explains the need for a tolerance in the assertion due to potential floating-point inaccuracies in the simulation.
-    expected_final_pos = initial_pos_steps + relative_move_pulses
+    expected_final_pos = initial_pos_steps + delta_encoder_steps
     # Calculates the expected final position.
     assert (
         abs(final_pos_steps - expected_final_pos) < 2.0

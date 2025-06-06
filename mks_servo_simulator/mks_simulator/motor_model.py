@@ -17,7 +17,7 @@ try:
     from mks_servo_can.crc import calculate_crc
     # Assuming exceptions are not directly raised by the simulator to the lib,
     # but used for internal logic if needed.
-    # from mks_servo_can.exceptions import ParameterError
+    from mks_servo_can.exceptions import ConfigurationError
 
     const = const_module
 except ImportError:
@@ -166,6 +166,9 @@ except ImportError:
     class MKSServoError(Exception): # Basic fallback
         """Fallback base exception for MKS Servo errors, used if main library exceptions are unavailable."""
         pass
+    class ConfigurationError(Exception): # Basic fallback
+        """Fallback exception for configuration errors."""
+        pass
 
 SIM_TIME_STEP_MS = 10
 SIM_MAX_SPEED_PARAM = 3000 # Used for RPM conversion, matches VFOC for SR_VFOC
@@ -246,6 +249,8 @@ class SimulatedMotor:
         motor_type: str = "SERVO42D",
         initial_pos_steps: int = 0,
         steps_per_rev_encoder: int = const.ENCODER_PULSES_PER_REVOLUTION,
+        base_motor_steps_per_rev: int = 200,
+        mstep_value: int = 16,
         min_pos_limit_steps: Optional[int] = None,
         max_pos_limit_steps: Optional[int] = None,
     ):
@@ -260,11 +265,13 @@ class SimulatedMotor:
             initial_pos_steps: The starting position of the motor in encoder steps.
             steps_per_rev_encoder: The number of encoder steps per one full revolution.
                                    Defaults to `const.ENCODER_PULSES_PER_REVOLUTION`.
+            base_motor_steps_per_rev: The number of full steps for the motor (e.g., 200).
+            mstep_value: The microstepping setting (e.g., 16).
             min_pos_limit_steps: Optional minimum software position limit in steps.
             max_pos_limit_steps: Optional maximum software position limit in steps.
         """
-        self.can_id = can_id  # This is the ID the motor listens to
-        self.original_can_id = can_id # To respond from, even if self.can_id is changed by 0x8B
+        self.can_id = can_id
+        self.original_can_id = can_id
         self.motor_type = motor_type
         self._loop = loop
         self.is_running_task: Optional[asyncio.Task] = None
@@ -275,8 +282,8 @@ class SimulatedMotor:
         self.steps_per_rev_encoder = steps_per_rev_encoder
         self.current_rpm: float = 0.0
         self.target_rpm: float = 0.0
-        self.current_accel_rpm_per_sec_sq: float = 0.0 # For _update_state
-        self.target_accel_mks: int = 100 # Default MKS acceleration parameter
+        self.current_accel_rpm_per_sec_sq: float = 0.0
+        self.target_accel_mks: int = 100
         
         self.is_enabled: bool = False
         self.motor_status_code: int = const.MOTOR_STATUS_STOPPED
@@ -287,62 +294,73 @@ class SimulatedMotor:
             Callable[[int, bytes], asyncio.Task]
         ] = None
 
-        # Settable Parameters (with defaults from manual or common sense)
-        self.work_mode: int = const.MODE_SR_VFOC # Defaulting to serial FOC for simulator
+        # Parameters for command conversion
+        self.base_motor_steps_per_rev = base_motor_steps_per_rev
+        self.microsteps = mstep_value
+        self._microsteps_per_motor_revolution_for_cmd = self.base_motor_steps_per_rev * self.microsteps
+
+        # Settable Parameters
+        self.work_mode: int = const.MODE_SR_VFOC
         self.working_current_ma: int = 1600 if "42D" in motor_type else 3200
-        self.holding_current_percentage_code: int = 0x04 # 50% (index 4 for 0-8 range -> 10% to 90%)
-        self.microsteps: int = 16 # Subdivision
+        self.holding_current_percentage_code: int = 0x04
         self.en_pin_active_level: int = const.EN_ACTIVE_LOW
-        self.motor_direction_setting: int = const.DIR_CW # For pulse mode, CAN direction is per command
+        self.motor_direction_setting: int = const.DIR_CW
         self.auto_screen_off_enabled: bool = False
         self.stall_protection_enabled: bool = False
         self.subdivision_interpolation_enabled: bool = True
-        self.can_bitrate_code: int = const.CAN_BITRATE_500K # Store the code
+        self.can_bitrate_code: int = const.CAN_BITRATE_500K
         self.slave_respond_enabled: bool = True
         self.slave_active_initiation_enabled: bool = True
-        self.group_id: int = 0x00 # Default to no specific group or use its own ID? Manual implies can be set.
+        self.group_id: int = 0x00
         self.is_key_locked: bool = False
         
         self.io_out1_value: int = 0
-        self.io_out2_value: int = 0 # Note: OUT2 N/A for 42D
+        self.io_out2_value: int = 0
 
         # Homing parameters
-        self.home_trig_level: int = 0 # Low
+        self.home_trig_level: int = 0
         self.home_dir: int = const.DIR_CW
         self.home_speed_rpm: int = 60
         self.end_limit_enabled_setting: bool = False
-        self.home_mode_setting: int = 0 # 0: Use Limit Switch
-        self.nolimit_home_reverse_angle: int = 0x2000 # 180 deg default
+        self.home_mode_setting: int = 0
+        self.nolimit_home_reverse_angle: int = 0x2000
         self.nolimit_home_current_ma: int = 800 if "42D" in motor_type else 400
-
         self.limit_port_remap_enabled: bool = False
 
-        # 0_Mode (Power-on auto zero) parameters
-        self.zero_mode_behavior: int = 0 # Disable
-        self.zero_mode_set_zero_action: int = 2 # No modify
-        self.zero_mode_speed_code: int = 2 # Medium speed
+        # 0_Mode parameters
+        self.zero_mode_behavior: int = 0
+        self.zero_mode_set_zero_action: int = 2
+        self.zero_mode_speed_code: int = 2
         self.zero_mode_direction: int = const.DIR_CW
-        self.power_on_zero_status: int = const.HOME_SUCCESS # Assume done or N/A if disabled
+        self.power_on_zero_status: int = const.HOME_SUCCESS
 
-        # En Trigger & Pos Error Protection
+        # Error Protection
         self.enable_en_trigger_zero: bool = False
         self.enable_pos_error_protection: bool = False
-        self.error_detection_time_ms_units: int = 100 # ~1.5s
-        self.error_threshold_pulses: int = 2800 # ~20 degrees for 16384 PPR
+        self.error_detection_time_ms_units: int = 100
+        self.error_threshold_pulses: int = 2800
 
-        self.is_calibrated: bool = True # Assume calibrated for simulator start
+        self.is_calibrated: bool = True
         self.is_homed: bool = False
-        self.is_stalled: bool = False # Internal stall state
-        self.is_protected_by_stall: bool = False # If stall protection has triggered
+        self.is_stalled: bool = False
+        self.is_protected_by_stall: bool = False
         self.is_protected_by_pos_error: bool = False
 
-        self.saved_speed_mode_active: bool = False # For 0xFF command
+        self.saved_speed_mode_active: bool = False
         self.saved_speed_mode_params: Optional[Dict[str, Any]] = None
 
 
         logger.info(
             f"SimulatedMotor CAN ID {self.can_id:03X} initialized. Pos: {self.position_steps} steps."
         )
+
+    def _command_microsteps_to_raw_encoder_steps(self, command_microsteps: float) -> float:
+        """Converts command microsteps to equivalent raw encoder steps."""
+        if self._microsteps_per_motor_revolution_for_cmd == 0:
+             raise ConfigurationError("_microsteps_per_motor_revolution_for_cmd cannot be zero for conversion.")
+        motor_revolutions = float(command_microsteps) / self._microsteps_per_motor_revolution_for_cmd
+        raw_encoder_steps = motor_revolutions * const.ENCODER_PULSES_PER_REVOLUTION
+        return raw_encoder_steps
 
     def _generate_response(
         self, request_command_code: int, data: List[int]
@@ -361,9 +379,6 @@ class SimulatedMotor:
             A tuple containing the CAN ID to respond from (original_can_id) and
             the fully formed response payload as bytes (echoed_command + data + crc).
         """
-        # Always respond with the original CAN ID the command was sent to,
-        # even if self.can_id (the listening ID) has been "changed" by 0x8B.
-        # The virtual CAN bus routes messages to this motor instance based on its current self.can_id.
         payload_with_cmd_echo = [request_command_code] + data
         crc = calculate_crc(self.original_can_id, payload_with_cmd_echo)
         return self.original_can_id, bytes(payload_with_cmd_echo + [crc])
@@ -455,14 +470,11 @@ class SimulatedMotor:
         status code (e.g., speeding up, stopped).
         This task is started by `start()` and cancelled by `stop_simulation()`.
         """
-        # (Existing _update_state logic - mostly unchanged for now unless new commands affect continuous behavior)
-        # This loop primarily handles motion. Other state changes are discrete.
         while True:
             await asyncio.sleep(SIM_TIME_STEP_MS / 1000.0)
             current_time = time.monotonic()
             delta_t = current_time - self._last_update_time
             if delta_t <= 0:
-                self._last_update_time = current_time
                 continue
             self._last_update_time = current_time
 
@@ -700,7 +712,7 @@ class SimulatedMotor:
         elif command_code == const.CMD_READ_ENCODER_ADDITION: # 0x31
             pos_bytes_48bit = bytearray(8)
             struct.pack_into(">q", pos_bytes_48bit, 0, int(round(self.position_steps))) # Changed to big-endian
-            response_data_for_payload = list(pos_bytes_48bit[:6])
+            response_data_for_payload = list(pos_bytes_48bit[2:])
         elif command_code == const.CMD_READ_MOTOR_SPEED_RPM: # 0x32
             response_data_for_payload = list(struct.pack(">h", int(round(self.current_rpm)))) # Changed to big-endian
         elif command_code == const.CMD_READ_PULSES_RECEIVED: # 0x33
@@ -711,7 +723,7 @@ class SimulatedMotor:
         elif command_code == const.CMD_READ_RAW_ENCODER_ADDITION: # 0x35 (Same as 0x31 for sim)
             pos_bytes_48bit = bytearray(8)
             struct.pack_into(">q", pos_bytes_48bit, 0, int(round(self.position_steps))) # Changed to big-endian
-            response_data_for_payload = list(pos_bytes_48bit[:6])
+            response_data_for_payload = list(pos_bytes_48bit[2:])
         elif command_code == const.CMD_READ_SHAFT_ANGLE_ERROR: # 0x39
             error_val = 0 # Placeholder for shaft angle error
             response_data_for_payload = list(struct.pack(">i", error_val)) # Changed to big-endian
@@ -748,6 +760,7 @@ class SimulatedMotor:
         elif command_code == const.CMD_SET_SUBDIVISION: # 0x84
             if data_from_payload and 0 <= data_from_payload[0] <= 255:
                 self.microsteps = data_from_payload[0]
+                self._microsteps_per_motor_revolution_for_cmd = self.base_motor_steps_per_rev * self.microsteps
                 response_status_override = const.STATUS_SUCCESS
             else: response_status_override = const.STATUS_FAILURE
         elif command_code == const.CMD_SET_EN_PIN_ACTIVE_LEVEL: # 0x85
@@ -971,39 +984,37 @@ class SimulatedMotor:
                 if command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES:
                     if data_from_payload and len(data_from_payload) >= 6:
                         b2,b3,b4 = data_from_payload[0],data_from_payload[1],data_from_payload[2]
-                        # Pulses 24-bit, big-endian
                         pulses_val = (data_from_payload[3] << 16) | (data_from_payload[4] << 8) | data_from_payload[5]
                         is_ccw = (b2 & 0x80) == 0
                         mks_speed_val = ((b2 & 0x0F) << 8) | b3
                         mks_accel_val = b4
-                        delta = float(pulses_val) if is_ccw else -float(pulses_val)
-                        target_pos_abs_final = self.position_steps + delta
+                        delta_command_microsteps = float(pulses_val) if is_ccw else -float(pulses_val)
+                        delta_raw_encoder_steps = self._command_microsteps_to_raw_encoder_steps(delta_command_microsteps)
+                        target_pos_abs_final = self.position_steps + delta_raw_encoder_steps
                         parsed_ok = True
                 elif command_code == const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES:
                     if data_from_payload and len(data_from_payload) >= 6:
-                        mks_speed_val = struct.unpack(">H", data_from_payload[0:2])[0] # Changed to big-endian
+                        mks_speed_val = struct.unpack(">H", data_from_payload[0:2])[0]
                         mks_accel_val = data_from_payload[2]
                         abs_pulses_bytes = data_from_payload[3:6]
-                        # Signed 24-bit, big-endian:
                         val_u24 = (abs_pulses_bytes[0] << 16) | (abs_pulses_bytes[1] << 8) | abs_pulses_bytes[2]
-                        target_pos_abs_final = float(val_u24 if not (val_u24 & 0x800000) else val_u24 - (1 << 24))
+                        target_command_microsteps = float(val_u24 if not (val_u24 & 0x800000) else val_u24 - (1 << 24))
+                        target_pos_abs_final = self._command_microsteps_to_raw_encoder_steps(target_command_microsteps)
                         parsed_ok = True
                 elif command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS: # 0xF4
                     if data_from_payload and len(data_from_payload) >= 6:
-                        mks_speed_val = struct.unpack(">H", data_from_payload[0:2])[0] # Changed to big-endian
+                        mks_speed_val = struct.unpack(">H", data_from_payload[0:2])[0]
                         mks_accel_val = data_from_payload[2]
                         rel_axis_bytes = data_from_payload[3:6]
-                        # Signed 24-bit, big-endian:
                         val_u24 = (rel_axis_bytes[0] << 16) | (rel_axis_bytes[1] << 8) | rel_axis_bytes[2]
                         rel_axis_val = val_u24 if not (val_u24 & 0x800000) else val_u24 - (1 << 24)
                         target_pos_abs_final = self.position_steps + float(rel_axis_val)
                         parsed_ok = True
                 elif command_code == const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS: # 0xF5
                     if data_from_payload and len(data_from_payload) >= 6:
-                        mks_speed_val = struct.unpack(">H", data_from_payload[0:2])[0] # Changed to big-endian
+                        mks_speed_val = struct.unpack(">H", data_from_payload[0:2])[0]
                         mks_accel_val = data_from_payload[2]
                         abs_axis_bytes = data_from_payload[3:6]
-                        # Signed 24-bit, big-endian:
                         val_u24 = (abs_axis_bytes[0] << 16) | (abs_axis_bytes[1] << 8) | abs_axis_bytes[2]
                         target_pos_abs_final = float(val_u24 if not (val_u24 & 0x800000) else val_u24 - (1 << 24))
                         parsed_ok = True
@@ -1018,7 +1029,6 @@ class SimulatedMotor:
                 if command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES or \
                    command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS:
                     # For relative, stop means pulses/axis = 0, speed = 0
-                    # Note: pulses_val and rel_axis_val are only available if the command was parsed successfully above
                     if mks_speed_val == 0 and ( \
                         (command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES and 'pulses_val' in locals() and pulses_val == 0) or \
                         (command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS and 'rel_axis_val' in locals() and rel_axis_val == 0) ):

@@ -653,7 +653,7 @@ class TestAxisMovement:
             assert args[1] == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES
             # 'pulses_to_move' and 'speed_param_for_calc' are passed as keyword arguments
             # to _execute_move by the move_relative_pulses method.
-            assert kwargs.get("pulses_to_move") == 100 # abs(relative_pulses)
+            assert kwargs.get("pulses_to_move_for_timeout") == 100 # abs(relative_pulses)
             assert kwargs.get("speed_param_for_calc") == 100 # speed_param
 
 

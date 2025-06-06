@@ -14,7 +14,8 @@ from unittest.mock import AsyncMock, call, ANY # Added ANY
 # From the 'unittest.mock' module, 'AsyncMock' is imported to create mock objects
 # for asynchronous functions/methods. 'call' is used to make assertions about how
 # mocks were called. 'ANY' is a matcher that can be used when asserting calls
-# if the exact value of an argument doesn't matter.
+# if the exact value of an argument doesn't matter,
+# but its presence or type might.
 
 from typing import List
 # Imports 'List' from the 'typing' module for type hinting, specifically for lists.
@@ -79,6 +80,7 @@ except ImportError:
             # 'channel': The CAN channel it was received on.
             self.channel = None
             # 'is_rx': Boolean indicating if the message was received (True) or transmitted (False).
+            # Dummy defaults to True as tests often mock received messages.
             self.is_rx = True
             # 'is_error_frame': Boolean indicating if it's a CAN error frame.
             self.is_error_frame = False
@@ -124,6 +126,13 @@ def _assert_message_properties(sent_msg_arg, expected_can_id, expected_data_byte
     # Asserts that the message is not using an extended CAN ID (MKS servos use standard 11-bit IDs).
     assert not sent_msg_arg.is_extended_id
 
+def _pack_int24_be(value: int) -> bytes:
+    """Packs a signed 24-bit integer into 3 bytes, big-endian."""
+    # Ensure the value is within the 24-bit signed range for consistency
+    if not (-8388608 <= value <= 8388607):
+        raise ValueError(f"Value {value} out of signed 24-bit range.")
+    return struct.pack('>i', value)[1:] # Get last 3 bytes of 32-bit big-endian int
+
 @pytest.mark.asyncio
 # Decorator to mark this class as containing asynchronous tests that pytest-asyncio should handle.
 class TestLowLevelAPIReads:
@@ -140,14 +149,14 @@ class TestLowLevelAPIReads:
         # Specifies the command code for reading the encoder's accumulated value.
         encoder_val = 16384
         # The simulated encoder value to be returned by the mock motor.
-        val_bytes_payload = bytearray(8)
-        # Creates a bytearray to hold the packed encoder value (as a 64-bit integer, though only 6 bytes are used).
-        struct.pack_into("<q", val_bytes_payload, 0, encoder_val)
-        # Packs the 'encoder_val' as a little-endian signed 64-bit integer into 'val_bytes_payload'.
-        # The MKS protocol for this command uses 6 bytes for the value.
-
-        response_payload_data = [command_code] + list(val_bytes_payload[:6])
-        # Constructs the data part of the mock response: echoed command code + first 6 bytes of the packed encoder value.
+        
+        # MKS uses 6 bytes for 48-bit value, big-endian.
+        # Python's struct.pack('>q', ...) packs to 8 bytes, so slice [2:] for 6 bytes (or pad for 48-bit handling)
+        # LowLevelAPI's read_encoder_value_addition unpacks >q after prepending 0x0000 or 0xFFFF
+        val_bytes_48bit_be = struct.pack(">q", encoder_val)[2:] # Get 6 bytes, big-endian
+        
+        response_payload_data = [command_code] + list(val_bytes_48bit_be)
+        # Constructs the data part of the mock response: echoed command code + 6 bytes of the packed encoder value.
         response_crc = calculate_crc(can_id, response_payload_data)
         # Calculates the CRC for this mock response.
         full_response_data_bytes = bytes(response_payload_data + [response_crc])
@@ -199,7 +208,7 @@ class TestLowLevelAPIReads:
         can_id = 0x02
         command_code = const.CMD_READ_MOTOR_SPEED_RPM
         rpm_val = -1200 # Simulating a negative RPM (e.g., reverse direction).
-        rpm_bytes = struct.pack("<h", rpm_val) # Speed is a 2-byte signed short (little-endian).
+        rpm_bytes = struct.pack(">h", rpm_val) # Speed is a 2-byte signed short (big-endian).
 
         response_payload_data = [command_code] + list(rpm_bytes)
         response_crc = calculate_crc(can_id, response_payload_data)
@@ -277,7 +286,7 @@ class TestLowLevelAPIReads:
 @pytest.mark.asyncio
 # Marks this class for asynchronous tests.
 class TestLowLevelAPISets:
-    # This test class groups tests for the 'set' operations of the LowLevelAPI (commands that configure motor parameters).
+    # This test class groups tests for the 'set' operations of the LowLevelAPI.
 
     async def test_set_work_mode_success(
         self, low_level_api, mock_can_interface
@@ -408,7 +417,6 @@ class TestLowLevelAPISetSystemParamsExtended:
         _assert_message_properties(args[0], can_id, expected_sent_bytes)
         # Verifies the sent message.
         assert args[1:] == (can_id, command_code, const.CAN_TIMEOUT_SECONDS)
-        # Verifies other arguments to send_and_wait_for_response.
 
     async def test_set_motor_direction_invalid_param(self, low_level_api):
         # Tests that an invalid direction code raises a ParameterError.
@@ -445,7 +453,7 @@ class TestLowLevelAPISetSystemParamsExtended:
         new_can_id = 0x05
         command_code = const.CMD_SET_CAN_ID
 
-        id_bytes = list(struct.pack("<H", new_can_id)) # New CAN ID is a 2-byte short.
+        id_bytes = list(struct.pack(">H", new_can_id)) # New CAN ID is a 2-byte short, big-endian.
         sent_payload_data = [command_code] + id_bytes
         sent_crc = calculate_crc(current_can_id, sent_payload_data) # CRC uses the *current* CAN ID.
         expected_sent_bytes = bytes(sent_payload_data + [sent_crc])
@@ -543,7 +551,7 @@ class TestLowLevelAPIWriteAndHomeCommands:
         end_limit_en = True # Whether end limits are enabled during homing.
         home_mode_val = 0  # Homing mode (e.g., use limit switch).
 
-        speed_bytes = list(struct.pack("<H", home_speed)) # Homing speed is a 2-byte value.
+        speed_bytes = list(struct.pack(">H", home_speed)) # Homing speed is a 2-byte value, big-endian.
         # Construct the data payload according to the MKS manual for this command.
         data_to_send_list = [command_code, home_trig, home_dir_val] + speed_bytes + [0x01 if end_limit_en else 0x00, home_mode_val]
         sent_crc = calculate_crc(can_id, data_to_send_list)
@@ -590,16 +598,13 @@ class TestLowLevelAPIWriteAndHomeCommands:
 class TestLowLevelAPIRunCommandsExtended:
     # This class contains more tests for various "run motor" commands, like positional moves.
 
-    def _pack_int24_for_test(self, value: int) -> List[int]:
-        # Helper function to pack a signed 24-bit integer into a list of 3 bytes (little-endian).
+    def _pack_int24_for_test(self, value: int) -> bytes:
+        # Helper function to pack a signed 24-bit integer into a list of 3 bytes (big-endian).
         # This is used because some MKS commands represent positions or relative moves as 24-bit values.
         """Helper to pack signed 24-bit int for test comparison."""
-        unsigned_val = value & 0xFFFFFF # Mask to get the lower 24 bits for positive/negative conversion.
-        return [
-            unsigned_val & 0xFF, # Byte 0 (LSB)
-            (unsigned_val >> 8) & 0xFF, # Byte 1
-            (unsigned_val >> 16) & 0xFF, # Byte 2 (MSB)
-        ]
+        # Use struct.pack('>i', value) to get a 4-byte big-endian representation, then slice for 3 bytes.
+        # This implicitly handles sign extension for 24-bit value to 32-bit.
+        return struct.pack('>i', value)[1:]
 
     @pytest.mark.parametrize("relative_axis_val", [-1000, 0, 1000])
     # Parameterizes the test to run with different relative axis values.
@@ -611,9 +616,9 @@ class TestLowLevelAPIRunCommandsExtended:
         speed = 500 # Speed parameter (0-3000).
         accel = 100 # Acceleration parameter (0-255).
 
-        speed_bytes = list(struct.pack("<H", speed)) # Speed is 2 bytes.
+        speed_bytes = list(struct.pack(">H", speed)) # Speed is 2 bytes, big-endian.
         accel_byte = accel & 0xFF # Acceleration is 1 byte.
-        axis_bytes_packed = self._pack_int24_for_test(relative_axis_val) # Relative axis value is 3 bytes (signed 24-bit).
+        axis_bytes_packed = list(self._pack_int24_for_test(relative_axis_val)) # Relative axis value is 3 bytes (signed 24-bit), big-endian.
 
         # Construct the full data payload for the sent message.
         sent_data_list = [command_code] + speed_bytes + [accel_byte] + axis_bytes_packed
