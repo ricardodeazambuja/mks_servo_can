@@ -41,8 +41,8 @@ async def main():
     Main asynchronous function to demonstrate advanced Axis control.
     """
     can_if = None
+    axis = None
     logger.info("Starting Advanced Axis Control example...")
-
     try:
         # --- 1. Setup and Connect ---
         can_if = CANInterface(use_simulator=USE_SIMULATOR, simulator_host=SIMULATOR_HOST, simulator_port=SIMULATOR_PORT)
@@ -129,14 +129,15 @@ async def main():
         await axis.enable_motor()
 
 
-    except exceptions.MKSServoCANError as e:
+    except exceptions.MKSServoError as e:
         logger.error(f"A mks-servo-can library error occurred: {e}", exc_info=True)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
     finally:
-        if axis and axis.is_enabled():
-            logger.info("Disabling axis...")
-            await axis.disable_motor()
+        if axis is not None:
+            if axis.is_enabled():
+                logger.info("Disabling axis...")
+                await axis.disable_motor()
         if can_if and can_if.is_connected:
             logger.info("Disconnecting CAN Interface.")
             await can_if.disconnect()
