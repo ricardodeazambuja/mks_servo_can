@@ -638,6 +638,114 @@ class Axis:
                     MKSServoError(f"Move future for {command_const:02X} ended without explicit result/error.", can_id=self.can_id)
                 )
 
+    async def _move_relative_handler(
+        self,
+        distance: float,
+        unit: str,
+        speed: Optional[float] = None,
+        accel_param: Optional[int] = None,
+        wait: bool = True,
+    ):
+        """Internal handler for all relative moves."""
+        sp = speed if speed is not None else self.default_speed_param
+        ac = accel_param if accel_param is not None else self.default_accel_param
+        
+        cmd_func = None
+        cmd_const = 0
+        pulses_for_timeout = 0
+        
+        if unit == 'user':
+            relative_encoder_steps = self.kinematics.user_to_steps(distance)
+            # Use the more direct relative axis command (0xF4)
+            if abs(relative_encoder_steps) < 1:
+                logger.info(f"Axis '{self.name}': Relative move of {distance} {self.kinematics.units} is effectively zero steps. No move needed.")
+                return
+            mks_speed = self.kinematics.user_speed_to_motor_speed(sp) if sp is not None else self.default_speed_param
+            cmd_func = lambda: self._low_level_api.run_position_mode_relative_axis(self.can_id, mks_speed, ac, relative_encoder_steps)
+            cmd_const = const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS
+            pulses_for_timeout = relative_encoder_steps
+            sp = mks_speed
+
+        elif unit == 'pulses':
+            relative_microsteps = int(distance)
+            if abs(relative_microsteps) < 1:
+                logger.info(f"Axis '{self.name}': Relative move of zero pulses requested. No move needed.")
+                return
+            direction_ccw = relative_microsteps >= 0
+            num_microsteps = abs(relative_microsteps)
+            cmd_func = lambda: self._low_level_api.run_position_mode_relative_pulses(self.can_id, direction_ccw, int(sp), ac, num_microsteps)
+            cmd_const = const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES
+            pulses_for_timeout = num_microsteps
+        
+        elif unit == 'axis':
+            relative_encoder_steps = int(distance)
+            if abs(relative_encoder_steps) < 1:
+                logger.info(f"Axis '{self.name}': Relative move of zero axis steps requested. No move needed.")
+                return
+            cmd_func = lambda: self._low_level_api.run_position_mode_relative_axis(self.can_id, int(sp), ac, relative_encoder_steps)
+            cmd_const = const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS
+            pulses_for_timeout = relative_encoder_steps
+        
+        else:
+            raise ParameterError(f"Unknown unit type '{unit}' for relative move.")
+
+        # Execute the move
+        await self._execute_move(cmd_func, cmd_const,
+                                 pulses_to_move_for_timeout=pulses_for_timeout,
+                                 speed_param_for_calc=int(sp))
+        if wait and self._active_move_future:
+            await self._active_move_future
+
+    async def _move_absolute_handler(
+        self,
+        position: float,
+        unit: str,
+        speed: Optional[float] = None,
+        accel_param: Optional[int] = None,
+        wait: bool = True,
+    ):
+        """Internal handler for all absolute moves."""
+        sp = speed if speed is not None else self.default_speed_param
+        ac = accel_param if accel_param is not None else self.default_accel_param
+
+        target_encoder_steps: int
+        mks_speed_param: int
+
+        # 1. Convert target position to raw encoder steps
+        if unit == 'user':
+            target_encoder_steps = self.kinematics.user_to_steps(position)
+            mks_speed_param = self.kinematics.user_speed_to_motor_speed(sp) if sp is not None else self.default_speed_param
+        elif unit == 'pulses':
+            # Convert command microsteps to raw encoder steps for comparison
+            target_encoder_steps = self._command_microsteps_to_raw_encoder_steps(int(position))
+            mks_speed_param = int(sp)
+        elif unit == 'axis':
+            target_encoder_steps = int(position)
+            mks_speed_param = int(sp)
+        else:
+            raise ParameterError(f"Unknown unit type '{unit}' for absolute move.")
+
+        # 2. Check if a move is necessary
+        current_steps = await self.get_current_position_steps()
+        if abs(target_encoder_steps - current_steps) < 2 or math.isclose(mks_speed_param, 0, abs_tol=0.1): # Tolerance for rounding
+            logger.info(f"Axis '{self.name}': Target position {target_encoder_steps} is same as current. No move needed.")
+            if self._active_move_future and not self._active_move_future.done():
+                self._active_move_future.set_result(True)
+            return
+
+        # 3. Execute the move using the direct absolute axis command
+        cmd_func = lambda: self._low_level_api.run_position_mode_absolute_axis(
+            self.can_id, mks_speed_param, ac, target_encoder_steps
+        )
+        await self._execute_move(
+            cmd_func,
+            const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
+            pulses_to_move_for_timeout=abs(target_encoder_steps - current_steps),
+            speed_param_for_calc=mks_speed_param
+        )
+        
+        if wait and self._active_move_future:
+            await self._active_move_future
 
     async def move_to_position_abs_pulses(
         self,
@@ -666,87 +774,7 @@ class Axis:
             MotorError: If the motor reports an error starting or during the move.
             LimitError: If the motor reports hitting a limit switch during the move.
         """
-        sp = speed_param if speed_param is not None else self.default_speed_param
-        ac = accel_param if accel_param is not None else self.default_accel_param
-
-        logger.info(
-            f"Axis '{self.name}': Moving to absolute command microstep position {target_command_microsteps} (via relative) "
-            f"(SpeedP: {sp}, AccelP: {ac})."
-        )
-
-        # 1. Fetch current position in raw encoder steps
-        try:
-            # Ensure self._current_position_steps is up-to-date or fetch it.
-            # It's crucial this reflects the true current position before calculating delta.
-            # The get_current_position_steps() method updates self._current_position_steps.
-            current_raw_encoder_steps = await self.get_current_position_steps()
-            logger.debug(f"Axis '{self.name}': Current raw encoder steps for abs->rel move: {current_raw_encoder_steps}")
-        except MKSServoError as e:
-            msg = f"Axis '{self.name}': Failed to get current position for absolute move via relative. Error: {e}"
-            logger.error(msg)
-            if self._active_move_future and not self._active_move_future.done():
-                self._active_move_future.set_exception(CommunicationError(msg, can_id=self.can_id))
-            # Or re-raise depending on desired error propagation
-            raise CommunicationError(msg, can_id=self.can_id) from e
-
-        # 2. Convert current raw encoder steps to current command microsteps
-        current_command_microsteps = self._raw_encoder_steps_to_command_microsteps(current_raw_encoder_steps)
-        logger.debug(f"Axis '{self.name}': Current command microsteps: {current_command_microsteps}")
-
-
-        # 3. Calculate relative delta
-        relative_delta_microsteps = target_command_microsteps - current_command_microsteps
-        logger.debug(f"Axis '{self.name}': Target command microsteps: {target_command_microsteps}, Relative delta: {relative_delta_microsteps}")
-
-
-        if abs(relative_delta_microsteps) == 0:
-            logger.info(f"Axis '{self.name}': Target position is current position. No move needed.")
-            # If a move future already exists from a previous call, and it's not done,
-            # we should mark it as complete. If no future, then nothing to do.
-            if self._active_move_future and not self._active_move_future.done():
-                 self._active_move_future.set_result(True)
-            return  # No move needed
-
-
-        # 4. Determine direction and magnitude for relative move command
-        # The MKS "Dir" setting (0x86) determines physical CCW/CW.
-        # The relative command's `direction_ccw` parameter refers to the encoder's natural CCW+ direction.
-        # If motor "Dir" is CCW, then `relative_delta_microsteps > 0` means CCW physical.
-        # If motor "Dir" is CW, then `relative_delta_microsteps > 0` (target > current in CCW frame)
-        # means the motor needs to move *less CW* or *more CCW* to reach the target.
-        # The `run_position_mode_relative_pulses` command expects `direction_ccw` to be True if
-        # the *change in encoder value* should be positive (CCW).
-        
-        direction_ccw_for_relative_cmd = relative_delta_microsteps >= 0
-        num_microsteps_for_relative_cmd = abs(relative_delta_microsteps)
-
-        logger.info(
-            f"Axis '{self.name}': Calculated relative move: {num_microsteps_for_relative_cmd} microsteps, "
-            f"Direction CCW (for encoder): {direction_ccw_for_relative_cmd}."
-        )
-        
-        # 5. Execute Relative Move using existing _execute_move helper
-        cmd_func = lambda: self._low_level_api.run_position_mode_relative_pulses(
-            self.can_id, direction_ccw_for_relative_cmd, sp, ac, num_microsteps_for_relative_cmd
-        )
-        
-        # Pass the magnitude of the relative move for timeout calculation
-        await self._execute_move(
-            cmd_func,
-            const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES,  # Command const for logging/response predicate
-            pulses_to_move_for_timeout=num_microsteps_for_relative_cmd,
-            speed_param_for_calc=sp
-        )
-
-        if wait and self._active_move_future:
-            await self._active_move_future
-        
-        # After the move, update the internal position belief to the target.
-        # This is an optimistic update. A read-back (get_current_position_steps)
-        # could confirm, but might be slow for rapid commands.
-        # The _execute_move already calls get_current_position_steps at the end.
-        # self._current_position_steps = self._command_microsteps_to_raw_encoder_steps(target_command_microsteps)
-        logger.debug(f"Axis '{self.name}': Optimistically updated _current_position_steps to reflect target after emulated absolute move.")
+        await self._move_absolute_handler(float(target_command_microsteps), 'pulses', speed=float(speed_param) if speed_param is not None else None, accel_param=accel_param, wait=wait)
 
     async def move_relative_pulses(
         self,
@@ -775,22 +803,7 @@ class Axis:
             MotorError: If the motor reports an error.
             LimitError: If a limit is hit.
         """
-        sp = speed_param if speed_param is not None else self.default_speed_param
-        ac = accel_param if accel_param is not None else self.default_accel_param
-        direction_ccw = relative_command_microsteps >= 0 
-        num_microsteps_for_cmd = abs(relative_command_microsteps) # Command takes magnitude
-        
-        logger.info(
-            f"Axis '{self.name}': Moving relative by {relative_command_microsteps} command microsteps (SpeedP: {sp}, AccelP: {ac})."
-        )
-        cmd_func = lambda: self._low_level_api.run_position_mode_relative_pulses(
-            self.can_id, direction_ccw, sp, ac, num_microsteps_for_cmd
-        )
-        # For timeout, pulses_to_move_for_timeout is the magnitude of the move in command microsteps
-        await self._execute_move(cmd_func, const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES,
-                                 pulses_to_move_for_timeout=num_microsteps_for_cmd, speed_param_for_calc=sp)
-        if wait and self._active_move_future:
-            await self._active_move_future
+        await self._move_relative_handler(float(relative_command_microsteps), 'pulses', speed=float(speed_param) if speed_param is not None else None, accel_param=accel_param, wait=wait)
 
     async def move_relative_user(
         self,
@@ -818,31 +831,7 @@ class Axis:
             MotorError: If the motor reports an error.
             LimitError: If a limit is hit.
         """
-        # Convert user distance to equivalent raw encoder steps first
-        relative_raw_encoder_steps = self.kinematics.user_to_steps(relative_dist_user)
-        # Then convert raw encoder steps to command microsteps for the 0xFD command
-        relative_command_microsteps = self._raw_encoder_steps_to_command_microsteps(relative_raw_encoder_steps)
-
-        mks_speed_param = (
-            self.kinematics.user_speed_to_motor_speed(speed_user)
-            if speed_user is not None
-            else self.default_speed_param
-        )
-        mks_accel_param = self.default_accel_param 
-        direction_ccw = relative_command_microsteps >= 0
-        num_microsteps_for_cmd = abs(relative_command_microsteps)
-
-        logger.info(
-            f"Axis '{self.name}': Moving relative by {relative_dist_user} {getattr(self.kinematics, 'units', 'units')} "
-            f"-> {relative_command_microsteps} command microsteps (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
-        )
-        cmd_func = lambda: self._low_level_api.run_position_mode_relative_pulses(
-            self.can_id, direction_ccw, mks_speed_param, mks_accel_param, num_microsteps_for_cmd
-        )
-        await self._execute_move(cmd_func, const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES,
-                                 pulses_to_move_for_timeout=num_microsteps_for_cmd, speed_param_for_calc=mks_speed_param)
-        if wait and self._active_move_future:
-            await self._active_move_future
+        await self._move_relative_handler(relative_dist_user, 'user', speed=speed_user, wait=wait)
 
     async def move_to_position_abs_axis(
         self,
@@ -870,28 +859,7 @@ class Axis:
             MotorError: If the motor reports an error.
             LimitError: If a limit is hit.
         """
-        sp = speed_param if speed_param is not None else self.default_speed_param
-        ac = accel_param if accel_param is not None else self.default_accel_param
-
-        logger.info(
-            f"Axis '{self.name}': Moving to absolute axis position {target_encoder_steps} "
-            f"(SpeedP: {sp}, AccelP: {ac})."
-        )
-
-        cmd_func = lambda: self._low_level_api.run_position_mode_absolute_axis(
-            self.can_id, sp, ac, target_encoder_steps
-        )
-
-        await self._execute_move(
-            cmd_func,
-            const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
-            pulses_to_move_for_timeout=target_encoder_steps, # Used for magnitude
-            speed_param_for_calc=sp
-        )
-
-        if wait and self._active_move_future:
-            await self._active_move_future
-
+        await self._move_absolute_handler(float(target_encoder_steps), 'axis', speed=float(speed_param) if speed_param is not None else None, accel_param=accel_param, wait=wait)
 
     async def move_relative_axis(
         self,
@@ -919,27 +887,7 @@ class Axis:
             MotorError: If the motor reports an error.
             LimitError: If a limit is hit.
         """
-        sp = speed_param if speed_param is not None else self.default_speed_param
-        ac = accel_param if accel_param is not None else self.default_accel_param
-        
-        logger.info(
-            f"Axis '{self.name}': Moving relative by {relative_encoder_steps} axis steps "
-            f"(SpeedP: {sp}, AccelP: {ac})."
-        )
-
-        cmd_func = lambda: self._low_level_api.run_position_mode_relative_axis(
-            self.can_id, sp, ac, relative_encoder_steps
-        )
-
-        await self._execute_move(
-            cmd_func,
-            const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS,
-            pulses_to_move_for_timeout=relative_encoder_steps, # Used for magnitude
-            speed_param_for_calc=sp
-        )
-
-        if wait and self._active_move_future:
-            await self._active_move_future
+        await self._move_relative_handler(float(relative_encoder_steps), 'axis', speed=float(speed_param) if speed_param is not None else None, accel_param=accel_param, wait=wait)
 
     async def move_to_position_abs_user(
         self,
@@ -965,70 +913,8 @@ class Axis:
             ParameterError: If converted parameters are out of range.
             CommunicationError, MotorError, LimitError: On move execution issues.
         """
-        target_encoder_steps = self.kinematics.user_to_steps(target_pos_user)
-        mks_speed_param = (
-            self.kinematics.user_speed_to_motor_speed(speed_user)
-            if speed_user is not None
-            else self.default_speed_param
-        )
-        mks_accel_param = self.default_accel_param
-        
-        logger.info(
-            f"Axis '{self.name}': Moving to user position {target_pos_user} "
-            f"({getattr(self.kinematics, 'units', 'units')}) via direct axis command "
-            f"-> {target_encoder_steps} steps (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
-        )
-        
-        await self.move_to_position_abs_axis(
-            target_encoder_steps,
-            speed_param=mks_speed_param,
-            accel_param=mks_accel_param,
-            wait=wait
-        )
+        await self._move_absolute_handler(target_pos_user, 'user', speed=speed_user, wait=wait)
 
-    async def move_relative_user_direct(
-        self,
-        relative_dist_user: float,
-        speed_user: Optional[float] = None,
-        wait: bool = True,
-    ):
-        """
-        Moves the motor by a relative distance in user units using the direct axis command (0xF4).
-
-        This method converts the user distance and speed into raw encoder steps and MKS speed
-        parameters, then executes the move using the motor's relative axis positioning.
-
-        Args:
-            relative_dist_user: The distance to move in user units (e.g., mm, degrees).
-            speed_user: The desired speed in user units per second. If None, the
-                        `default_speed_param` is used.
-            wait: If True (default), waits for the move to complete.
-
-        Raises:
-            KinematicsError: If conversion fails.
-            ParameterError, CommunicationError, MotorError, LimitError: On move execution issues.
-        """
-        relative_encoder_steps = self.kinematics.user_to_steps(relative_dist_user)
-        mks_speed_param = (
-            self.kinematics.user_speed_to_motor_speed(speed_user)
-            if speed_user is not None
-            else self.default_speed_param
-        )
-        mks_accel_param = self.default_accel_param
-        
-        logger.info(
-            f"Axis '{self.name}': Moving relative by {relative_dist_user} "
-            f"({getattr(self.kinematics, 'units', 'units')}) via direct axis command "
-            f"-> {relative_encoder_steps} steps (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
-        )
-        
-        await self.move_relative_axis(
-            relative_encoder_steps,
-            speed_param=mks_speed_param,
-            accel_param=mks_accel_param,
-            wait=wait
-        )
-            
     async def set_speed_user(
         self, speed_user: float, accel_user: Optional[float] = None 
     ) -> None:

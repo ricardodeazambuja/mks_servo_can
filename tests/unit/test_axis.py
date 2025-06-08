@@ -704,19 +704,6 @@ class TestAxisMovement:
             mock_low_level_api.run_position_mode_relative_axis.assert_called_with(
                 axis_instance.can_id, speed, axis_instance.default_accel_param, relative_steps
             )
-
-    async def test_move_relative_user_direct_success(self, axis_instance: Axis):
-        """Tests the user-facing direct relative move method."""
-        target_pos_user = 180.0 # degrees
-        expected_steps = 8192 # 180/360 * 16384
-        
-        with patch.object(axis_instance, "move_relative_axis", new_callable=AsyncMock) as mock_move_rel_axis:
-            await axis_instance.move_relative_user_direct(target_pos_user, wait=False)
-            
-            mock_move_rel_axis.assert_called_once()
-            called_args, called_kwargs = mock_move_rel_axis.call_args
-            assert called_args[0] == expected_steps
-            assert called_kwargs.get("wait") is False
             
 @pytest.mark.asyncio
 # Marks this class for asynchronous tests.

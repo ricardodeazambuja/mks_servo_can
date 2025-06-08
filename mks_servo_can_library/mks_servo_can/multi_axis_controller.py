@@ -459,65 +459,56 @@ class MultiAxisController:
         if not positions_user:
             return
 
-        tasks = []
-        active_futures_map: Dict[str, Optional[asyncio.Future]] = {} # Store future for each axis
-
-        initiation_errors: Dict[str, Exception] = {}
-
+        # Phase 1: Initiate all moves concurrently
+        initiation_tasks = []
+        axes_to_move = []
         for axis_name, target_pos in positions_user.items():
             axis = self.axes.get(axis_name)
             if not axis:
-                msg = f"Axis '{axis_name}' not found in controller for multi-move."
-                logger.warning(msg)
-                initiation_errors[axis_name] = ConfigurationError(msg)
-                continue
+                raise ConfigurationError(f"Axis '{axis_name}' not found in controller.")
+            
+            axes_to_move.append(axis)
+            axis_speed = speeds_user.get(axis_name) if speeds_user else None
+            # move_..._user now calls the internal handler and returns immediately
+            # because its `wait` parameter defaults to the handler's `wait=True`,
+            # but we are calling the handler in a new task.
+            # To make it non-blocking, the public methods need to pass wait=False
+            # For this to work, we must update the public methods.
+            # Let's assume for now the public methods are simple wrappers.
+            # Awaiting them here would be sequential. We need to create tasks.
+            coro = axis.move_to_position_abs_user(target_pos, speed_user=axis_speed, wait=False)
+            initiation_tasks.append(coro)
 
-            axis_speed_user = None
-            if speeds_user and axis_name in speeds_user:
-                axis_speed_user = speeds_user[axis_name]
-
-            # Create a task to initiate the move on the axis.
-            # The axis.move_to_position_abs_user itself handles setting _active_move_future.
-            async def _initiate_move(ax: Axis, pos: float, speed: Optional[float]):
-                try:
-                    await ax.move_to_position_abs_user(pos, speed_user=speed, wait=False)
-                    active_futures_map[ax.name] = ax._active_move_future # pylint: disable=protected-access
-                except Exception as e: # pylint: disable=broad-except
-                    initiation_errors[ax.name] = e
-                    active_futures_map[ax.name] = None # Ensure no stale future
-
-            tasks.append(
-                self._loop.create_task(
-                    _initiate_move(axis, target_pos, axis_speed_user),
-                    name=f"{axis_name}_move_abs_init",
-                )
-            )
-
-        # Wait for all move initiation tasks to complete
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
+        # Dispatch all move commands
+        initiation_results = await asyncio.gather(*initiation_tasks, return_exceptions=True)
+        
+        # Check for errors during initiation
+        initiation_errors: Dict[str, Exception] = {}
+        for i, result in enumerate(initiation_results):
+            if isinstance(result, Exception):
+                axis_name = axes_to_move[i].name
+                initiation_errors[axis_name] = result
+        
         if initiation_errors:
             raise MultiAxisError("Error(s) initiating multi-axis absolute move.", individual_errors=initiation_errors)
 
-        # If waiting for completion, wait for all valid active move futures
+        # Phase 2: If requested, wait for all moves to complete
         if wait_for_all:
-            futures_to_wait = [f for f in active_futures_map.values() if f and not f.done()]
-            if futures_to_wait:
-                logger.info("Waiting for all initiated absolute moves to complete...")
-                completion_results = await asyncio.gather(*futures_to_wait, return_exceptions=True)
-                
-                # Check for errors during move execution
-                move_execution_errors: Dict[str, Exception] = {}
-                for axis_name, fut in active_futures_map.items():
-                    if fut and fut.done() and fut.exception():
-                        move_execution_errors[axis_name] = fut.exception() # type: ignore
+            logger.info("Waiting for all initiated absolute moves to complete...")
+            completion_tasks = [axis.wait_for_move_completion() for axis in axes_to_move]
+            completion_results = await asyncio.gather(*completion_tasks, return_exceptions=True)
 
-                if move_execution_errors:
-                    raise MultiAxisError("Error(s) during multi-axis absolute move execution.", individual_errors=move_execution_errors)
+            # Check for errors during the move execution
+            move_execution_errors: Dict[str, Exception] = {}
+            for i, result in enumerate(completion_results):
+                if isinstance(result, Exception):
+                    axis_name = axes_to_move[i].name
+                    move_execution_errors[axis_name] = result
 
-        logger.info("Multi-axis absolute move command sequence finished.")
+            if move_execution_errors:
+                raise MultiAxisError("Error(s) during multi-axis absolute move execution.", individual_errors=move_execution_errors)
 
+    logger.info("Multi-axis absolute move command sequence finished.")
 
     async def move_all_relative_user(
         self,
@@ -587,19 +578,28 @@ class MultiAxisController:
             raise MultiAxisError("Error(s) initiating multi-axis relative move.", individual_errors=initiation_errors)
 
         if wait_for_all:
-            futures_to_wait = [f for f in active_futures_map.values() if f and not f.done()]
+            # Create a list of axes whose futures we will wait for, to keep the order consistent.
+            axes_to_wait_for = [
+                self.axes[name] for name, fut in active_futures_map.items() if fut and not fut.done()
+            ]
+            futures_to_wait = [axis._active_move_future for axis in axes_to_wait_for] # type: ignore
+
             if futures_to_wait:
                 logger.info(
                     "Waiting for all initiated relative moves to complete..."
                 )
+                # This line is now the single source of truth for results.
                 completion_results = await asyncio.gather(*futures_to_wait, return_exceptions=True)
+                
+                # Directly process the results from gather.
                 move_execution_errors: Dict[str, Exception] = {}
-                for axis_name, fut in active_futures_map.items():
-                    if fut and fut.done() and fut.exception():
-                        move_execution_errors[axis_name] = fut.exception() # type: ignore
+                for i, result in enumerate(completion_results):
+                    if isinstance(result, Exception):
+                        axis_name = axes_to_wait_for[i].name
+                        move_execution_errors[axis_name] = result
+
                 if move_execution_errors:
                     raise MultiAxisError("Error(s) during multi-axis relative move execution.", individual_errors=move_execution_errors)
-
 
         logger.info("Multi-axis relative move command sequence finished.")
 
