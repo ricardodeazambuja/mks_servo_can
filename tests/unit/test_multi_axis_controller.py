@@ -9,6 +9,7 @@ logic from the underlying CANInterface and Axis implementations.
 
 import pytest
 import asyncio
+import math
 from unittest.mock import AsyncMock, MagicMock
 
 from mks_servo_can import (
