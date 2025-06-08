@@ -44,8 +44,8 @@ Y_AXIS_CAN_ID = 2
 PEN_AXIS_CAN_ID = 3
 
 # --- Plotter Physical Limits (in mm) ---
-PLOTTER_MAX_X_MM = 200.0
-PLOTTER_MAX_Y_MM = 150.0
+PLOTTER_MAX_X_MM = 130.0
+PLOTTER_MAX_Y_MM = 160.0
 
 # --- Plotter Speeds ---
 DRAWING_SPEED_MMS = 25.0

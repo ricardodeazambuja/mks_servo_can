@@ -36,35 +36,46 @@ from mks_servo_can import (
 # ===================================================================
 # ==================== PLOTTER CONFIGURATION ========================
 # ===================================================================
+# These values can be adjusted to match your physical plotter setup.
+# They can also be overridden by command-line arguments.
+
+# --- Motor CAN IDs ---
 X_AXIS_CAN_ID = 1
 Y_AXIS_CAN_ID = 2
 PEN_AXIS_CAN_ID = 3
 
-PLOTTER_MAX_X_MM = 200.0
-PLOTTER_MAX_Y_MM = 150.0
+# --- Plotter Physical Limits (in mm) ---
+PLOTTER_MAX_X_MM = 130.0
+PLOTTER_MAX_Y_MM = 160.0
 
+# --- Plotter Speeds ---
 DRAWING_SPEED_MMS = 25.0
 TRAVEL_SPEED_MMS = 100.0
 PEN_ROTATION_SPEED_DEGPS = 360.0
 
+# --- X-Axis Kinematics Configuration ---
 X_AXIS_PITCH_MM_PER_REV = 40.0
 X_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 X_AXIS_GEAR_RATIO = 1.0
 
+# --- Y-Axis Kinematics Configuration ---
 Y_AXIS_PITCH_MM_PER_REV = 40.0
 Y_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 Y_AXIS_GEAR_RATIO = 1.0
 
+# --- Pen (Z-Axis) Kinematics Configuration ---
 PEN_UP_ANGLE = 0.0
 PEN_DOWN_ANGLE = 45.0
 PEN_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 PEN_AXIS_GEAR_RATIO = 1.0
 # ===================================================================
 
+# --- Axis Names (used internally in the script) ---
 X_AXIS_NAME = "AxisX"
 Y_AXIS_NAME = "AxisY"
 PEN_AXIS_NAME = "PenAxis"
 
+# --- Logging Setup ---
 logger = logging.getLogger("CalligraphyPlotter")
 
 

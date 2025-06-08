@@ -186,20 +186,20 @@ async def main():
         # --- Example move ---
         # This section demonstrates a simple absolute move, but it's commented out by default.
         # Users can uncomment it to test actual movement.
-        # target_angle_degrees = pos_user + 30.0
+        target_angle_degrees = pos_user + 30.0
         # Calculates a target angle 30 degrees from the current position.
-        # logger.info("Moving to %.2f degrees (%d pulses)...", target_angle_degrees, 
-        #             axis1.kinematics.user_to_steps(target_angle_degrees))
+        logger.info("Moving to %.2f degrees (%d pulses)...", target_angle_degrees, 
+                    axis1.kinematics.user_to_steps(target_angle_degrees))
         # Logs the target move.
-        # await axis1.move_to_position_abs_user(
-        # target_angle_degrees, speed_user=90.0, wait=True
-        # )
+        await axis1.move_to_position_abs_user(
+        target_angle_degrees, speed_user=90.0, wait=True
+        )
         # Commands the motor to move to the 'target_angle_degrees' at a speed of 90.0 degrees/second.
         # 'wait=True' means the function will await the completion of the move.
-        # new_pos_log = await axis1.get_current_position_user()
+        new_pos_log = await axis1.get_current_position_user()
         # Reads the position again after the move.
-        # logger.info("Move complete. New position: %.2f %s",
-        #             new_pos_log, kin_units)
+        logger.info("Move complete. New position: %.2f %s",
+                    new_pos_log, kin_units)
         # Logs the new position.
 
         logger.info("Example finished. Disabling motor.")
