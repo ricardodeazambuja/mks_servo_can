@@ -112,35 +112,61 @@ async def move_to(
     controller: MultiAxisController,
     target_x: float,
     target_y: float,
-    tool_speed_mms: float
+    speed_mms: float,
+    max_x: float,
+    max_y: float
 ):
-    """A simplified helper function to command a 2D plotter.
+    """
+    Moves the plotter's X and Y axes to a target coordinate in a straight line.
 
-    This function abstracts the `MultiAxisController.move_linearly_to` method
-    for a plotter with axes named 'AxisX' and 'AxisY'. It constructs the
-    required target position dictionary and calls the controller's linear
-    interpolation method.
+    This function calculates the individual speeds for the X and Y axes to ensure
+    the tool moves at a constant velocity along the path. It also checks for
+    software limits before initiating the move.
 
     Args:
-        controller: The MultiAxisController instance managing the plotter's
-            X and Y axes.
-        target_x: The absolute target X-coordinate in millimeters.
-        target_y: The absolute target Y-coordinate in millimeters.
-        tool_speed_mms: The desired constant speed of the tool along the
-            straight-line path, in millimeters per second.
-
-    Raises:
-        MultiAxisError: If fetching current positions or executing the move
-            fails for one or more axes.
-        ValueError: If tool_speed_mms is not a positive number.
+        controller: The MultiAxisController instance.
+        target_x: The target X coordinate in mm.
+        target_y: The target Y coordinate in mm.
+        speed_mms: The desired tool speed along the path in mm/s.
+        max_x: The maximum allowed X coordinate.
+        max_y: The maximum allowed Y coordinate.
     """
-    logger.info(f"Moving to (X:{target_x:.2f}, Y:{target_y:.2f}) at {tool_speed_mms:.1f} mm/s.")
+    # Software Limit Check
+    if not (0 <= target_x <= max_x and 0 <= target_y <= max_y):
+        logger.warning(
+            f"Move to ({target_x:.1f}, {target_y:.1f}) is outside plotter limits "
+            f"(X: 0-{max_x}, Y: 0-{max_y}). Skipping move."
+        )
+        return
+
+    logger.info(f"Moving to (X:{target_x:.2f}, Y:{target_y:.2f}) at {speed_mms:.1f} mm/s.")
     
-    target_positions = { "AxisX": target_x, "AxisY": target_y }
+    current_positions = await controller.get_all_positions_user()
+    current_x = current_positions.get(X_AXIS_NAME, 0.0)
+    current_y = current_positions.get(Y_AXIS_NAME, 0.0)
+
+    delta_x = target_x - current_x
+    delta_y = target_y - current_y
+
+    distance = math.sqrt(delta_x**2 + delta_y**2)
+
+    if distance < 0.01:
+        logger.info("Target is at current position. No move needed.")
+        return
+
+    # Calculate time required for the move
+    duration_s = distance / speed_mms
+
+    # Calculate individual speeds to maintain a straight line path
+    speed_x_mms = abs(delta_x / duration_s) if duration_s > 0 else 0
+    speed_y_mms = abs(delta_y / duration_s) if duration_s > 0 else 0
+
+    positions_to_move = {X_AXIS_NAME: target_x, Y_AXIS_NAME: target_y}
+    speeds_for_move = {X_AXIS_NAME: speed_x_mms, Y_AXIS_NAME: speed_y_mms}
     
-    await controller.move_linearly_to(
-        target_positions=target_positions,
-        tool_speed_user=tool_speed_mms,
+    await controller.move_all_to_positions_abs_user(
+        positions_user=positions_to_move,
+        speeds_user=speeds_for_move,
         wait_for_all=True
     )
 
@@ -206,22 +232,22 @@ async def run_plotter_sequence(args: argparse.Namespace):
         p4 = (10.0, 40.0)
         
         # Go to the starting point
-        await move_to(multi_controller, p1[0], p1[1], TRAVEL_SPEED_MMS)
+        await move_to(multi_controller, p1[0], p1[1], TRAVEL_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
         
         # Pen down to start drawing
         await pen_down(multi_controller, PEN_ROTATION_SPEED_DEGPS)
         
         # Draw the rectangle
-        await move_to(multi_controller, p2[0], p2[1], DRAWING_SPEED_MMS)
-        await move_to(multi_controller, p3[0], p3[1], DRAWING_SPEED_MMS)
-        await move_to(multi_controller, p4[0], p4[1], DRAWING_SPEED_MMS)
-        await move_to(multi_controller, p1[0], p1[1], DRAWING_SPEED_MMS)
+        await move_to(multi_controller, p2[0], p2[1], DRAWING_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
+        await move_to(multi_controller, p3[0], p3[1], DRAWING_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
+        await move_to(multi_controller, p4[0], p4[1], DRAWING_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
+        await move_to(multi_controller, p1[0], p1[1], DRAWING_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
         
         logger.info("Drawing complete.")
         
         # Pen up and return to origin
         await pen_up(multi_controller, PEN_ROTATION_SPEED_DEGPS)
-        await move_to(multi_controller, 0, 0, TRAVEL_SPEED_MMS)
+        await move_to(multi_controller, 0, 0, TRAVEL_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
         
     except exceptions.MKSServoError as e:
         logger.error(f"A library-specific error occurred: {e}", exc_info=True)

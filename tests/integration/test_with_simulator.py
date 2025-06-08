@@ -3,6 +3,8 @@
 # It's an integration test file, meaning it tests the interaction between different parts of the system,
 # specifically focusing on tests that utilize the MKS Servo Simulator.
 
+import math
+
 import os  # For checking if simulator executable exists
 # Imports the 'os' module, which provides a way of using operating system dependent functionality.
 # In this script, it's mentioned as potentially being used for checking if the simulator executable exists,
@@ -43,6 +45,8 @@ from mks_servo_can import exceptions
 from mks_servo_can import LinearKinematics
 # Imports the 'LinearKinematics' class, used for converting between linear physical units (e.g., mm)
 # and motor steps, for axes that perform linear motion.
+
+from mks_servo_can import MultiAxisController
 
 SIMULATOR_HOST = "localhost"
 # Defines a constant for the hostname where the simulator is expected to be running.
@@ -441,4 +445,60 @@ async def test_sim_axis_absolute_move_user(sim_axis1_linear: Axis):
     # This tolerance accounts for simulation precision and kinematic conversions.
     print("test_sim_axis_absolute_move_user completed successfully.")
     # Logs successful completion.
+
+@pytest_asyncio.fixture(scope="function")
+async def sim_plotter_controller(can_interface_sim: CANInterface) -> MultiAxisController:
+    """
+    Provides a MultiAxisController with two linear axes (X and Y) connected
+    to the simulator, mimicking a simple plotter.
+    """
+    # Create the controller with the shared CAN interface from the simulator
+    controller = MultiAxisController(can_interface_manager=can_interface_sim)
+
+    # Define linear kinematics for the X and Y axes (e.g., 10mm of travel per revolution)
+    kin_x = LinearKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, pitch=10.0, units="mm")
+    kin_y = LinearKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, pitch=10.0, units="mm")
+
+    # Create and add the Axis objects to the controller
+    # Assumes the simulator is running with motors at CAN IDs 1 and 2
+    axis_x = Axis(can_interface_sim, 1, "AxisX", kin_x)
+    axis_y = Axis(can_interface_sim, 2, "AxisY", kin_y)
+
+    controller.add_axis(axis_x)
+    controller.add_axis(axis_y)
+
+    print("Fixture 'sim_plotter_controller' created with X and Y linear axes.")
+    return controller
+
+@pytest.mark.asyncio
+async def test_sim_linear_move_with_interpolation(
+    # You would need a fixture that provides a connected MultiAxisController
+    # with at least two linear axes, similar to the setup in the examples.
+    sim_plotter_controller: MultiAxisController 
+):
+    """
+    Tests the move_linearly_to method for correct end-to-end behavior
+    with the simulator.
+    """
+    # 1. Setup: Enable axes and set to a known starting state (e.g., zero)
+    await sim_plotter_controller.enable_all_axes()
+    for axis in sim_plotter_controller.axes.values():
+        await axis.set_current_position_as_zero()
+
+    # 2. Define and execute the linear move
+    target_pos = {"AxisX": 30.0, "AxisY": 40.0}
+    tool_speed = 25.0 # mm/s
+    
+    await sim_plotter_controller.move_linearly_to(
+        target_positions=target_pos,
+        tool_speed_user=tool_speed,
+        wait_for_all=True
+    )
+
+    # 3. Verify the result
+    final_positions = await sim_plotter_controller.get_all_positions_user()
+    
+    # Check that both axes reached their target positions accurately
+    assert math.isclose(final_positions.get("AxisX"), 30.0, abs_tol=0.1)
+    assert math.isclose(final_positions.get("AxisY"), 40.0, abs_tol=0.1)
     

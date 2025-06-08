@@ -8,6 +8,8 @@ coordinated movements (to the extent supported by the underlying MKS CAN protoco
 which typically means concurrent command dispatch rather than true interpolated
 multi-axis motion).
 """
+import math
+
 from typing import Any, Dict, List, Optional
 
 import asyncio
@@ -741,4 +743,77 @@ class MultiAxisController:
         logger.info("All active moves are complete.")
 
     # Consider adding methods for kinematic chains / robot models if needed (advanced)
-    
+
+    async def move_linearly_to(
+        self,
+        target_positions: Dict[str, float],
+        tool_speed_user: float,
+        wait_for_all: bool = True,
+    ) -> None:
+        """
+        Moves multiple axes to a target position in a coordinated straight line.
+
+        This method implements linear interpolation by calculating the required
+        speed for each axis to ensure the tool moves at a constant velocity
+        along the path from the current point to the target point.
+
+        Args:
+            target_positions: A dictionary mapping axis names to their target
+                              absolute positions in user units.
+            tool_speed_user: The desired speed of the end-effector (tool)
+                             along the path, in user units per second.
+            wait_for_all: If True (default), waits for all axes to complete
+                          their moves before returning.
+
+        Raises:
+            MultiAxisError: If fetching current positions or executing the
+                            move fails for one or more axes.
+            ValueError: If tool_speed_user is not a positive number.
+        """
+        if tool_speed_user <= 0:
+            raise ValueError("Tool speed must be a positive number.")
+
+        logger.info(
+            f"Calculating linear move to {target_positions} "
+            f"with tool speed {tool_speed_user:.2f} units/s."
+        )
+
+        # 1. Get the current positions of the axes involved in the move.
+        # This ensures we calculate the path from the true current state.
+        axes_to_move = list(target_positions.keys())
+        current_positions = await self.get_all_positions_user()
+        
+        deltas = {}
+        for axis_name in axes_to_move:
+            current_pos = current_positions.get(axis_name)
+            if current_pos is None:
+                 raise MultiAxisError(f"Could not get current position for axis '{axis_name}'.")
+            deltas[axis_name] = target_positions[axis_name] - current_pos
+
+        # 2. Calculate the total Euclidean distance of the move.
+        # This is the length of the straight-line path in N-dimensional space.
+        distance = math.sqrt(sum(delta**2 for delta in deltas.values()))
+
+        if distance < 1e-6: # A negligible distance
+            logger.info("Target position is same as current. No move needed.")
+            return
+
+        # 3. Calculate the total duration the move should take.
+        duration_seconds = distance / tool_speed_user
+
+        # 4. Calculate the required speed for each individual axis.
+        # speed = distance / time
+        speeds_user = {
+            axis_name: abs(delta / duration_seconds)
+            for axis_name, delta in deltas.items()
+        }
+        
+        logger.info(f"Calculated move duration: {duration_seconds:.2f}s. "
+                    f"Calculated axis speeds: {speeds_user}")
+
+        # 5. Use the existing multi-axis move method with the calculated speeds.
+        await self.move_all_to_positions_abs_user(
+            positions_user=target_positions,
+            speeds_user=speeds_user,
+            wait_for_all=wait_for_all,
+        )
