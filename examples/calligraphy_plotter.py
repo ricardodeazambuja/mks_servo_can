@@ -47,11 +47,11 @@ DRAWING_SPEED_MMS = 25.0
 TRAVEL_SPEED_MMS = 100.0
 PEN_ROTATION_SPEED_DEGPS = 360.0
 
-X_AXIS_PITCH_MM_PER_REV = 8.0
+X_AXIS_PITCH_MM_PER_REV = 40.0
 X_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 X_AXIS_GEAR_RATIO = 1.0
 
-Y_AXIS_PITCH_MM_PER_REV = 8.0
+Y_AXIS_PITCH_MM_PER_REV = 40.0
 Y_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 Y_AXIS_GEAR_RATIO = 1.0
 
@@ -173,16 +173,16 @@ async def run_plotter_sequence(args: argparse.Namespace):
         multi_controller = MultiAxisController(can_interface_manager=can_if)
         
         all_axes_configs = {
-            "X": {"id": args.motor_ids[0], "name": X_AXIS_NAME, "kin": LinearKinematics(X_AXIS_STEPS_PER_REV, X_AXIS_PITCH_MM_PER_REV, X_AXIS_GEAR_RATIO, "mm")},
-            "Y": {"id": args.motor_ids[1], "name": Y_AXIS_NAME, "kin": LinearKinematics(Y_AXIS_STEPS_PER_REV, Y_AXIS_PITCH_MM_PER_REV, Y_AXIS_GEAR_RATIO, "mm")},
-            "Z": {"id": args.motor_ids[2], "name": PEN_AXIS_NAME, "kin": RotaryKinematics(PEN_AXIS_STEPS_PER_REV, PEN_AXIS_GEAR_RATIO)},
+            "X": {"id": args.motor_ids[0], "name": X_AXIS_NAME, "kin": LinearKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, pitch=X_AXIS_PITCH_MM_PER_REV, gear_ratio=X_AXIS_GEAR_RATIO, units="mm")},
+            "Y": {"id": args.motor_ids[1], "name": Y_AXIS_NAME, "kin": LinearKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, pitch=Y_AXIS_PITCH_MM_PER_REV, gear_ratio=Y_AXIS_GEAR_RATIO, units="mm")},
+            "Z": {"id": args.motor_ids[2], "name": PEN_AXIS_NAME, "kin": RotaryKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, gear_ratio=PEN_AXIS_GEAR_RATIO)},
         }
         
         logger.info(f"Activating specified axes: {args.axes}")
         for axis_key in args.axes:
             config = all_axes_configs[axis_key]
             multi_controller.add_axis(
-                Axis(can_if, config["id"], config["name"], config["kin"])
+                Axis(can_interface_manager=can_if, motor_can_id=config["id"], name=config["name"], kinematics=config["kin"])
             )
 
         if not multi_controller.axes:

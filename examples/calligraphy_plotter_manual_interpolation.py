@@ -53,12 +53,12 @@ TRAVEL_SPEED_MMS = 100.0
 PEN_ROTATION_SPEED_DEGPS = 360.0
 
 # --- X-Axis Kinematics Configuration ---
-X_AXIS_PITCH_MM_PER_REV = 8.0
+X_AXIS_PITCH_MM_PER_REV = 40.0
 X_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 X_AXIS_GEAR_RATIO = 1.0
 
 # --- Y-Axis Kinematics Configuration ---
-Y_AXIS_PITCH_MM_PER_REV = 8.0
+Y_AXIS_PITCH_MM_PER_REV = 40.0
 Y_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 Y_AXIS_GEAR_RATIO = 1.0
 
@@ -201,7 +201,7 @@ async def run_plotter_sequence(args: argparse.Namespace):
         for axis_key in args.axes:
             config = all_axes_configs[axis_key]
             multi_controller.add_axis(
-                Axis(can_if, config["id"], config["name"], config["kin"])
+                Axis(can_interface_manager=can_if, motor_can_id=config["id"], name=config["name"], kinematics=config["kin"])
             )
 
         if not multi_controller.axes:
