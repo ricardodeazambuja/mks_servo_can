@@ -5,19 +5,16 @@ This script demonstrates how to control a 3-axis plotter using the
 mks-servo-can library. It coordinates two linear axes (X, Y) for movement
 and one rotary axis (Pen) for lifting and lowering a pen.
 
-The script is designed to be easily configurable for different physical setups
-by adjusting the parameters in the "Plotter Configuration" section or by using
-command-line arguments.
+By default, this script runs using the simulator. To use real hardware,
+provide the `--no-simulator` flag and other relevant CAN arguments.
 
-To run with the simulator:
-1. Start the simulator with at least 3 motors:
-   `mks-servo-simulator --num-motors 3 --start-can-id 1`
-2. Run this script with default settings:
-   `python calligraphy_plotter.py`
+To run with the simulator (default):
+1. Start the simulator: `mks-servo-simulator --num-motors 3 --start-can-id 1`
+2. Run this script: `python calligraphy_plotter.py`
 
 To run with real hardware:
-1. Configure your CAN adapter, motor CAN IDs, and physical parameters below.
-2. Run the script with the `--no-simulator` flag and other relevant CAN args:
+1. Configure your CAN adapter, motor IDs, etc., in the script or via args.
+2. Run with the --no-simulator flag:
    `python calligraphy_plotter.py --no-simulator --can-channel /dev/ttyACM0`
 """
 
@@ -25,7 +22,6 @@ import asyncio
 import logging
 import math
 import argparse
-from typing import Dict, Optional
 
 from mks_servo_can import (
     CANInterface,
@@ -40,69 +36,57 @@ from mks_servo_can import (
 # ===================================================================
 # ==================== PLOTTER CONFIGURATION ========================
 # ===================================================================
-# These values can be adjusted to match your physical plotter setup.
-# They can also be overridden by command-line arguments.
-
-# --- Motor CAN IDs ---
-# The unique CAN ID for each motor on the bus.
 X_AXIS_CAN_ID = 1
 Y_AXIS_CAN_ID = 2
 PEN_AXIS_CAN_ID = 3
 
-# --- Plotter Physical Limits (in mm) ---
-# Defines the usable drawing area. Moves outside this area will be prevented.
 PLOTTER_MAX_X_MM = 200.0
 PLOTTER_MAX_Y_MM = 150.0
 
-# --- Plotter Speeds ---
-# Speed for movements when the pen is down (drawing).
 DRAWING_SPEED_MMS = 25.0
-# Speed for movements when the pen is up (traveling).
 TRAVEL_SPEED_MMS = 100.0
-# Speed for the pen up/down rotation.
 PEN_ROTATION_SPEED_DEGPS = 360.0
 
-# --- X-Axis Kinematics Configuration ---
-# Pitch: The linear distance (mm) the X-axis travels for one full revolution
-# of its drive mechanism (e.g., lead screw pitch or belt drive pulley circumference).
 X_AXIS_PITCH_MM_PER_REV = 8.0
-# The native encoder resolution of the X-axis motor.
 X_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
-# The gear ratio between the X-axis motor and its drive mechanism.
 X_AXIS_GEAR_RATIO = 1.0
 
-# --- Y-Axis Kinematics Configuration ---
 Y_AXIS_PITCH_MM_PER_REV = 8.0
 Y_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 Y_AXIS_GEAR_RATIO = 1.0
 
-# --- Pen (Z-Axis) Kinematics Configuration ---
-PEN_UP_ANGLE = 0.0      # The angle (degrees) for the "pen up" position.
-PEN_DOWN_ANGLE = 45.0   # The angle (degrees) for the "pen down" position.
+PEN_UP_ANGLE = 0.0
+PEN_DOWN_ANGLE = 45.0
 PEN_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 PEN_AXIS_GEAR_RATIO = 1.0
 # ===================================================================
 
-# --- Axis Names (used internally in the script) ---
 X_AXIS_NAME = "AxisX"
 Y_AXIS_NAME = "AxisY"
 PEN_AXIS_NAME = "PenAxis"
 
-# --- Logging Setup ---
 logger = logging.getLogger("CalligraphyPlotter")
 
 
 # --- Helper Functions for Plotter Control ---
 
 async def pen_up(controller: MultiAxisController, speed_degps: float):
-    """Commands the pen to move to the 'up' position and waits."""
+    """Commands the pen to move to the 'up' position if the pen axis is active."""
+    if PEN_AXIS_NAME not in controller.axes:
+        logger.info("Pen axis not active, skipping pen up.")
+        await asyncio.sleep(0.5)
+        return
     logger.info(f"Moving pen UP to {PEN_UP_ANGLE} degrees.")
     await controller.axes[PEN_AXIS_NAME].move_to_position_abs_user(
         PEN_UP_ANGLE, speed_user=speed_degps, wait=True
     )
 
 async def pen_down(controller: MultiAxisController, speed_degps: float):
-    """Commands the pen to move to the 'down' position and waits."""
+    """Commands the pen to move to the 'down' position if the pen axis is active."""
+    if PEN_AXIS_NAME not in controller.axes:
+        logger.info("Pen axis not active, skipping pen down.")
+        await asyncio.sleep(0.5)
+        return
     logger.info(f"Moving pen DOWN to {PEN_DOWN_ANGLE} degrees.")
     await controller.axes[PEN_AXIS_NAME].move_to_position_abs_user(
         PEN_DOWN_ANGLE, speed_user=speed_degps, wait=True
@@ -112,48 +96,63 @@ async def move_to(
     controller: MultiAxisController,
     target_x: float,
     target_y: float,
-    tool_speed_mms: float
+    speed_mms: float,
+    max_x: float,
+    max_y: float
 ):
-    """A simplified helper function to command a 2D plotter.
+    """Moves the plotter's active X and Y axes to a target coordinate."""
+    if not (0 <= target_x <= max_x and 0 <= target_y <= max_y):
+        logger.warning(
+            f"Move to ({target_x:.1f}, {target_y:.1f}) is outside plotter limits. Skipping move."
+        )
+        return
 
-    This function abstracts the `MultiAxisController.move_linearly_to` method
-    for a plotter with axes named 'AxisX' and 'AxisY'. It constructs the
-    required target position dictionary and calls the controller's linear
-    interpolation method.
-
-    Args:
-        controller: The MultiAxisController instance managing the plotter's
-            X and Y axes.
-        target_x: The absolute target X-coordinate in millimeters.
-        target_y: The absolute target Y-coordinate in millimeters.
-        tool_speed_mms: The desired constant speed of the tool along the
-            straight-line path, in millimeters per second.
-
-    Raises:
-        MultiAxisError: If fetching current positions or executing the move
-            fails for one or more axes.
-        ValueError: If tool_speed_mms is not a positive number.
-    """
-    logger.info(f"Moving to (X:{target_x:.2f}, Y:{target_y:.2f}) at {tool_speed_mms:.1f} mm/s.")
+    logger.info(f"Moving to (X:{target_x:.2f}, Y:{target_y:.2f}) at {speed_mms:.1f} mm/s.")
     
-    target_positions = { "AxisX": target_x, "AxisY": target_y }
+    current_positions = await controller.get_all_positions_user()
     
-    await controller.move_linearly_to(
-        target_positions=target_positions,
-        tool_speed_user=tool_speed_mms,
+    positions_to_move = {}
+    deltas = {}
+    
+    if X_AXIS_NAME in controller.axes:
+        current_x = current_positions.get(X_AXIS_NAME, 0.0)
+        deltas[X_AXIS_NAME] = target_x - current_x
+        positions_to_move[X_AXIS_NAME] = target_x
+
+    if Y_AXIS_NAME in controller.axes:
+        current_y = current_positions.get(Y_AXIS_NAME, 0.0)
+        deltas[Y_AXIS_NAME] = target_y - current_y
+        positions_to_move[Y_AXIS_NAME] = target_y
+
+    if not positions_to_move:
+        logger.info("No active XY axes to move.")
+        return
+
+    distance = math.sqrt(sum(d**2 for d in deltas.values()))
+
+    if distance < 0.01:
+        logger.info("Target is at current position. No move needed.")
+        return
+
+    duration_s = distance / speed_mms
+
+    speeds_for_move = {
+        axis_name: abs(delta / duration_s) if duration_s > 0 else 0
+        for axis_name, delta in deltas.items()
+    }
+    
+    await controller.move_all_to_positions_abs_user(
+        positions_user=positions_to_move,
+        speeds_user=speeds_for_move,
         wait_for_all=True
     )
 
 async def run_plotter_sequence(args: argparse.Namespace):
-    """
-    The main logic sequence for the plotter. Sets up hardware/simulator
-    and performs a drawing sequence.
-    """
+    """Main logic sequence: sets up specified hardware/simulator and draws."""
     can_if = None
     multi_controller = None
 
     try:
-        # --- 1. Setup CANInterface ---
         logger.info("Setting up CAN interface...")
         if args.use_simulator:
             can_if = CANInterface(
@@ -171,66 +170,63 @@ async def run_plotter_sequence(args: argparse.Namespace):
         await can_if.connect()
         logger.info("CAN Interface connected.")
 
-        # --- 2. Setup Axes and MultiAxisController ---
         multi_controller = MultiAxisController(can_interface_manager=can_if)
         
-        kin_x = LinearKinematics(X_AXIS_STEPS_PER_REV, X_AXIS_PITCH_MM_PER_REV, X_AXIS_GEAR_RATIO, "mm")
-        multi_controller.add_axis(Axis(can_if, args.motor_ids[0], X_AXIS_NAME, kin_x))
+        all_axes_configs = {
+            "X": {"id": args.motor_ids[0], "name": X_AXIS_NAME, "kin": LinearKinematics(X_AXIS_STEPS_PER_REV, X_AXIS_PITCH_MM_PER_REV, X_AXIS_GEAR_RATIO, "mm")},
+            "Y": {"id": args.motor_ids[1], "name": Y_AXIS_NAME, "kin": LinearKinematics(Y_AXIS_STEPS_PER_REV, Y_AXIS_PITCH_MM_PER_REV, Y_AXIS_GEAR_RATIO, "mm")},
+            "Z": {"id": args.motor_ids[2], "name": PEN_AXIS_NAME, "kin": RotaryKinematics(PEN_AXIS_STEPS_PER_REV, PEN_AXIS_GEAR_RATIO)},
+        }
         
-        kin_y = LinearKinematics(Y_AXIS_STEPS_PER_REV, Y_AXIS_PITCH_MM_PER_REV, Y_AXIS_GEAR_RATIO, "mm")
-        multi_controller.add_axis(Axis(can_if, args.motor_ids[1], Y_AXIS_NAME, kin_y))
-        
-        kin_pen = RotaryKinematics(PEN_AXIS_STEPS_PER_REV, PEN_AXIS_GEAR_RATIO)
-        multi_controller.add_axis(Axis(can_if, args.motor_ids[2], PEN_AXIS_NAME, kin_pen))
+        logger.info(f"Activating specified axes: {args.axes}")
+        for axis_key in args.axes:
+            config = all_axes_configs[axis_key]
+            multi_controller.add_axis(
+                Axis(can_if, config["id"], config["name"], config["kin"])
+            )
+
+        if not multi_controller.axes:
+            logger.error("No axes were activated. Please specify axes with --axes. Exiting.")
+            return
 
         logger.info(f"Controller initialized with axes: {multi_controller.axis_names}")
 
-        # --- 3. Initialize and Home Axes ---
         await multi_controller.initialize_all_axes(calibrate=False)
         await multi_controller.enable_all_axes()
         
-        # Set all axes to zero at their current position for this example
-        logger.info("Setting current positions as zero for all axes...")
+        logger.info("Setting current positions as zero for all active axes...")
         for axis in multi_controller.axes.values():
             await axis.set_current_position_as_zero()
         
         logger.info("Plotter setup complete and ready to draw.")
 
-        # --- 4. Drawing Logic ---
         await pen_up(multi_controller, PEN_ROTATION_SPEED_DEGPS)
 
-        # Define the corners of a 50mm x 30mm rectangle
         p1 = (10.0, 10.0)
         p2 = (60.0, 10.0)
         p3 = (60.0, 40.0)
         p4 = (10.0, 40.0)
         
-        # Go to the starting point
-        await move_to(multi_controller, p1[0], p1[1], TRAVEL_SPEED_MMS)
-        
-        # Pen down to start drawing
+        await move_to(multi_controller, p1[0], p1[1], TRAVEL_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
         await pen_down(multi_controller, PEN_ROTATION_SPEED_DEGPS)
         
-        # Draw the rectangle
-        await move_to(multi_controller, p2[0], p2[1], DRAWING_SPEED_MMS)
-        await move_to(multi_controller, p3[0], p3[1], DRAWING_SPEED_MMS)
-        await move_to(multi_controller, p4[0], p4[1], DRAWING_SPEED_MMS)
-        await move_to(multi_controller, p1[0], p1[1], DRAWING_SPEED_MMS)
+        await move_to(multi_controller, p2[0], p2[1], DRAWING_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
+        await move_to(multi_controller, p3[0], p3[1], DRAWING_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
+        await move_to(multi_controller, p4[0], p4[1], DRAWING_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
+        await move_to(multi_controller, p1[0], p1[1], DRAWING_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
         
         logger.info("Drawing complete.")
         
-        # Pen up and return to origin
         await pen_up(multi_controller, PEN_ROTATION_SPEED_DEGPS)
-        await move_to(multi_controller, 0, 0, TRAVEL_SPEED_MMS)
+        await move_to(multi_controller, 0, 0, TRAVEL_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
         
     except exceptions.MKSServoError as e:
         logger.error(f"A library-specific error occurred: {e}", exc_info=True)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
     finally:
-        # --- 5. Shutdown ---
         if multi_controller and multi_controller.axes:
-            logger.info("Disabling all axes...")
+            logger.info("Disabling all active axes...")
             try:
                 await multi_controller.disable_all_axes()
             except exceptions.MKSServoError as e:
@@ -245,15 +241,16 @@ def parse_arguments() -> argparse.Namespace:
     """Parses command-line arguments."""
     parser = argparse.ArgumentParser(description="MKS Servo CAN Calligraphy Plotter Example")
     
-    # Simulator vs. Hardware
-    sim_group = parser.add_mutually_exclusive_group()
-    sim_group.add_argument(
-        '--use-simulator', action='store_true', default=None,
-        help='Use the simulator instead of real hardware (default if no hardware args given).'
-    )
-    sim_group.add_argument(
-        '--no-simulator', action='store_false', dest='use_simulator',
-        help='Use real hardware instead of the simulator.'
+    # --- MODIFIED PART ---
+    # Set the default behavior to use the simulator
+    parser.set_defaults(use_simulator=True)
+    # Add a single flag to switch to hardware mode.
+    # `action='store_false'` means if the flag is present, `use_simulator` becomes False.
+    parser.add_argument(
+        '--no-simulator', 
+        dest='use_simulator', 
+        action='store_false',
+        help='Use real hardware instead of the simulator (default is to use simulator).'
     )
     
     # Simulator-specific
@@ -261,33 +258,28 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--simulator-port', type=int, default=6789, help='Simulator TCP port.')
     
     # Hardware-specific
-    parser.add_argument('--can-interface-type', default='canable', help='Type of python-can interface (e.g., canable, socketcan).')
-    parser.add_argument('--can-channel', default='/dev/ttyACM0', help='CAN channel (e.g., /dev/ttyACM0, can0).')
-    parser.add_argument('--can-bitrate', type=int, default=500000, help='CAN bus bitrate.')
+    hw_group = parser.add_argument_group('Hardware Options (if --no-simulator is used)')
+    hw_group.add_argument('--can-interface-type', default='socketcan', help='Type of python-can interface.')
+    hw_group.add_argument('--can-channel', default='can0', help='CAN channel.')
+    hw_group.add_argument('--can-bitrate', type=int, default=500000, help='CAN bus bitrate.')
     
     # Motor IDs
     parser.add_argument(
         '--motor-ids', nargs=3, type=int, default=[X_AXIS_CAN_ID, Y_AXIS_CAN_ID, PEN_AXIS_CAN_ID],
         metavar=('X_ID', 'Y_ID', 'PEN_ID'),
-        help=f'The CAN IDs for the X, Y, and Pen axes respectively. Default: {X_AXIS_CAN_ID} {Y_AXIS_CAN_ID} {PEN_AXIS_CAN_ID}'
+        help=f'The CAN IDs for the X, Y, and Pen axes respectively.'
     )
     
+    # New argument to select active axes
     parser.add_argument(
-        '--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-        help='Set the logging level.'
+        '--axes', nargs='+', type=str.upper, default=['X', 'Y', 'Z'],
+        choices=['X', 'Y', 'Z'],
+        help="Specify which axes to activate. E.g., --axes X Y"
     )
+    
+    parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Set the logging level.')
 
-    args = parser.parse_args()
-    
-    # If --use-simulator is not explicitly set, decide based on whether CAN hardware args were changed
-    if args.use_simulator is None:
-        args.use_simulator = not any([
-            args.can_interface_type != 'canable',
-            args.can_channel != '/dev/ttyACM0',
-            args.can_bitrate != 500000
-        ])
-    
-    return args
+    return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_arguments()
