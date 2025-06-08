@@ -748,58 +748,6 @@ class Axis:
         # self._current_position_steps = self._command_microsteps_to_raw_encoder_steps(target_command_microsteps)
         logger.debug(f"Axis '{self.name}': Optimistically updated _current_position_steps to reflect target after emulated absolute move.")
 
-    async def move_to_position_abs_user(
-        self,
-        target_pos_user: float,
-        speed_user: Optional[float] = None,
-        wait: bool = True,
-    ):
-        """
-        Moves the motor to an absolute target position specified in user-defined units.
-
-        The user-defined position and speed are converted to motor command microsteps
-        and MKS speed parameters using the axis's configured kinematics object and MSTEP settings.
-        This command then uses the MKS "absolute motion by pulses" (0xFE).
-
-        Args:
-            target_pos_user: The absolute target position in user units (e.g., mm, degrees).
-            speed_user: The desired speed in user units per second. If None, the axis's
-                        `default_speed_param` (MKS units) is used.
-            wait: If True (default), waits for the move to complete. If False, initiates
-                  the move and returns.
-
-        Raises:
-            KinematicsError: If conversion between user units and motor steps/speed fails.
-            ParameterError: If converted parameters are out of the motor's valid range.
-            CommunicationError: On CAN communication issues.
-            MotorError: If the motor reports an error.
-            LimitError: If a limit is hit.
-        """
-        # Convert user position to equivalent raw encoder steps first
-        target_raw_encoder_steps = self.kinematics.user_to_steps(target_pos_user)
-        # Then convert raw encoder steps to command microsteps for the 0xFE command
-        target_command_microsteps = self._raw_encoder_steps_to_command_microsteps(target_raw_encoder_steps)
-
-        mks_speed_param = (
-            self.kinematics.user_speed_to_motor_speed(speed_user) # This should return MKS speed param
-            if speed_user is not None
-            else self.default_speed_param
-        )
-        mks_accel_param = self.default_accel_param # Kept for command, not used in current timeout calc
-        
-        logger.info(
-            f"Axis '{self.name}': Moving to user position {target_pos_user} ({getattr(self.kinematics, 'units', 'units')}) "
-            f"-> {target_command_microsteps} command microsteps (SpeedP: {mks_speed_param}, AccelP: {mks_accel_param})."
-        )
-        
-        # This call will now invoke the modified move_to_position_abs_pulses
-        await self.move_to_position_abs_pulses(
-            target_command_microsteps,
-            speed_param=mks_speed_param,
-            accel_param=mks_accel_param,
-            wait=wait
-        )
-
     async def move_relative_pulses(
         self,
         relative_command_microsteps: int,
@@ -993,7 +941,7 @@ class Axis:
         if wait and self._active_move_future:
             await self._active_move_future
 
-    async def move_to_position_abs_user_direct(
+    async def move_to_position_abs_user(
         self,
         target_pos_user: float,
         speed_user: Optional[float] = None,

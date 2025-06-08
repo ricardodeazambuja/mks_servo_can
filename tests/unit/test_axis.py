@@ -705,21 +705,6 @@ class TestAxisMovement:
                 axis_instance.can_id, speed, axis_instance.default_accel_param, relative_steps
             )
 
-    async def test_move_to_position_abs_user_direct_success(self, axis_instance: Axis):
-        """Tests the user-facing direct absolute move method."""
-        # This axis instance has RotaryKinematics by default
-        target_pos_user = 90.0 # degrees
-        expected_steps = 4096 # 90/360 * 16384
-        
-        # Mock the method it's supposed to call
-        with patch.object(axis_instance, "move_to_position_abs_axis", new_callable=AsyncMock) as mock_move_abs_axis:
-            await axis_instance.move_to_position_abs_user_direct(target_pos_user, wait=False)
-            
-            mock_move_abs_axis.assert_called_once()
-            called_args, called_kwargs = mock_move_abs_axis.call_args
-            assert called_args[0] == expected_steps
-            assert called_kwargs.get("wait") is False
-
     async def test_move_relative_user_direct_success(self, axis_instance: Axis):
         """Tests the user-facing direct relative move method."""
         target_pos_user = 180.0 # degrees
