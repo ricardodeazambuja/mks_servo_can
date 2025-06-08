@@ -61,6 +61,9 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
     * [CAN Protocol Details (MKS Specifics)](advanced_topics/can_protocol.md)
     * [Timing and Determinism](advanced_topics/timing_determinism.md)
     * [Troubleshooting Common Issues](advanced_topics/troubleshooting.md)
+    * [Asynchronous Control with asyncio](advanced_topics/asynchronous_control_with_asyncio.md)
+    * [Using mks-servo-can in Synchronous Applications](advanced_topics/asyncio_with_synchronous_code.md)
+    * [Python's Role in Automation: Strengths and Limitations](advanced_topics/python_and_automation.md)
 
 7.  **Development & Contribution**
     * [Setting up Development Environment](development/setup.md)
