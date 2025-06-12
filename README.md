@@ -20,6 +20,12 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
     * Convert between user-defined units (e.g., mm, degrees) and motor encoder/pulse values.
     * Includes `LinearKinematics`, `RotaryKinematics`, and a base for custom kinematics (e.g., `EccentricKinematics`).
     * **Robot Kinematics**: Includes `RobotModelBase` and implementations for common robot types like `TwoLinkArmPlanar`, `CartesianRobot`, and `RRRArm` found in `mks_servo_can.robot_kinematics`. These allow for controlling multi-axis robots in task space (e.g., Cartesian coordinates).
+* **Motor Digitizer System**:
+    * Record motor positions during manual movement (motors disabled).
+    * High-precision playback with timing synchronization and statistical analysis.
+    * Precision testing with automated assessment (EXCELLENT/GOOD/FAIR/POOR).
+    * Surface mapping and height profiling capabilities for complex geometries.
+    * Advanced plotting capabilities including SVG rendering and calligraphy.
 * **Hardware & Simulator Support**: Can connect to real MKS servo motors via various `python-can` compatible interfaces or to the provided `mks-servo-simulator`.
 * **Robust Error Handling**: Custom exceptions for clear diagnostics of communication, motor, and configuration issues.
 
@@ -46,7 +52,14 @@ mks_servo_can/
 ├── mks_servo_can_library/           # The installable Python library (mks_servo_can)
 │   ├── mks_servo_can/               # Source code for the library
 │   │   ├── kinematics/              # Kinematic transformation modules
-│   │   ├── init.py
+│   │   ├── digitizer/               # Motor digitizing and precision testing
+│   │   │   ├── __init__.py
+│   │   │   ├── base_digitizer.py    # Core MotorDigitizer class
+│   │   │   ├── data_structures.py   # DigitizedPoint, DigitizedSequence, etc.
+│   │   │   ├── precision_analyzer.py # Statistical analysis and assessment
+│   │   │   ├── surface_mapping.py   # Enhanced height mapping capabilities
+│   │   │   └── utils.py             # Utility functions (create_linear_axis, etc.)
+│   │   ├── __init__.py
 │   │   ├── can_interface.py         # Handles real CAN and simulator connection
 │   │   ├── low_level_api.py         # Implements MKS CAN commands
 │   │   ├── axis.py                  # High-level single motor control
@@ -70,13 +83,23 @@ mks_servo_can/
 │   ├── hil/
 │   └── determinism/
 ├── examples/                        # Example scripts demonstrating library usage
-│   ├── single_axis_real_hw.py
-│   ├── multi_axis_simulator.py
+│   ├── single_axis_real_hw.py       # Basic single motor control with real hardware
+│   ├── multi_axis_simulator.py      # Multi-motor control with simulator
+│   ├── advanced_axis_control.py     # Advanced motor control techniques
+│   ├── sync_mks_axis.py             # Example of a synchronous wrapper
+│   ├── benchmark_command_latency.py # Performance benchmarking and timing analysis
 │   ├── two_link_planar_arm.py       # Example using TwoLinkArmPlanar robot model
 │   ├── cartesian_3dof_robot.py      # Example using CartesianRobot model
 │   ├── three_link_arm.py            # Example using RRRArm model
-│   ├── benchmark_command_latency.py # (Formerly timing_benchmark.py)
-│   └── sync_mks_axis.py             # Example of a synchronous wrapper
+│   ├── basic_digitizer_demo.py      # MotorDigitizer library integration demo
+│   ├── motor_digitizer.py           # Advanced digitizing with recording/playback
+│   ├── digitizer_precision_test.py  # Comprehensive precision testing suite
+│   ├── height_map_generator.py      # Basic surface height mapping
+│   ├── height_map_generator_v2.py   # Enhanced surface mapping with digitizer
+│   ├── svg_plotter.py               # SVG file plotting capabilities
+│   ├── enhanced_svg_plotter.py      # Advanced SVG plotting with optimization
+│   ├── calligraphy_plotter.py       # Artistic calligraphy and text rendering
+│   └── calligraphy_plotter_manual_interpolation.py # Manual interpolation techniques
 ├── docs/                            # Detailed documentation
 │   └── README.md                    # Overview of documentation structure
 │   └── (other .md files for specific sections)
@@ -103,6 +126,10 @@ mks_servo_can/
 
 **For the simulator CLI:**
 * `click` library: `pip install click`
+
+**For enhanced digitizer features (optional):**
+* `numpy` library: `pip install numpy` (for advanced surface calculations)
+* `matplotlib` library: `pip install matplotlib` (for visualization capabilities)
 
 You can install all core dependencies by running:
 ```bash
@@ -153,9 +180,29 @@ The simulator will listen for connections from the library (default: `localhost:
 ### 2. Using the Library
 
 Refer to the scripts in the `examples/` directory for complete, runnable code:
-* `examples/multi_axis_simulator.py`: Demonstrates controlling multiple motors with the simulator.
+
+**Basic Motor Control:**
 * `examples/single_axis_real_hw.py`: Shows how to connect to and control a physical motor.
-* `examples/timing_benchmark.py` (also known as `benchmark_command_latency.py`): Can be used to measure command latencies with either the simulator or real hardware.
+* `examples/multi_axis_simulator.py`: Demonstrates controlling multiple motors with the simulator.
+* `examples/advanced_axis_control.py`: Advanced motor control techniques and patterns.
+
+**Robot Kinematics:**
+* `examples/two_link_planar_arm.py`: TwoLinkArmPlanar robot model example.
+* `examples/cartesian_3dof_robot.py`: CartesianRobot model example.
+* `examples/three_link_arm.py`: RRRArm robot model example.
+
+**Motor Digitizer System:**
+* `examples/basic_digitizer_demo.py`: Introduction to MotorDigitizer capabilities.
+* `examples/motor_digitizer.py`: Advanced recording, playback, and precision testing.
+* `examples/digitizer_precision_test.py`: Comprehensive system precision analysis.
+
+**Surface Mapping & Plotting:**
+* `examples/height_map_generator_v2.py`: Enhanced surface mapping with digitizer integration.
+* `examples/enhanced_svg_plotter.py`: Advanced SVG plotting with path optimization.
+* `examples/calligraphy_plotter.py`: Artistic text rendering and calligraphy.
+
+**Performance & Analysis:**
+* `examples/benchmark_command_latency.py`: Command latency measurement and analysis.
 
 **Conceptual Snippet (connecting to the simulator):**
 ```python
@@ -196,6 +243,45 @@ async def control_simulated_motor():
 
 if __name__ == "__main__":
     asyncio.run(control_simulated_motor())
+```
+
+### 3. Using the Motor Digitizer System
+
+The MotorDigitizer enables recording manual movements and playing them back with precision testing:
+
+```python
+import asyncio
+from mks_servo_can import CANInterface, MotorDigitizer, create_linear_axis
+
+async def digitizer_example():
+    can_if = CANInterface(use_simulator=True)
+    await can_if.connect()
+    
+    # Create digitizer and add axes
+    digitizer = MotorDigitizer(can_if)
+    x_axis = create_linear_axis(can_if, 1, "X", 40.0)  # 40mm/rev lead screw
+    y_axis = create_linear_axis(can_if, 2, "Y", 40.0)
+    
+    await digitizer.add_axis(x_axis)
+    await digitizer.add_axis(y_axis)
+    await digitizer.initialize_axes()
+    
+    # Record manual movements (motors will be disabled for manual control)
+    await digitizer.start_recording(sample_rate=10.0)
+    
+    # Play back with precision testing
+    stats = await digitizer.playback_sequence(
+        digitizer.current_sequence, 
+        precision_test=True
+    )
+    
+    # Analyze precision
+    from mks_servo_can import PrecisionAnalyzer
+    assessment = PrecisionAnalyzer.assess_precision(stats)
+    print(f"System precision: {assessment}")
+    
+    await digitizer.cleanup()
+    await can_if.disconnect()
 ```
 
 ## Documentation
