@@ -32,6 +32,20 @@ from .robot_kinematics import (
     RRRArm
 )
 
+# Import digitizer classes
+from .digitizer import (
+    MotorDigitizer,
+    DigitizedPoint,
+    DigitizedSequence,
+    PlaybackStats,
+    PrecisionAnalyzer,
+    SurfacePoint,
+    SurfaceMap,
+    EnhancedHeightMapGenerator,
+    create_linear_axis,
+    create_rotary_axis
+)
+
 # Import CRC functions explicitly if they are to be exported
 from .crc import calculate_crc, verify_crc
 
@@ -58,7 +72,7 @@ from .exceptions import (
 # This allows users to do 'from mks_servo_can import CAN_DEFAULT_BITRATE'
 from .constants import *
 
-__version__ = "0.1.1" # Assuming a patch version bump for fixes/additions
+__version__ = "0.2.0"  # Minor version bump for new digitizer feature
 
 __all__ = [
     # Export the 'const' alias for the constants module
@@ -81,6 +95,18 @@ __all__ = [
     "TwoLinkArmPlanar",
     "CartesianRobot",
     "RRRArm",
+
+    # Digitizer classes
+    "MotorDigitizer",
+    "DigitizedPoint",
+    "DigitizedSequence", 
+    "PlaybackStats",
+    "PrecisionAnalyzer",
+    "SurfacePoint",
+    "SurfaceMap", 
+    "EnhancedHeightMapGenerator",
+    "create_linear_axis",
+    "create_rotary_axis",
 
     # Export utility functions from crc module
     "calculate_crc",
