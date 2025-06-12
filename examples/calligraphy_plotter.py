@@ -165,7 +165,7 @@ async def run_plotter_sequence(args: argparse.Namespace):
 
     try:
         logger.info("Setting up CAN interface...")
-        if args.use_simulator:
+        if not args.hardware:
             can_if = CANInterface(
                 use_simulator=True,
                 simulator_host=args.simulator_host,
@@ -252,15 +252,11 @@ def parse_arguments() -> argparse.Namespace:
     """Parses command-line arguments."""
     parser = argparse.ArgumentParser(description="MKS Servo CAN Calligraphy Plotter Example")
     
-    # --- MODIFIED PART ---
-    # Set the default behavior to use the simulator
-    parser.set_defaults(use_simulator=True)
-    # Add a single flag to switch to hardware mode.
-    # `action='store_false'` means if the flag is present, `use_simulator` becomes False.
+    # --- Hardware Mode Selection ---
+    # Default behavior is to use the simulator. Use --hardware flag to enable real hardware.
     parser.add_argument(
-        '--no-simulator', 
-        dest='use_simulator', 
-        action='store_false',
+        '--hardware', 
+        action='store_true',
         help='Use real hardware instead of the simulator (default is to use simulator).'
     )
     
@@ -269,7 +265,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--simulator-port', type=int, default=6789, help='Simulator TCP port.')
     
     # Hardware-specific
-    hw_group = parser.add_argument_group('Hardware Options (if --no-simulator is used)')
+    hw_group = parser.add_argument_group('Hardware Options (if --hardware is used)')
     hw_group.add_argument('--can-interface-type', default='socketcan', help='Type of python-can interface.')
     hw_group.add_argument('--can-channel', default='can0', help='CAN channel.')
     hw_group.add_argument('--can-bitrate', type=int, default=500000, help='CAN bus bitrate.')

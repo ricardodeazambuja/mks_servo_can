@@ -655,7 +655,7 @@ async def main():
     try:
         # Setup CAN interface
         logger.info("Setting up CAN interface...")
-        if args.use_simulator:
+        if not args.hardware:
             can_if = CANInterface(
                 use_simulator=True,
                 simulator_host=args.simulator_host,
@@ -752,8 +752,13 @@ def parse_arguments() -> argparse.Namespace:
     
     # CAN interface
     can_group = parser.add_argument_group('CAN Interface')
-    can_group.add_argument('--use-simulator', action='store_true', default=True, help='Use simulator (default)')
-    can_group.add_argument('--no-simulator', dest='use_simulator', action='store_false', help='Use real hardware')
+    # --- Hardware Mode Selection ---
+    # Default behavior is to use the simulator. Use --hardware flag to enable real hardware.
+    can_group.add_argument(
+        '--hardware', 
+        action='store_true',
+        help='Use real hardware instead of the simulator (default is to use simulator).'
+    )
     can_group.add_argument('--simulator-host', default='localhost', help='Simulator host')
     can_group.add_argument('--simulator-port', type=int, default=6789, help='Simulator port')
     can_group.add_argument('--can-interface-type', default='socketcan', help='CAN interface type')

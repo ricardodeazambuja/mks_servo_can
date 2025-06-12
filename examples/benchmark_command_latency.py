@@ -277,19 +277,12 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="MKS Servo CAN Command Latency Benchmarker."
     )
-    # Argument for using the simulator or real hardware.
-    # '--use-simulator' sets it to True, '--no-simulator' sets it to False.
+    # --- Hardware Mode Selection ---
+    # Default behavior is to use the simulator. Use --hardware flag to enable real hardware.
     parser.add_argument(
-        "--use-simulator",
-        action="store_true", # If flag is present, store True.
-        default=DEFAULT_USE_SIMULATOR, # Default value if flag is not present.
-        help="Use the simulator instead of real hardware.",
-    )
-    parser.add_argument(
-        "--no-simulator",
-        action="store_false", # If flag is present, store False in 'dest'.
-        dest="use_simulator", # The attribute name where the value is stored.
-        help="Use real hardware.",
+        '--hardware', 
+        action='store_true',
+        help='Use real hardware instead of the simulator (default is to use simulator).'
     )
     # Simulator-specific arguments.
     parser.add_argument(
@@ -358,7 +351,7 @@ async def _setup_can_interface(args: argparse.Namespace) -> CANInterface:
     # Asynchronous helper function to set up and connect the CANInterface
     # based on the parsed command-line arguments.
     """Sets up and connects the CAN interface based on arguments."""
-    if args.use_simulator:
+    if not args.hardware:
         # If using the simulator, configure CANInterface for simulator mode.
         can_if = CANInterface(
             use_simulator=True,
