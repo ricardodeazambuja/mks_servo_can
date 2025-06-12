@@ -72,6 +72,9 @@ setup(
     python_requires=">=3.8",
     install_requires=[
         "click>=7.0",  # For the CLI
+        "rich>=10.0.0",  # For the rich console dashboard
+        "fastapi>=0.68.0",  # For the HTTP debug server
+        "uvicorn>=0.15.0",  # For running the FastAPI server
         # If the simulator directly uses the mks-servo-can library as a
         # dependency:
         # "mks-servo-can @ path=../mks_servo_can_library" # For local dev

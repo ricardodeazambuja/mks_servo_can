@@ -13,6 +13,7 @@ from .motor_model import SimulatedMotor
 from .virtual_can_bus import VirtualCANBus
 from .interface.llm_debug_interface import LLMDebugInterface
 from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
+from .interface.rich_dashboard import RichDashboard
 
 # Basic logging setup for the simulator
 logging.basicConfig(
@@ -35,7 +36,7 @@ except ImportError as exc:
         MOTOR_TYPE_SERVO57D = "SERVO57D"
 
 
-async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None):
+async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, dashboard_task=None):
     """Graceful shutdown for the simulator."""
     logger.info(f"Received exit signal {sig.name}...")
     logger.info("Shutting down simulated motors...")
@@ -61,6 +62,16 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
             logger.info("Debug server task cancelled successfully.")
         except Exception as e:
             logger.error(f"Error during debug server shutdown: {e}")
+    
+    if dashboard_task and not dashboard_task.done():
+        logger.info("Cancelling dashboard task...")
+        dashboard_task.cancel()
+        try:
+            await dashboard_task
+        except asyncio.CancelledError:
+            logger.info("Dashboard task cancelled successfully.")
+        except Exception as e:
+            logger.error(f"Error during dashboard shutdown: {e}")
 
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     if tasks:
@@ -160,6 +171,23 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
     help="Port for HTTP debug API server.",
     show_default=True,
 )
+@click.option(
+    "--dashboard",
+    is_flag=True,
+    help="Enable Rich console dashboard for real-time monitoring.",
+)
+@click.option(
+    "--refresh-rate",
+    default=200,
+    type=int,
+    help="Dashboard refresh rate in milliseconds.",
+    show_default=True,
+)
+@click.option(
+    "--no-color",
+    is_flag=True,
+    help="Disable color output for compatibility.",
+)
 def main(
     host: str,
     port: int,
@@ -172,6 +200,9 @@ def main(
     json_output: bool,
     debug_api: bool,
     debug_api_port: int,
+    dashboard: bool,
+    refresh_rate: int,
+    no_color: bool,
 ):
     """
     MKS Servo CAN Simulator.
@@ -207,6 +238,8 @@ def main(
     debug_server: Optional[DebugHTTPServer] = None
     debug_server_task: Optional[asyncio.Task] = None
     json_handler: Optional[JSONOutputHandler] = None
+    dashboard_instance: Optional[RichDashboard] = None
+    dashboard_task: Optional[asyncio.Task] = None
 
     for i in range(num_motors):
         current_can_id = start_can_id + i
@@ -235,7 +268,7 @@ def main(
     server_task = loop.create_task(bus.start_server(host, port))
     
     # Initialize LLM debug interface if needed
-    if json_output or debug_api:
+    if json_output or debug_api or dashboard:
         debug_interface = LLMDebugInterface(bus.simulated_motors, bus)
         
         # Set up debug interface in the bus for command tracking
@@ -264,6 +297,20 @@ def main(
             except ImportError as e:
                 logger.error(f"Failed to start debug API server: {e}")
                 logger.error("Install FastAPI and uvicorn: pip install fastapi uvicorn")
+        
+        if dashboard:
+            try:
+                dashboard_instance = RichDashboard(
+                    virtual_can_bus=bus,
+                    debug_interface=debug_interface,
+                    refresh_rate_ms=refresh_rate,
+                    no_color=no_color
+                )
+                dashboard_task = loop.create_task(dashboard_instance.run())
+                logger.info(f"Rich dashboard started with {refresh_rate}ms refresh rate")
+            except ImportError as e:
+                logger.error(f"Failed to start dashboard: {e}")
+                logger.error("Install Rich library: pip install rich")
 
     # Setup signal handlers for graceful shutdown
     signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
@@ -271,12 +318,14 @@ def main(
         loop.add_signal_handler(
             s,
             lambda s=s: asyncio.create_task(
-                shutdown(s, loop, server_task, bus, debug_server_task, json_handler)
+                shutdown(s, loop, server_task, bus, debug_server_task, json_handler, dashboard_task)
             ),
         )
 
     try:
-        if json_output:
+        if dashboard:
+            logger.info("Simulator running with Rich dashboard. Press Ctrl+C to stop.")
+        elif json_output:
             logger.info("Simulator running in JSON output mode. Press Ctrl+C to stop.")
         elif debug_api:
             logger.info(f"Simulator running with debug API on port {debug_api_port}. Press Ctrl+C to stop.")
@@ -304,6 +353,15 @@ def main(
             if loop.is_running():
                 try:
                     loop.run_until_complete(debug_server_task)
+                except asyncio.CancelledError:
+                    pass  # Expected
+        
+        # Clean up dashboard if running
+        if dashboard_task and not dashboard_task.done():
+            dashboard_task.cancel()
+            if loop.is_running():
+                try:
+                    loop.run_until_complete(dashboard_task)
                 except asyncio.CancelledError:
                     pass  # Expected
 
