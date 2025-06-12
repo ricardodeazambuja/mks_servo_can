@@ -47,7 +47,7 @@ async def rotary_kinematics_example(axis: Axis):
 
     # Now, movement commands use degrees for the output shaft
     try:
-        await axis.enable()
+        await axis.enable_motor()
         # Move the output shaft to 36 degrees
         await axis.move_absolute(target_position=36.0, speed=10.0) # 36 degrees, 10 deg/s
         current_pos_deg = await axis.get_current_position()

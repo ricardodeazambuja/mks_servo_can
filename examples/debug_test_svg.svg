@@ -1,23 +1,113 @@
-<svg width="100" height="80" xmlns="http://www.w3.org/2000/svg">
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="100"
+   height="80"
+   version="1.1"
+   id="svg4"
+   sodipodi:docname="debug_test_svg.svg"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs4" />
+  <sodipodi:namedview
+     id="namedview4"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="10.1375"
+     inkscape:cx="49.963009"
+     inkscape:cy="40"
+     inkscape:window-width="1920"
+     inkscape:window-height="1016"
+     inkscape:window-x="0"
+     inkscape:window-y="27"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg4" />
   <!-- Border rectangle to show plotter bounds -->
-  <rect x="5" y="5" width="90" height="70" fill="none" stroke="black" stroke-width="1"/>
-  
+  <rect
+     x="5"
+     y="5"
+     width="90"
+     height="70"
+     fill="none"
+     stroke="black"
+     stroke-width="1"
+     id="rect1" />
   <!-- Simple square in top-left -->
-  <rect x="10" y="10" width="15" height="15" fill="none" stroke="blue" stroke-width="1"/>
-  
+  <rect
+     x="10"
+     y="10"
+     width="15"
+     height="15"
+     fill="none"
+     stroke="blue"
+     stroke-width="1"
+     id="rect2" />
   <!-- Circle in top-right -->
-  <circle cx="75" cy="17.5" r="7.5" fill="none" stroke="red" stroke-width="1"/>
-  
+  <circle
+     cx="75"
+     cy="17.5"
+     r="7.5"
+     fill="none"
+     stroke="red"
+     stroke-width="1"
+     id="circle2" />
   <!-- Triangle in bottom-left -->
-  <polygon points="10,60 25,60 17.5,45" fill="none" stroke="green" stroke-width="1"/>
-  
+  <polygon
+     points="10,60 25,60 17.5,45"
+     fill="none"
+     stroke="green"
+     stroke-width="1"
+     id="polygon2" />
   <!-- Simple line across the middle -->
-  <line x1="30" y1="40" x2="70" y2="40" stroke="purple" stroke-width="1"/>
-  
+  <line
+     x1="30"
+     y1="40"
+     x2="70"
+     y2="40"
+     stroke="purple"
+     stroke-width="1"
+     id="line2" />
   <!-- Small cross at center for reference -->
-  <line x1="48" y1="35" x2="52" y2="35" stroke="orange" stroke-width="2"/>
-  <line x1="50" y1="33" x2="50" y2="37" stroke="orange" stroke-width="2"/>
-  
+  <line
+     x1="48"
+     y1="35"
+     x2="52"
+     y2="35"
+     stroke="orange"
+     stroke-width="2"
+     id="line3" />
+  <line
+     x1="50"
+     y1="33"
+     x2="50"
+     y2="37"
+     stroke="orange"
+     stroke-width="2"
+     id="line4" />
   <!-- Text label (will be converted to paths) -->
-  <text x="35" y="65" font-family="Arial" font-size="8" fill="black">TEST</text>
+  <text
+     x="35"
+     y="65"
+     font-family="Arial"
+     font-size="8"
+     fill="black"
+     id="text4">TEST</text>
+  <line
+     x1="55.572563"
+     y1="46.259533"
+     x2="88.303871"
+     y2="69.252182"
+     stroke="#800080"
+     stroke-width="1"
+     id="line5"
+     style="fill:#504416;stroke:#504416" />
 </svg>

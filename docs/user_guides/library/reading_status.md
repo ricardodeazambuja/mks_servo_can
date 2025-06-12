@@ -110,9 +110,9 @@ async def check_enabled_state_example(axis: Axis):
 
 
 # --- Example Usage ---
-# await motor1.enable()
+# await motor1.enable_motor()
 # await check_enabled_state_example(motor1)
-# await motor1.disable()
+# await motor1disable_motor()
 # await check_enabled_state_example(motor1)
 ```
 
@@ -141,13 +141,13 @@ async def check_movement_status_example(axis: Axis):
         print(f"{axis.name} has not reached its target (or no target was set).")
 
 # --- Example Usage ---
-# await motor1.enable()
+# await motor1.enable_motor()
 # move_future = motor1.move_relative(180, 30, wait_for_completion=False)
 # await asyncio.sleep(0.5) # Give it time to start moving
 # await check_movement_status_example(motor1)
 # await move_future # Wait for move to complete
 # await check_movement_status_example(motor1)
-# await motor1.disable()
+# await motor1disable_motor()
 ```
 
 These flags are typically updated by `update_status()` or after movement commands that poll status.

@@ -5,7 +5,7 @@ The `Axis` class provides several methods for commanding motor movement, caterin
 ## Prerequisites
 
 * An `Axis` instance that is initialized and connected. See [Basic Motor Control](./basic_control.md).
-* The motor must be **enabled** using `await axis.enable()` before most movement commands will be accepted.
+* The motor must be **enabled** using `await axis.enable_motor()` before most movement commands will be accepted.
 * Understanding of how `Kinematics` are used if you intend to work with physical units (degrees, mm) rather than raw motor steps. See [Using Kinematics](./kinematics.md). For simplicity, some examples here will use raw steps, but using kinematics for unit conversion is highly recommended for most applications.
 
 ## Common Parameters for Movement

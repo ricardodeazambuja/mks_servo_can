@@ -45,7 +45,7 @@ PEN_AXIS_CAN_ID = 3
 
 # --- Plotter Physical Limits (in mm) ---
 PLOTTER_MAX_X_MM = 130.0
-PLOTTER_MAX_Y_MM = 160.0
+PLOTTER_MAX_Y_MM = 70 #160.0
 
 # --- Plotter Speeds ---
 DRAWING_SPEED_MMS = 25.0
@@ -64,7 +64,7 @@ Y_AXIS_GEAR_RATIO = 1.0
 
 # --- Pen (Z-Axis) Kinematics Configuration ---
 PEN_UP_ANGLE = 0.0
-PEN_DOWN_ANGLE = 45.0
+PEN_DOWN_ANGLE = -35.0
 PEN_AXIS_STEPS_PER_REV = const.ENCODER_PULSES_PER_REVOLUTION
 PEN_AXIS_GEAR_RATIO = 1.0
 # ===================================================================

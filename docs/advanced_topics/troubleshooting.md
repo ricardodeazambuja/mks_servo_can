@@ -71,7 +71,7 @@ This guide provides solutions and suggestions for common issues encountered when
 * **Symptom:** The motor responds, but the command is rejected, raising `exceptions.MotorOperationError`.
 * **Possible Causes & Solutions:**
     * **Motor Not Enabled:**
-        * Most movement commands require the motor to be enabled first (`await axis.enable()`).
+        * Most movement commands require the motor to be enabled first (`await axis.enable_motor()`).
     * **Invalid Command Parameters:**
         * Values for position, speed, or other parameters might be outside the motor's acceptable range. Consult the MKS motor manual.
     * **Motor Internal Error State:**
@@ -104,7 +104,7 @@ This guide provides solutions and suggestions for common issues encountered when
     1. Is the `CANInterface` connected successfully?
     2. Is the `Axis` object initialized with the correct `can_id`?
     3. Can you `ping()` the motor successfully?
-    4. Is the motor **enabled** (`await axis.enable()`)? Check `axis.is_enabled()`.
+    4. Is the motor **enabled** (`await axis.enable_motor()`)? Check `axis.is_enabled()`.
     5. Is the motor free of critical errors? Check `axis.error_code` after `await axis.update_status()`.
     6. Are you providing valid speed and position/distance values to movement commands?
     7. If using kinematics, are the kinematics parameters (`steps_per_revolution`, `pitch`, `gear_ratio`) correct for your mechanical setup? An incorrect kinematics setup can result in tiny (imperceptible) or excessively large (hitting limits) target step counts.

@@ -300,12 +300,12 @@ async def use_custom_kinematics():
     print(f"Initialized {motor_axis.name} with kinematics: {motor_axis.kinematics.get_info()}")
 
     try:
-        await motor_axis.enable()
+        await motor_axis.enable_motor()
         # Now, position and speed values are in "widgets"
         await motor_axis.move_absolute(target_position=100.0, speed=10.0) # 100 widgets, 10 widgets/s
         current_pos = await motor_axis.get_current_position()
         print(f"Moved to {current_pos:.2f} {motor_axis.kinematics.units}")
-        await motor_axis.disable()
+        await motor_axis.disable_motor()
     except Exception as e:
         print(f"Error during custom kinematics usage: {e}")
     finally:

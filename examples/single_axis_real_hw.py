@@ -80,7 +80,7 @@ CAN_BITRATE = 500000  # Must match motor's CAN bitrate setting
 # 500,000 bps (500K) is a common default for MKS servos.
 # It's critical that this matches the bitrate configured on the MKS servo motors themselves (often via DIP switches).
 
-MOTOR_CAN_ID = 1  # CAN ID of your motor
+MOTOR_CAN_ID = 3  # CAN ID of your motor
 # Defines the CAN ID of the specific MKS servo motor this script will control.
 # This ID must be unique on the CAN bus and match the ID set on the motor hardware.
 

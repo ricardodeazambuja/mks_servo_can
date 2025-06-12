@@ -101,7 +101,7 @@ async def enable_motor_example(axis: Axis):
             return True
 
         print(f"Enabling {axis.name}...")
-        await axis.enable()
+        await axis.enable_motor()
         if axis.is_enabled():
             print(f"{axis.name} enabled successfully.")
             return True
@@ -139,7 +139,7 @@ async def disable_motor_example(axis: Axis):
             return True
 
         print(f"Disabling {axis.name}...")
-        await axis.disable()
+        await axis.disable_motor()
         if not axis.is_enabled():
             print(f"{axis.name} disabled successfully.")
             return True

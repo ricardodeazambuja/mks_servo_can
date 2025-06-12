@@ -234,7 +234,7 @@ async def robust_motor_operation(axis: Axis): # Assuming axis is an initialized 
 
         if not axis.is_enabled():
             print(f"Enabling {axis.name} first...")
-            await axis.enable()
+            await axis.enable_motor()
         
         await axis.move_relative(distance=90, speed=30)
         print(f"{axis.name} move command sent successfully.")
