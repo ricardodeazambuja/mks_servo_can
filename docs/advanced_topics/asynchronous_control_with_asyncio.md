@@ -41,7 +41,7 @@ The CANInterface class runs a background listener task that continuously watches
 
 ### 2. Non-Blocking Movement Commands
 
-This is the most powerful feature of the asynchronous design. All movement methods in the Axis class, like `move_absolute` or `move_relative`, have a wait parameter.
+This is the most powerful feature of the asynchronous design. All movement methods in the Axis class, like `move_to_position_abs_user()` or `move_relative_user()`, have a wait parameter.
 
 #### a. Blocking Wait (wait=True)
 
@@ -51,7 +51,7 @@ This is the simplest way to use a move command. The coroutine will pause until t
 # This coroutine pauses for the duration of the move,
 # but the asyncio event loop can still run other tasks.
 print("Starting move and waiting for it to complete...")
-await axis.move_relative_user(90, speed_user=180.0, wait=True)
+await axis.move_relative_user(distance_user=90.0, speed_user=180.0, wait=True)
 print("Move complete.")
 ```
 
@@ -62,7 +62,7 @@ For true concurrency, you can initiate a move and immediately continue with othe
 ```python
 print("Starting a non-blocking move...")
 # The command is sent, and the code continues immediately.
-await axis.move_relative_user(360, speed_user=360.0, wait=False)
+await axis.move_relative_user(distance_user=360.0, speed_user=360.0, wait=False)
 print("Move command dispatched. The motor is moving in the background.")
 
 # Perform other operations while the motor is in motion
@@ -73,20 +73,20 @@ for i in range(5):
 print("Finished with other work.")
 ```
 
-### 3. Synchronizing with wait_for_move_completion()
+### 3. Checking Movement Status
 
-After starting a non-blocking move, you might later need to ensure it's finished. The `wait_for_move_completion()` method is designed for this exact purpose.
+After starting a non-blocking move, you might later need to check if it's finished. You can check the motor's status to determine if the movement is complete.
 
 ```python
 # ...following the non-blocking move example above...
 
-if not axis.is_move_complete():
-    print("Move is still in progress. Now waiting for it to finish...")
-    # This will pause until the move is done.
-    await axis.wait_for_move_completion(timeout=10.0)
-    print("Move is now confirmed complete.")
-else:
-    print("Move had already finished.")
+# Check current status to see if move is complete
+status = await axis.get_current_status()
+print(f"Motor status: {status}")
+
+# Or check position to see if we've reached the target
+position = await axis.get_current_position_user()
+print(f"Current position: {position:.2f}°")
 ```
 
 ## Advantages of the Asynchronous Approach
@@ -103,7 +103,7 @@ await multi_controller.move_all_to_positions_abs_user(
     wait_for_all=False  # Returns immediately after dispatching
 )
 print("Commands dispatched to both axes. They are now moving together.")
-# You can later use multi_controller.wait_for_all_moves_to_complete()
+# You can later check multi_controller.are_all_moves_complete()
 ```
 
 **Improved Efficiency**: Instead of wasting CPU cycles in a blocking wait (`time.sleep()`), asyncio allows the CPU to service other parts of your application, leading to better overall performance.
@@ -114,7 +114,7 @@ print("Commands dispatched to both axes. They are now moving together.")
 
 **Use `await asyncio.sleep()` instead of `time.sleep()`**: A `time.sleep()` call will block the entire event loop, defeating the purpose of asyncio. Always use `await asyncio.sleep()` in your coroutines.
 
-**Leverage non-blocking calls**: For any physical movement that takes time, use `wait=False` and structure your code to perform other tasks concurrently. Use `await axis.wait_for_move_completion()` only when you absolutely need to synchronize.
+**Leverage non-blocking calls**: For any physical movement that takes time, use `wait=False` and structure your code to perform other tasks concurrently. Check motor status or position when you need to synchronize.
 
 **Handle exceptions**: asyncio tasks can be cancelled or raise exceptions. Use try...except blocks around await calls to gracefully handle errors like MotorTimeoutError or CommunicationError.
 

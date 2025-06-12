@@ -51,10 +51,10 @@ This guide provides solutions and suggestions for common issues encountered when
 
 ### a. `MotorTimeoutError` (Motor Not Responding)
 
-* **Symptom:** A command to an `Axis` (e.g., `ping()`, `move_absolute()`) raises `exceptions.MotorTimeoutError`.
+* **Symptom:** A command to an `Axis` (e.g., `initialize()`, `move_to_position_abs_user()`) raises `exceptions.MotorTimeoutError`.
 * **Possible Causes & Solutions:**
     * **Incorrect Motor CAN ID:**
-        * Verify the `can_id` used when creating the `Axis` object matches the ID set on the physical motor (DIP switches or configured parameter).
+        * Verify the `motor_can_id` used when creating the `Axis` object matches the ID set on the physical motor (DIP switches or configured parameter).
     * **Motor Powered Off / Disconnected:**
         * Ensure the specific motor is powered and still connected to the CAN bus.
     * **CAN Bus Issues (Post-Connection):**
@@ -102,10 +102,10 @@ This guide provides solutions and suggestions for common issues encountered when
 
 * **Checklist:**
     1. Is the `CANInterface` connected successfully?
-    2. Is the `Axis` object initialized with the correct `can_id`?
-    3. Can you `ping()` the motor successfully?
-    4. Is the motor **enabled** (`await axis.enable_motor()`)? Check `axis.is_enabled()`.
-    5. Is the motor free of critical errors? Check `axis.error_code` after `await axis.update_status()`.
+    2. Is the `Axis` object initialized with the correct `motor_can_id`?
+    3. Can you initialize the motor successfully (`await axis.initialize()`)?
+    4. Is the motor **enabled** (`await axis.enable_motor()`)? Check `await axis.is_enabled()`.
+    5. Is the motor free of critical errors? Check `await axis.get_current_status()` for error information.
     6. Are you providing valid speed and position/distance values to movement commands?
     7. If using kinematics, are the kinematics parameters (`steps_per_revolution`, `pitch`, `gear_ratio`) correct for your mechanical setup? An incorrect kinematics setup can result in tiny (imperceptible) or excessively large (hitting limits) target step counts.
     8. Is the motor mechanically free to move (not jammed)?
@@ -127,7 +127,7 @@ This guide provides solutions and suggestions for common issues encountered when
     * **Motor Parameters:**
         * Check motor's configured max speed, acceleration. If your commanded speed is too high, the motor might cap it.
     * **Relative vs. Absolute Moves:**
-        * Ensure you're using `move_relative` when you intend to move *by* an amount, and `move_absolute` when you intend to move *to* a specific coordinate.
+        * Ensure you're using `move_relative_user()` when you intend to move *by* an amount, and `move_to_position_abs_user()` when you intend to move *to* a specific coordinate.
 
 ### c. Jerky Movement or Stalling
 
@@ -159,9 +159,9 @@ This guide provides solutions and suggestions for common issues encountered when
         # logging.getLogger("mks_servo_can.can_interface").setLevel(logging.DEBUG)
         # logging.getLogger("mks_servo_can.axis").setLevel(logging.DEBUG)
         ```
-* **Simplify:** Start with the simplest possible setup (e.g., one motor, basic commands like `ping` and `enable`).
+* **Simplify:** Start with the simplest possible setup (e.g., one motor, basic commands like `initialize()` and `enable_motor()`).
 * **Use Examples:** Refer to the scripts in the `examples/` directory.
-* **Check `axis.error_code`:** After any failed operation or unexpected behavior, call `await axis.update_status()` and inspect `axis.error_code` along with `axis.get_error_description()`.
+* **Check motor status:** After any failed operation or unexpected behavior, call `await axis.get_current_status()` to inspect the motor's current state and any error information.
 * **Consult MKS Manual:** The official MKS SERVO42D/57D_CAN User Manual is the ultimate reference for motor parameters and error codes.
 
 If you encounter an issue not covered here, consider opening an issue on the project's GitHub repository with detailed information about your setup, code, and the problem observed.

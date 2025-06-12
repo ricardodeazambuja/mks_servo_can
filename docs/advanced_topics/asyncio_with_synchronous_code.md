@@ -37,14 +37,14 @@ from mks_servo_can import CANInterface, Axis
 # All your library logic goes inside an async function
 async def main():
     print("Starting the main async logic...")
-    can_if = CANInterface(use_simulator=True)
+    can_if = CANInterface()
     await can_if.connect()
 
     axis = Axis(can_if, motor_can_id=1)
     await axis.initialize()
 
     await axis.enable_motor()
-    await axis.move_relative_user(90, wait=True)
+    await axis.move_relative_user(distance_user=90.0, speed_user=30.0, wait=True)
     position = await axis.get_current_position_user()
 
     print(f"Final position: {position:.2f} degrees")
@@ -104,7 +104,7 @@ class ThreadSafeMotorController:
 
     async def _setup_motor(self):
         """An async method to set up our hardware."""
-        can_if = CANInterface(use_simulator=True)
+        can_if = CANInterface()
         await can_if.connect()
         self._axis = Axis(can_if, motor_can_id=1)
         await self._axis.initialize()
@@ -167,7 +167,7 @@ if __name__ == "__main__":
 
     # Move the motor
     print("Sync: Moving motor...")
-    controller.run_async(controller._axis.move_relative_user(45, wait=True))
+    controller.run_async(controller._axis.move_relative_user(distance_user=45.0, speed_user=30.0, wait=True))
     print("Sync: Move complete.")
 
     time.sleep(1)

@@ -44,22 +44,20 @@ logger = logging.getLogger(__name__)
 async def main():
     # --- Step 1: Setup CANInterface ---
     # Replace with your actual connection parameters if not using simulator
-    can_if = CANInterface(
-        use_simulator=True, # Set to False for real hardware
-        simulator_host="localhost",
-        simulator_port=6789
-        # For real hardware:
-        # interface_type="canable",
-        # channel="/dev/ttyACM0", # Your CAN adapter channel
-        # bitrate=500000
-    )
+    can_if = CANInterface()
+    # For real hardware, you can specify parameters:
+    # can_if = CANInterface(
+    #     interface_type="canable",
+    #     channel="/dev/ttyACM0", # Your CAN adapter channel
+    #     bitrate=500000
+    # )
 
     try:
         await can_if.connect()
         logger.info("CAN Interface connected.")
 
         # --- Step 2: Setup MultiAxisController ---
-        multi_controller = MultiAxisController(can_interface_manager=can_if)
+        multi_controller = MultiAxisController(can_if)
         logger.info("MultiAxisController initialized.")
 
         # --- Step 3: Add Axes to the Controller ---
@@ -75,8 +73,8 @@ async def main():
 
         for config in axis_configs:
             multi_controller.add_axis(
-                axis=Axis(
-                    can_interface_manager=can_if, # Pass the CANInterface object
+                Axis(
+                    can_if, # Pass the CANInterface object
                     motor_can_id=config["can_id"],
                     name=config["name"],
                     kinematics=config["kinematics"]
@@ -93,8 +91,7 @@ async def main():
         # Check if all axes are enabled
         all_enabled_check = True
         for axis_name, axis_obj in multi_controller.axes.items():
-            if not axis_obj.is_enabled(): # is_enabled() is synchronous, relies on cached state
-                # For a fresh check: await axis_obj.read_en_status()
+            if not await axis_obj.is_enabled(): # is_enabled() is async
                 logger.warning(f"Axis {axis_name} did not confirm enabled status.")
                 all_enabled_check = False
         if not all_enabled_check:

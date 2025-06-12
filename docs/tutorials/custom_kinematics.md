@@ -290,20 +290,21 @@ import asyncio
 
 # Assuming MyCustomKinematics is defined as above
 async def use_custom_kinematics():
-    can_if = CANInterface(use_simulator=True)
+    can_if = CANInterface()
     await can_if.connect()
 
     # Initialize your custom kinematics with its specific parameters
     my_kin_model = MyCustomKinematics(steps_per_motor_revolution=16384, param1=10.0, param2=5.0, units_str="widgets")
     
-    motor_axis = Axis(can_if, can_id=1, name="CustomAxis", kinematics=my_kin_model)
+    motor_axis = Axis(can_if, motor_can_id=1, name="CustomAxis", kinematics=my_kin_model)
     print(f"Initialized {motor_axis.name} with kinematics: {motor_axis.kinematics.get_info()}")
 
     try:
+        await motor_axis.initialize()
         await motor_axis.enable_motor()
         # Now, position and speed values are in "widgets"
-        await motor_axis.move_absolute(target_position=100.0, speed=10.0) # 100 widgets, 10 widgets/s
-        current_pos = await motor_axis.get_current_position()
+        await motor_axis.move_to_position_abs_user(target_position_user=100.0, speed_user=10.0) # 100 widgets, 10 widgets/s
+        current_pos = await motor_axis.get_current_position_user()
         print(f"Moved to {current_pos:.2f} {motor_axis.kinematics.units}")
         await motor_axis.disable_motor()
     except Exception as e:
