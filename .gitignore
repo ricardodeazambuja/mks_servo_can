@@ -1,2 +1,38 @@
 *.pyc
 *.egg*
+
+# Documentation files that shouldn't be committed
+docs/MKS SERVO42&57D_CAN User Manual V1.0.6.pdf
+docs/*.pdf
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.coverage
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.env
+
+# Temporary files
+*.tmp
+*.log
+/tmp/
