@@ -3,12 +3,16 @@ Virtual CAN Bus for the MKS Servo Simulator.
 Handles communication between the mks-servo-can library (in sim mode)
 and multiple SimulatedMotor instances.
 """
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
 
 import asyncio
 import logging
+import time
 
 from .motor_model import SimulatedMotor
+
+if TYPE_CHECKING:
+    from .interface.llm_debug_interface import LLMDebugInterface
 
 # CRC and constants might be needed if we re-validate here, but motor_model handles it.
 try:
@@ -48,6 +52,10 @@ class VirtualCANBus:
         self.global_latency_ms: float = (
             0  # Milliseconds for command transmission and response
         )
+        self.debug_interface: Optional['LLMDebugInterface'] = None
+        
+        # Alias for compatibility with LLMDebugInterface
+        self.motors = self.simulated_motors
 
     def add_motor(self, motor: SimulatedMotor):
         """
@@ -218,6 +226,9 @@ class VirtualCANBus:
         for motor in motors_to_process:
             # The motor's process_command should return (response_can_id, response_payload_with_crc)
             # response_payload_with_crc includes the echoed command code, data, and CRC.
+            
+            # Record command start time for debug interface
+            command_start_time = time.time()
 
             # Define a callback for the motor to send completion messages asynchronously
             async def send_async_completion_to_client(
@@ -248,6 +259,36 @@ class VirtualCANBus:
                 command_data_bytes,
                 send_async_completion_to_client,
             )
+            
+            # Record command execution for debug interface
+            if self.debug_interface:
+                command_end_time = time.time()
+                response_time = command_end_time - command_start_time
+                success = response_tuple is not None
+                
+                # Get command name from manual or use hex code
+                command_name = f"0x{command_code:02X}"
+                if hasattr(self.debug_interface, 'MANUAL_COMMANDS'):
+                    manual_cmds = getattr(self.debug_interface, 'MANUAL_COMMANDS', {})
+                    if f"0x{command_code:02X}" in manual_cmds:
+                        command_name = manual_cmds[f"0x{command_code:02X}"].get('name', command_name)
+                
+                # Create parameters dict from command data
+                parameters = {
+                    'command_data_hex': command_data_bytes.hex() if command_data_bytes else '',
+                    'data_length': len(command_data_bytes),
+                    'target_can_id': target_can_id
+                }
+                
+                self.debug_interface.record_command(
+                    motor_id=motor.can_id,
+                    command_code=command_code,
+                    command_name=command_name,
+                    parameters=parameters,
+                    response_time=response_time,
+                    success=success,
+                    error_message=None if success else "No response generated"
+                )
 
             if response_tuple:
                 response_can_id, response_payload_with_crc = response_tuple

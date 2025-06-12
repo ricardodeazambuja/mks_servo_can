@@ -6,9 +6,13 @@ import asyncio
 import click  # Ensure 'click' is in your requirements for the simulator
 import logging
 import signal
+import json
+from typing import Optional
 
 from .motor_model import SimulatedMotor
 from .virtual_can_bus import VirtualCANBus
+from .interface.llm_debug_interface import LLMDebugInterface
+from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
 
 # Basic logging setup for the simulator
 logging.basicConfig(
@@ -31,7 +35,7 @@ except ImportError as exc:
         MOTOR_TYPE_SERVO57D = "SERVO57D"
 
 
-async def shutdown(sig, loop, server_task, bus):
+async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None):
     """Graceful shutdown for the simulator."""
     logger.info(f"Received exit signal {sig.name}...")
     logger.info("Shutting down simulated motors...")
@@ -47,6 +51,16 @@ async def shutdown(sig, loop, server_task, bus):
             logger.info("Server task cancelled successfully.")
         except Exception as e:
             logger.error(f"Error during server task shutdown: {e}")
+    
+    if debug_server_task and not debug_server_task.done():
+        logger.info("Cancelling debug server task...")
+        debug_server_task.cancel()
+        try:
+            await debug_server_task
+        except asyncio.CancelledError:
+            logger.info("Debug server task cancelled successfully.")
+        except Exception as e:
+            logger.error(f"Error during debug server shutdown: {e}")
 
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     if tasks:
@@ -129,6 +143,23 @@ async def shutdown(sig, loop, server_task, bus):
     help="Encoder steps per revolution for simulated motors.",
     show_default=True,
 )
+@click.option(
+    "--json-output",
+    is_flag=True,
+    help="Enable JSON output mode for LLM consumption.",
+)
+@click.option(
+    "--debug-api",
+    is_flag=True,
+    help="Enable HTTP debug API server for programmatic access.",
+)
+@click.option(
+    "--debug-api-port",
+    default=8765,
+    type=int,
+    help="Port for HTTP debug API server.",
+    show_default=True,
+)
 def main(
     host: str,
     port: int,
@@ -138,6 +169,9 @@ def main(
     latency_ms: float,
     log_level: str,
     steps_per_rev: int,
+    json_output: bool,
+    debug_api: bool,
+    debug_api_port: int,
 ):
     """
     MKS Servo CAN Simulator.
@@ -167,6 +201,12 @@ def main(
     loop = asyncio.get_event_loop()
     bus = VirtualCANBus(loop)
     bus.set_latency(latency_ms)  # Set global latency for the bus
+    
+    # Initialize debug interface and optional components
+    debug_interface: Optional[LLMDebugInterface] = None
+    debug_server: Optional[DebugHTTPServer] = None
+    debug_server_task: Optional[asyncio.Task] = None
+    json_handler: Optional[JSONOutputHandler] = None
 
     for i in range(num_motors):
         current_can_id = start_can_id + i
@@ -193,6 +233,37 @@ def main(
         bus.add_motor(motor)
 
     server_task = loop.create_task(bus.start_server(host, port))
+    
+    # Initialize LLM debug interface if needed
+    if json_output or debug_api:
+        debug_interface = LLMDebugInterface(bus.simulated_motors, bus)
+        
+        # Set up debug interface in the bus for command tracking
+        bus.debug_interface = debug_interface
+        
+        if json_output:
+            json_handler = JSONOutputHandler(debug_interface)
+            config = {
+                "host": host,
+                "port": port,
+                "num_motors": num_motors,
+                "motor_type": motor_type,
+                "latency_ms": latency_ms
+            }
+            json_handler.emit_startup(config)
+            
+            # Start periodic updates
+            loop.create_task(json_handler.run_periodic_updates())
+        
+        if debug_api:
+            try:
+                debug_server = DebugHTTPServer(debug_interface, debug_api_port, "127.0.0.1")
+                debug_server_task = loop.create_task(debug_server.start_server())
+                logger.info(f"Debug API server starting on http://127.0.0.1:{debug_api_port}")
+                logger.info(f"API documentation available at http://127.0.0.1:{debug_api_port}/docs")
+            except ImportError as e:
+                logger.error(f"Failed to start debug API server: {e}")
+                logger.error("Install FastAPI and uvicorn: pip install fastapi uvicorn")
 
     # Setup signal handlers for graceful shutdown
     signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
@@ -200,12 +271,17 @@ def main(
         loop.add_signal_handler(
             s,
             lambda s=s: asyncio.create_task(
-                shutdown(s, loop, server_task, bus)
+                shutdown(s, loop, server_task, bus, debug_server_task, json_handler)
             ),
         )
 
     try:
-        logger.info("Simulator server running. Press Ctrl+C to stop.")
+        if json_output:
+            logger.info("Simulator running in JSON output mode. Press Ctrl+C to stop.")
+        elif debug_api:
+            logger.info(f"Simulator running with debug API on port {debug_api_port}. Press Ctrl+C to stop.")
+        else:
+            logger.info("Simulator server running. Press Ctrl+C to stop.")
         loop.run_forever()  # Will be stopped by shutdown()
     except KeyboardInterrupt:  # Should be caught by signal handler mostly
         logger.info("KeyboardInterrupt received directly by CLI.")
@@ -219,6 +295,15 @@ def main(
             if loop.is_running():
                 try:
                     loop.run_until_complete(server_task)
+                except asyncio.CancelledError:
+                    pass  # Expected
+        
+        # Clean up debug server if running
+        if debug_server_task and not debug_server_task.done():
+            debug_server_task.cancel()
+            if loop.is_running():
+                try:
+                    loop.run_until_complete(debug_server_task)
                 except asyncio.CancelledError:
                     pass  # Expected
 

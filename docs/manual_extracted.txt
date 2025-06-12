@@ -1,0 +1,3995 @@
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+MKS SERVO42D/57D_CAN V1.0.5
+USER MANUAL
+MKS SERVO42D/57D_CAN Manual Release
+manual
+V1.0.0
+
+discription
+First release
+1.Added SR_OPEN, SR_CLOSE control mode.
+
+firmware
+
+date
+
+V1.0.0
+
+Mar-2023
+
+V1.0.1
+
+Apr-2023
+
+V1.0.2
+
+May-2023
+
+V1.0.3
+
+Jul-2023
+
+2.It can set any working current.
+V1.0.1
+
+3.Redefined speed and acceleration for serial Mode.
+4. Add the "92" command , It can set the current position
+to 0 point.
+5. Add the "8D" command, It can set the group address.
+
+V1.0.2
+
+V1.0.3
+
+1.Slave does not answer if broadcast address or group
+address is used.
+2.OUT_1 port output stall indication.
+1. Add the "9A" command, It can set the parameter of
+0_Mode.
+2. Add the "8F" command, It can locked the key.
+3. Add the "34" command, It can read the IO Ports status.
+4. the number of slave addresses can be set by menu is
+change to 16.
+5. add left and right endstop limit function.
+1. Added menu or command (9BH) to set holding current
+percentage function.
+
+V1.0.4
+
+2. Added absolute motion by pulses(FEH).
+V1.0.4
+3. Modify the 8CH command and add the option of active.
+4. Add emergency stop command(F7H).
+
+Sep-2023
+
+5. Add limit port remap command (9EH).
+1. Support no limit switch for “go home” function.
+2. Added menu options: “Hm_Mode” and “Hm_Ma”.
+V1.0.5
+
+3. Add the "94H" command.
+4. Fix the bug of command “F4H” and “F5H”.
+
+V1.0.5
+
+May-2024
+
+V1.0.6
+
+Sep-2024
+
+5. The command”F5H”supports real-time data update.
+6. Add the restart motor command(41H).
+
+V1.0.6
+
+1. Add the "35H" command to read RAW data of encoder.
+2. Add the “9DH”command , En triggers single-turn zero
+return and position error protection function.
+3. Read system parameter function, see section 5.9.
+4. It can release the protection status by En.
+5. Add the “36H”command to write the IO port.
+1
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+Part1.
+
+Feature
+
+1.1 Interface
+1. SERVO42D_CAN Interface
+
+Note: EVCC/EGND is powered by SERVO42D 5V(20mA)
+
+2. SERVO57D_CAN Interface
+
+2
+
+User Manual
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+1.2 Key Operation
+Key
+Next
+Enter
+Menu
+
+Function
+move down
+Confirm
+Enter/exit parameter setting menu
+
+3. How to View parameter
+Press the “Menu” key to Enter the Menu
+press the “Next” key to move to the sub-option
+press the “Enter”key, then it show the value.
+4. How to setting Parameter：
+Press the “Menu” key to Enter the Menu
+press the “Next” key to move to sub-option
+press the “Enter”key, it show the value.
+press the “Next” key to move to the value
+press the “Enter”key to set the value.
+
+1.3 Parameter description
+1. 0.0° - the angle of the motor shaft.(unit degree).
+（Note : It calculated based on the read encoder value, dynamically
+displayed）
+2. 0.00err - the err of the motor shaft angle.
+3. 0clk - the pulses have been received.
+
+1.4 Work mode
+
+OPEN
+CLOSE
+vFOC
+
+Work Mode
+CR_OPEN
+pulse interface
+serial interface SR_OPEN
+CR_CLOSE
+pulse interface
+serial interface SR_CLSOE
+CR_vFOC
+pulse interface
+serial interface SR_vFOC
+
+MAX RPM
+
+Work Current
+
+400RPM
+
+Fix，the work current is Ma
+
+1500RPM
+
+Fix，the work current is Ma
+
+3000RPM
+
+self-adaption, the Max current
+is Ma
+
+Note1: The default work mode is CR_vFOC.
+Note2: It can work without encoder in“OPEN” work mode.
+3
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+Part2.
+
+User Manual
+
+Wire
+
+2.1 Motor wire
+Note: The motor internal resistance should be less than 10 ohms.
+1. SERVO42D_CAN motor wire
+
+2. SERVO57D_CAN motor wire
+
+4
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2.2 Pulse interface wire
+
+Note: if the (STP/DIR/EN)signal high level is 3.3V,the COM must be 3.3V
+if the (STP/DIR/EN)signal high level is 5.0V,the COM must be 5.0V
+…
+and so on.
+
+5
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2.3 CAN wire
+Note: Tip: In order to reduce bus interference, the host-gnd and the
+motor-gnd must connected togeter, and CAN signals are transmitted
+using shielded twisted pairs.
+1. SERVO42D_CAN Single-slave
+
+Note: Single slave communication does not need 120Ω Terminal.
+
+2. SERVO57D_CAN Single-slave
+
+Note: Single slave communication does not need 120Ω Terminal.
+
+3. Multiple-slave
+
+6
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2.4 End stop wire
+1. SERVO42D_CAN end stop wire
+
+Note: EVCC/EGND is powered by SERVO42D 5V(20mA)
+
+2. SERVO57D_CAN end stop wire
+
+SW1
+PIN
+
+ON
+
+OFF
+
+3
+
+EVCC/EGND is powered
+by SERVO57D 5V(20mA)
+
+EVCC/EGND is powered by externally
+power.(3.3V-24V)
+
+CAN 120Ω Terminal
+
+NULL
+
+2
+1
+
+Note: The mechanical switch only needs to be connected the "EGND,
+IN_1", and the SW1 pin2 must be in the ON state.
+
+7
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2.5 IO Port Description
+PORT
+
+Function
+
+57D
+
+42D
+
+IN_1
+
+home or left-limit
+
+√
+
+√
+
+IN_2
+
+right-limit
+
+√
+
+Х
+
+OUT_1
+OUT_2
+
+stall indication: 0-protected; 1-unprotected
+reserved
+
+√
+√
+
+Х
+Х
+
+Note: After enabling the limit remapping function, IN_1 maps to En,
+IN_2 maps to Dir.
+
+2.6 EndStop-limit Description
+1. The EndStop-limit function needs to be turned on:
+(Menu -> EndLimit or serial command "90")
+2. When first time to using the limit function or changing the limit
+parameters, it is necessary to go home;
+(Menu -> GoHome or serial command "91")
+3. After the left-endstop is triggered, the motor will no longer run
+to the left;
+4. After the right-endstop is triggered, the motor will no longer run
+to the right; (only for 57D)
+5. Limit remapping function can be turned on (serial mode only)
+Left limit -> En port
+Right limit -> Dir port
+The Com port must be connected to the corresponding high level
+
+8
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+Part3.
+
+User Manual
+
+Menu description
+
+1. CAL : Calibrate the motor.
+2. Mode : Work mode selection.
+CR_OPEN ： pulse interface Open mode, the motor run without encoder
+CR_CLOSE ：pulse interface Close mode, the motor run with encoder.
+CR_vFOC ： pulse interface FOC mode, the motor run with encoder.
+SR_OPEN ： serial interface Open mode, the motor run without encoder
+SR_CLOSE ：serial interface Close mode, the motor run with encoder.
+SR_vFOC ： serial interface FOC mode, the motor run with encoder.
+(Default: CR_vFOC)
+Mode
+OPEN
+CLOSE
+vFOC
+
+pulse interface
+serial interface
+pulse interface
+serial interface
+pulse interface
+serial interface
+
+MAX RPM
+CR_OPEN
+SR_OPEN
+CR_CLOSE
+SR_CLSOE
+CR_vFOC
+SR_vFOC
+
+Work Current
+
+400RPM
+
+Fix，the work current is Ma
+
+1500RPM
+
+Fix，the work current is Ma
+
+3000RPM
+
+self-adaption, the Max current is
+Ma
+
+Note: CR_CLOSE is better than CR_vFOC for 3D printing.
+3. Ma : Set the working current.
+SERVO42D：0，200，400...，3000(mA) (default 1600mA)
+SERVO57D：0，400，800...，5200(mA) (default 3200mA)
+SERVO28D：0，200，400...，3000(mA) (default 600mA)
+SERVO35D：0，200，400...，3000(mA) (default 800mA)
+Other Current such as 123mA need to be set by serial command .It
+will be added to the last options.
+4. HoldMa ：Set holding current percentage.
+10%，20%，......，90%
+(Default: 50%, the holding current at half the working current)
+Note: Only for OPEN mode and CLOSE mode, vFOC mode is invalid.
+5. MStep : Set subdivisions.
+Supports subdivision from 1 to 256.
+(Default: 16)
+subdivisions 1,2,4,8,16,32,64,128, and 256 can be set by Menu.
+Other subdivisions such as 67 subdivisions need to be set by
+serial command.
+
+9
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+6. En : Set the effective level of EN pin.
+H ：High level is valid.
+L ：Low level is effective.
+Hold ：the driver board is always enabled.
+(Default: L)
+7. Dir : Set the positive direction of motor rotation.
+CW ：Clockwise rotation is positive
+CCW ：Counterclockwise rotation is positive
+(Default: CW)
+Note: onldy for pulse interface,the direction of serial interface is set
+by command.
+
+8. AutoSDD ：Set auto turn off the OLED screen.
+Disable ：disable auto turn off the OLED
+Enable ：enable auto turn off the OLED
+(Default: Disable)
+If set to Enable, the screen will automatically turn off after
+about 15 seconds, and any button can wake up the screen again.
+9. Protect : Set the motor shaft locked-rotor protection function.
+Disable: disable protection
+Enable:
+enable protection
+(Default: Disable)
+After this option is enabled, the protection will be triggered
+when it is detected to be locked-rotor, and the motor will be
+release.
+Note: After the stall protection is activated, there are three
+ways to release it:
+1. Press the Enter button to release the stall protection;
+2. Use the serial port command (3D) to release the stall
+protection;
+3. In the pulse interface mode, the En signal is invalid (not
+locking the shaft), and the stall protection can be released.
+10. MPlyer : Set internal 256 subdivision.
+(Default: Enable)
+Note: After this option is Enabled, it automatically enable
+internal 256 subdivision, it can reduce the vibration and noise
+when the motor at low speed.
+11. CanRate ：Set the bit rate of CAN interface.
+125K，250K，500K,1M。
+(Default: 500K)
+10
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+12. CanID: Set the the slave address of CAN interface.
+01
+…
+09
+10
+(Default: 01)
+Note: The addresses greater than 10 need to be set by serial
+command. After it is set, it will be added to this option.
+13. CanRSP : Choose whether the slave respond in speed/positon mode.
+Disable: disable respond
+Enable:
+enable respond
+(Default: Enable)
+Note: If disable respond, It can query the running status of the
+motor by serial command “F1”.
+14. 0_Mode : The motor will go back to zero when power on.
+Disable ：do not go back to zero.
+DirMode ：go back to zero with direction of CW or CCW (the
+direction is set in O_Dir menu).
+NearMode ：go back to zero with minimum angle.
+(Default: Disable)
+15. Set 0 : Set the zero point for go back when power on.
+(O_Mode must not be Disable)
+16. 0_Speed : Set the speed of go back to zero point.
+0 ： slowest.
+...
+4 ： fastest.
+17. 0_Dir : Set the direction of go back to zero point.
+CW ：Clockwise.
+CCW ：Counterclockwise.
+(Default: CW)
+18. Hm_Trig ：Set the effective level of the end stop.
+Low ：Low level is effective
+High ：High level is valid
+(Default: Low)
+
+11
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+19. Hm_Dir ：Set the direction of go home。
+CW ：Clockwise rotation is positive
+CCW ：Counterclockwise rotation is positive
+(Default: CW)
+20. Hm_Speed ：Set the speed (RPM) of go home。
+30
+60
+90
+120
+150
+180
+Other speed such as 600(RPM) need to be set by serial command .
+It will be added to the last options.
+21. Hm_Mode ：Set the method of go home.
+Limited ： used Limit switch for go home(default)
+noLimit ： no Limit switch for go home
+When “noLimit” for go home, the motor will runs with a fixed
+torque (Hm_Ma setting) until it stops when it encounters an obstacle,
+and then runs in reverse for a certain distance (94H command setting)
+and then stops. The stopping point is the zero point.
+22. Hm_Ma ：Set the current of “noLimit”go home.
+SERVO42D：0，200，400...，3000(mA) (default 800mA)
+SERVO57D：0，400，800...，5200(mA) (default 400mA)
+SERVO28D：0，200，400...，3000(mA) (default 200mA)
+SERVO35D：0，200，400...，3000(mA) (default 200mA)
+Note: The “Hm_Ma” is only valid during “noLimit”go home
+operation. It should be set to a smaller current as much as possible
+to avoid damaging the motor.
+23. EndLimit : Set the endstop-limit function.
+Disable: disable endstop-limit
+Enable:
+enable endstop-limit
+(Default: Disable)
+Note1:When first time to using the “EndLimit” function or
+changing the limit parameters, it is necessary to go home;
+(Menu -> GoHome or serial command "91")
+Note 2: When EndLimit=Enable, when the motor goHome touches the
+left limit switch, the motor will unlocked the shaft.
+If you want to locked the axis after goHome, you should set
+EndLimit=Disable.
+
+12
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+24. GoHome：Go home
+Note1: It need an “end stop”. The motor will keep running until
+it hits the limit switch.
+Note2: If the limit switch is already closed, the motor will
+rotate in the opposite direction to homeDir until the limit
+switch is opened, and then go home.
+25. Restore : Reload the default parameters.
+After restored the default parameters, it needs to Calibrate the
+motor.
+Note: Press the "Next" key first, then power on, it can quickly
+restore the default parameters.
+26. About :
+
+Show version parameters.
+
+27. Exit :Exit the parameter setting menu.
+
+13
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+Part4.
+
+User Manual
+
+CAN data format
+
+The CAN uses standard frames.
+Downlink package(PC → SERVO42D/57D)
+
+CAN ID
+ID
+
+…
+
+DLC
+DLC(n)
+
+byte1
+code
+
+byte2…byte(n-1)
+data
+
+Byte(n)(n≤8)
+Check(CRC)
+
+Uplink frame（PC ← SERVO42D/57D）
+
+CAN ID
+ID
+
+…
+
+DLC
+DLC(n)
+
+byte1
+(code)
+
+byte2…byte(n-1)
+data
+
+Byte(n) (n≤8)
+Check (CRC)
+
+1. The CAN ID range is 00~2047.（default is 01）.
+00 is the broadcast address;
+01~10 can be set in the CanID option of the display menu;
+greater than 10 need to be set by serial commands.
+2. The function code (code) executes the corresponding command.
+for example, 0x80 executes the calibration command.
+3. The Check code is CHECKSUM 8bit
+CRC = (ID + byte1 + … + byte(n) ) & 0xFF
+For example: command“01 30 CRC”
+CRC = (0x01 + 0x30) & 0xFF = 0x31 & 0xFF = 0x31
+Note: Slave does not answer if broadcast address is used.
+
+14
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+Part5.
+Note:
+
+User Manual
+
+CAN command description
+Please set the CAN ID first.(default:01)
+The default CAN ID for the following chapters is 01.
+
+5.1 Read status parameter command
+1. command1 : 01 30 CRC
+read the encoder value(carry).
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+CAN ID
+01
+
+DLC
+2
+
+…
+
+byte1
+30
+
+Uplink frame（PC ← SERVO42D/57D）
+byte1
+byte2…byte5
+byte6
+byte7
+code
+carry
+value
+8
+30
+carry(int32_t) value(uint16_t)
+
+DLC
+…
+
+byte2
+CRC(31)
+
+byte8
+Check
+CRC
+
+carry: the carry vaule of the encoder.
+value: the current vaule of the encoder.(range 0~0x3FFF)
+When value is greater than 0x3FFF, carry +=1.
+When Value is less than 0, carry -=1.
+For example:
+If the current carry|value is 0x3FF0, After one turn CCW,the carry|value
+(+0x4000) is 0x13FF0.
+If the current carry|value is 0x3FF0, After one turn CW,the carry|value (0x4000)is 0xFFFFFFFF3FF0.
+
+The Cangaroo example is as follows:
+
+15
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2. command2 : 01 31 CRC
+read the encoder value(addition).
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+…
+
+CAN ID
+…
+
+01
+
+DLC
+2
+
+byte1
+31
+
+byte2
+CRC(32)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2…byte7
+code
+value
+8
+31
+value(int48_t)
+
+byte8
+Check
+CRC
+
+After one turn clockwise,the value += 0x4000;
+After one turn CCW,the value -= 0x4000;
+
+For example:
+If the current value is 0x3FF0, After one turn CCW,the value(+0x4000) is
+0x7FF0.
+If the current value is 0x3FF0, After one turn CW,the value(-0x4000) is
+
+0xFFFFFFFFFFF0.
+3. Command3 : 01 32 CRC
+Read the real-time speed of the motor.(RPM)
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+32
+
+byte2
+CRC(33)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2…byte3
+…
+code
+data
+4
+32
+speed(int16_t)
+
+Note : if it run CCW,the speed > 0 (RPM)
+if it run CW,the speed < 0 (RPM)
+
+16
+
+byte4
+Check
+CRC
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+4. Command4 : 01 33 CRC
+Read the number of pulses received.
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+33
+
+byte2
+CRC(34)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2…byte5
+…
+code
+data
+6
+33
+pulses(int32_t)
+
+CAN ID
+01
+
+byte6
+Check
+CRC
+
+5. Command5 : 01 34 CRC
+read the IO Ports status.
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+34
+
+byte2
+CRC(3B)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+…
+code
+data
+3
+34
+status(uint8_t)
+
+CAN ID
+01
+
+bit7 bit6 bit5 bit4
+reserved
+
+byte3
+Check
+CRC
+
+status
+bit3
+bit2
+bit1 bit0
+OUT_2 OUT_1 IN_2 IN_1
+
+Note: After enabling the limit remapping function, IN_1 maps to En,
+IN_2 maps to Dir.
+6. Command6 : 01 35 CRC
+read the RAW encoder value(addition).
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+…
+
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+35
+
+byte2
+CRC
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2…byte7
+code
+value
+8
+35
+value(int48_t)
+
+After one turn clockwise,the value += 0x4000;
+17
+
+byte8
+Check
+CRC
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+After one turn CCW,the value -= 0x4000;
+
+For example:
+If the current value is 0x3FF0, After one turn CCW,the value(+0x4000) is
+0x7FF0.
+If the current value is 0x3FF0, After one turn CW,the value(-0x4000) is
+
+0xFFFFFFFFFFF0.
+7. Command7 : 01 39 CRC
+read the error of the motor shaft angle.
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+39
+
+byte2
+CRC(3A)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2…byte5
+…
+code
+data
+4
+39
+error(int32_t)
+
+Byte6
+Check
+CRC
+
+The error is the difference between the angle you want to control
+minus the real-time angle of the motor, 0~51200 corresponds to
+0~360°.
+for example, when the angle error is 1°, the return error is
+51200/360= 142.222, and so on.
+8. Command8 : 01 3A CRC
+read the En pins status.
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+3A
+
+byte2
+CRC(3B)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+…
+code
+data
+3
+3A
+enable(uint8_t)
+
+enable =1 Enabled
+enable =0 Disabled
+
+18
+
+byte3
+Check
+CRC
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+9. Command9 : 01 3B CRC
+Read the go back to zero status when power on.
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+DLC
+byte1
+byte2
+…
+01
+2
+3B
+CRC(3C)
+
+CAN ID
+01
+
+status =0
+status =1
+status =2
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+3B
+status(uint8_t)
+CRC
+
+going to zero.
+go back to zero success.
+go back to zero fail.
+
+10. Command10 : 01 3D CRC
+Release the motor shaft locked-rotor protection state.
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+DLC
+byte1
+byte2
+…
+01
+2
+3D
+CRC(3E)
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+3D
+status(uint8_t)
+CRC
+
+status =1 release success.
+status =0 release fail.
+11. Command11 : FA 01 3E CRC
+Read the motor shaft protection state.
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+DLC
+byte1
+byte2
+…
+01
+2
+3E
+CRC(3F)
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+3E
+status(uint8_t)
+CRC
+
+status =1 protected.
+status =0 no protected.
+19
+
+User Manual
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+5.2 Set system parameters command
+1. Calibrate the encoder
+（Same as the "Cal" option on screen）
+CAN ID
+01
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+…
+3
+80
+00
+CRC(81)
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+80
+status(uint8_t)
+CRC
+
+status =0 Calibrating….
+status =1 Calibrated success.
+status =2 Calibrating fail.
+Note : The motor must be unloaded.
+2. Set the work mode
+（Same as the "Mode" option on screen）
+CAN ID
+01
+
+mode = 0
+mode = 1
+mode = 2
+mode = 3
+mode = 4
+mode = 5
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+…
+code
+data
+3
+82
+mode (0~5)
+
+byte3
+Check
+CRC
+
+CR_OPEN
+CR_CLOSE
+CR_vFOC
+SR_OPEN
+SR_CLOSE
+SR_vFOC
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+82
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+Mode
+OPEN
+CLOSE
+vFOC
+
+pulse interface
+serial interface
+pulse interface
+serial interface
+pulse interface
+serial interface
+
+CR_OPEN
+SR_OPEN
+CR_CLOSE
+SR_CLSOE
+CR_vFOC
+SR_vFOC
+20
+
+MAX RPM
+
+Work Current
+
+400RPM
+
+Fix，the work current is the Ma
+
+1500RPM
+
+Fix，the work current is the Ma
+
+3000RPM
+
+self-adaption, the Max current is
+the Ma
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+3. Set the working current
+（Same as the "Ma" option on screen）
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2-3
+Byte4
+…
+code
+data
+Check
+4
+83
+ma (uint16_t)
+CRC
+
+Note:the new current will show in the screen of Ma option.
+SERVO42D/28D/35D: Maximum Current =3000mA
+SERVO57D:
+Maximum Current =5200mA
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+83
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+4. Set the holding current percentage
+（Same as the "HoldMa" option on screen）
+CAN ID
+01
+
+…
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+9B
+holdMa (00~08)
+CRC
+
+holdMa = 00 10%
+holdMa = 01 20%
+…
+holdMa = 08 90%
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+9B
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+Note: Only for OPEN mode and CLOSE mode, vFOC mode is invalid.
+
+21
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+5. Set subdivision
+（Same as the "MStep" option on screen）
+CAN ID
+01
+
+…
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+84
+micstep(00~FF)
+CRC
+
+Note:the new micstep will show in the screen of MStep option.
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+84
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+6. Set the active of the En pin
+（Same as the "En" option on screen）
+CAN ID
+01
+
+…
+
+enable = 00
+enable = 01
+enable = 02
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+85
+enable(00~02)
+CRC
+
+active low
+(L)
+active high
+(H)
+active always (Hold)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+85
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+
+22
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+7. Set the direction of motor rotation
+（Same as the "Dir" option on screen）
+CAN ID
+…
+
+01
+
+dir = 00
+dir = 01
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+86
+dir(00~01)
+CRC
+
+CW
+CCW
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+86
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+Note: onldy for pulse interface,the direction of serial interface is set
+by command.
+
+8. Set auto turn off the screen function
+（Same as the " AutoSDD " option on screen）
+CAN ID
+01
+
+…
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+87
+enable(00~01)
+CRC
+
+enable = 01
+enabled
+enable = 00
+disabled
+If set to Enable, the screen will automatically turn off after
+about 15 seconds, and any button can wake up the screen again.
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+87
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+
+23
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+9. Set the motor shaft locked-rotor protection function
+（Same as the "Protect" option on screen）
+CAN ID
+01
+
+…
+
+enable = 01
+enable = 00
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+88
+enable(00~01)
+CRC
+
+enabled protection
+disabled protection
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+88
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+Note: After the stall protection is activated, there are three
+ways to release it:
+1. Press the Enter button to release the stall protection;
+2. Use the serial port command (3D) to release the stall
+protection;
+3. In the pulse interface mode, the En signal is invalid (not
+locking the shaft), and the stall protection can be released.
+10. Set the subdivision interpolation function
+（Same as the "Mplyer" option on screen）
+CAN ID
+01
+
+…
+
+enable = 01
+enable = 00
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+89
+enable(00~01)
+CRC
+
+enabled interpolation function.
+disabled interpolation function.
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+89
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+
+24
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+11. Set the CAN bitRate
+（Same as the "CanRate" option on screen）
+CAN ID
+01
+
+…
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+8A
+bitRate (00~03)
+CRC
+
+bitRate = 00 125K
+bitRate = 01 250K
+bitRate = 02 500K
+bitRate = 03 1M
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+8A
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+12. Set the CAN ID
+（Same as the "CanID" option on screen）
+CAN ID
+01
+
+…
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+4
+8B
+ID(00~7FF)
+
+byte4
+Check
+CRC
+
+Note1:the new address will show in the screen of CanID option.
+Note2: 0 is the broadcast address
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+8B
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+
+25
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+13. Set the slave respond and active
+CAN ID
+01
+
+DLC
+…
+
+respon = 01
+respon = 00
+active = 01
+active = 00
+
+4
+
+Downlink frame(PC → SERVO42D/57D)
+byte1
+byte2
+byte3
+code
+data
+data
+8C
+respon(00~01) active(00-01)
+
+byte4
+Check
+CRC
+
+enabled respond (default)
+disabled respond
+enabled active (default)
+disabled active
+
+Note: If disable respond, It can query the running status of the
+motor by command “F1”.
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+8C
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+The difference between respond and active
+Take position control mode 1 as an example:
+Host sends FA 01 FD 02 80 02 00 00 FA 00 76
+a. In no response mode (respon =0, active = xx)
+The slave does not return any information.
+b. In the mode of not actively initiating data (respon =1, active =0)
+Slave returns immediately Position control starts 01 or fails 00.
+c. In default mode (respon =1, active =1)
+Slave returns immediately Position control starts 01 or fails 00.
+Return to 02 or 03 after the motor finishes running or touches
+the limit stop.
+
+26
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+14. Set the key lock or unlock
+CAN ID
+01
+
+…
+
+enable = 01
+enable = 00
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+8F
+enable(00~01)
+CRC
+
+lock the key
+unlock the key
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+8F
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+15. Set the group ID
+CAN ID
+01
+
+CAN ID
+01
+
+…
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+4
+8D
+ID(01~0x7FF)
+
+byte4
+Check
+CRC
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+8D
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+For example, there are 6 motors with the settings ID:
+motor 1
+motor 2
+motor 3
+motor 4
+motor 5
+motor 6
+
+Broadcast ID
+0
+0
+0
+0
+0
+0
+
+Slave ID
+1
+2
+3
+4
+5
+6
+
+send 01 FD 01 2C 64 00 0C 80 1B, motor 1
+send 00 FD 01 2C 64 00 0C 80 1A, motor1-6
+send 50 FD 01 2C 64 00 0C 80 6A, motor1-3
+send 51 FD 01 2C 64 00 0C 80 6B, motor4-6
+
+Group ID
+0x50
+0x50
+0x50
+0x51
+0x51
+0x51
+
+will rotate a turn
+will rotate a turn
+will rotate a turn
+will rotate a turn
+
+Note: Slave does not answer if group address is used.
+27
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+5.3 Write IO port command
+Downlink frame(PC → SERVO42D/57D)
+CAN
+ID
+
+DLC
+
+byte1
+
+3
+
+code
+36
+
+…
+
+01
+
+Byte2
+bit7
+
+bit6
+
+OUT2_mask
+
+bit5
+
+Byte3
+
+bit4
+
+bit3
+
+bit2
+
+OUT1_mask
+
+OUT_2
+
+OUT_1
+
+bit1
+
+bit0
+
+0
+
+Check
+CRC
+
+OUT2_mask 0: Do not write to OUT_2 IO port(default)
+1: Write OUT_2 value to OUT_2 IO port
+2: OUT_2 IO port value remains unchanged
+OUT1_mask 0: Do not write to OUT_1 IO port (default)
+1: Write OUT_1 value to OUT_1 IO port
+2: OUT_1 IO port value remains unchanged
+OUT_2
+OUT_2 port write value (0/1)
+OUT_1
+OUT_1 port write value (0/1)
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+36
+status(uint8_t)
+CRC
+
+status =1 write success.
+status =0 write fail.
+
+5.4 Set Home command
+1. Set the parameter of home
+（Same as the “HmTrig、HmDir、HmSpeed” option on screen）
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+DLC byte1
+byte2
+byte3
+byte4-5
+Byte6
+…
+code
+level
+dir
+speed
+enable
+01
+8
+homeTrig homeDir homeSpeed EndLimit
+90
+homeTrig the effective level of the end stop
+0：Low
+1：High
+homeDir the direction of go home
+0： CW
+1：CCW
+homeSpeed the speed of go home
+
+0~3000 (RPM)
+EndLimit
+0: disable endstop-limit
+1: enable endstop-limit
+mode
+
+0: used Limit switch for go home
+1: no Limit switch for go home
+
+28
+
+Byte7
+Byte8
+hmMode Check
+CRC
+mode
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+Note : The speed description can be found in Chapter 6.1.
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+90
+status(uint8_t)
+CRC
+
+status =1 set success.
+status =0 set fail.
+Note1:When first time to using the “EndLimit” function or
+changing the limit parameters, it is necessary to go home;
+(Menu -> GoHome or serial command "91")
+Note 2: When EndLimit=1, when the motor goHome touches the left
+limit switch, the motor will unlocked the shaft.
+If you want to locked the axis after goHome, you should set
+EndLimit=0.
+
+29
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2. Go home
+（Same as the “GoHome” option on screen）
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+91
+
+byte2
+CRC(92)
+
+Note1: If the limit switch is already closed, the motor will
+rotate in the opposite direction to homeDir until the limit
+switch is opened, and then go home.
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+91
+status(uint8_t)
+CRC
+
+status =0 go home fail.
+status =1 go home start.
+status =2 go home sucess.
+3. Set Currnet Axis to zero
+It can set the current Axis to Zero. Just as “GoHome”without
+run the motor.
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+92
+
+byte2
+CRC(93)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+92
+status(uint8_t)
+CRC
+
+status =0 set fail.
+status =1 set success.
+
+30
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+4. Set the parameter of “noLimit”go home
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+DLC byte1
+Byte2-5
+Byte6-7
+Reverse Angle
+…
+code
+Hm_ma
+01
+6
+ma
+94
+retValue
+ma: the current of “noLimit”go home
+retValue: 0~0xFFFFFFFF
+for example：
+retValue = 0x4000 （it will return 360 degree）
+retValue = 0x2000 （it will return 180 degree）（default）
+
+CAN ID
+01
+
+Byte8
+Check
+CRC
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+94
+status(uint8_t)
+CRC
+
+status =0 set fail.
+status =1 set success.
+Note1: Reference the menu of “Hm_Mode” and “Hm_Ma”.
+Note2: Reference the Command 90/91.
+5. Set limit port remap
+(only for serial control mode)
+The 28/35/42D motor has only a left limit port. In serial control
+mode, limit port remapping can be enabled to add a right limit port.
+For the 57D motor, limit port remapping can also be enabled if
+required to facilitate wiring.
+Left limit -> En port
+Right limit -> Dir port
+The Com port must be connected to the corresponding high level.
+
+CAN ID
+01
+
+…
+
+enable = 01
+enable = 00
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+9E
+enable(00~01)
+CRC
+
+enable remap limit port
+disable remap limit port
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+9E
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+31
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+5.5 Set 0_Mode command
+In 0_Mode, the motor can automatically return to the 0 point
+position when power on. The maximum angle is 359 degrees.
+1. Set the parameter of 0_Mode
+（Same as the “0_Mode、Set 0、0_Speed、0_Dir” option on screen）
+
+Downlink frame(PC → SERVO42D/57D)
+CAN
+ID
+
+DLC
+…
+
+01
+
+5
+
+byte1
+
+byte2
+
+byte3
+
+byte4
+
+Byte5
+
+Byte6
+
+Function 0_Mode
+9A
+mode
+
+Set 0
+enable
+
+0_Speed
+speed
+
+0_Dir
+dir
+
+Check
+CRC
+
+mode:
+0：Disable
+1：DirMode
+2: NearMode
+
+do not go back to zero
+go back to zero with direction
+go back to zero with minimum angle
+
+enable:
+0： clean zero
+1： set zero
+2: not modify the zero
+speed:
+0 ~ 4 （0:slowest
+
+4:fastest）
+
+dir:
+0： CW
+1： CCW
+Uplink frame（PC ← SERVO42D/57D）
+CAN ID
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+01
+3
+9A
+status(uint8_t)
+CRC
+
+status =0 set fail.
+status =1 set success.
+
+32
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+5.6 Restore the default parameter
+（Same as the "Restore" option on screen）
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+3F
+
+byte2
+CRC(40)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+3F
+status(uint8_t)
+CRC
+
+status =1 restore success.
+status =0 restore fail.
+Note1: After restored the parameters, It will reboot again,and need
+to calibrate the motor.
+Note2: Press the“Next”key，then power on the motor, the default
+parameter will be restored.
+
+5.7 Restart the motor
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+41
+
+byte2
+CRC
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+41
+status(uint8_t)
+CRC
+
+status =1 restart success.
+status =0 restart fail.
+
+5.8 En triggers single-turn zero return and position error
+protection function
+1. En-triggered single-turn zeroing function description:
+In pulse control mode, after setting the power-on single-turn zeroing
+function and turning on the En-triggered zeroing function, the motor will no
+longer automatically return to zero when powered on, but will be triggered to
+return to zero through the 200ms width pulse signal of the En signal line.
+33
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2. Position error protection description:
+Position error protection and stall protection can be turned on or off
+separately. They monitor the motor independently. When any protection condition
+is triggered, the motor can be started to protect it.
+The triggering condition of position error protection is: within x time, if
+the motor position error is greater than y, the protection is started. (x, y
+can be set)
+Note: When the stall protection is triggered, the screen displays "Wrong..."
+When the position error protection is triggered, the screen displays
+"Wrong2..."
+The instructions are as follows:
+
+Downlink frame(PC → SERVO42D/57D)
+CAN
+ID
+
+DLC
+
+code
+
+…
+01
+
+byte1
+
+7
+
+9D
+
+Byte2
+rev
+b7-b2
+0
+
+g0En
+b1
+g0En
+
+pEn
+b0
+pEn
+
+byte3-4
+
+byte5-6
+
+byte7
+
+times
+
+errors
+
+Check
+
+Tim
+
+Errors
+
+CRC
+
+g0En 0: Disable En trigger return to zero function (default value)
+1: Enable En trigger return to zero function
+Note: When enabled, the motor automatically returns to zero position in a
+single turn after detecting the En enable signal pulse of about 200ms. It will
+no longer automatically return to zero position in a single turn when powered
+on.
+pEn 0: Disable position error protection (default value)
+1: Enable position error protection
+Tim:
+uint16_t
+Set the error statistics time length
+Note: 1 Tim unit is approximately equal to 15ms
+Errors: uint16_t
+Set the number of startup protection errors
+Note: When Errors = 28000, the motor is misaligned by 360 degrees
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+9D
+status(uint8_t)
+CRC
+
+status =1 Write success.
+status =0 Write fail.
+
+34
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+5.9 Read system Parameter command
+The command format for reading system parameters is as follows:
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+…
+
+DLC
+3
+
+byte1
+00
+
+byte2
+code
+
+byte 3
+CRC
+
+code : corresponding to the system parameters.
+For example, if you want to read the "work mode", the
+corresponding code is 82H.
+The format of the returned parameter data is as follows:
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte 1
+byte 2-n
+…
+CODE
+parameters
+n+1
+code
+param
+
+byte n+1
+Check
+CRC
+
+param : the system parameters.
+Note: The returned param data format just the same as the data
+format when setting this parameter.
+If the parameter does not support reading, the returned data is
+as follows:
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte 1
+byte 2
+byte 3
+…
+CODE
+4
+code
+FFH
+FFH
+
+byte 4
+Check
+CRC
+
+The following figure shows an example of reading "working
+current":
+
+35
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+Part6.
+
+User Manual
+
+Run the motor by CAN command
+
+Note: This chapter needs to set the working mode to serial mode.
+(SR_OPEN/SR_CLOSE/SR_VFOC)
+
+6.1 Description the parameters of speed and acceleration
+1.speed
+The speed parameter ranges from 0 to 3000. The larger the value,
+the faster the motor rotates.
+When speed = 0, the motor stops rotating.
+The maximum speed of the control mode is as follows:
+Open mode
+Close mode
+FOC mode
+
+Control mode
+Pulse interface
+CR_OPEN
+Serial interface
+SR_OPEN
+Pulse interface
+CR_CLOSE
+Serial interface
+SR_CLSOE
+Pulse interface
+CR_vFOC
+Serial interface
+SR_vFOC
+
+Max speed
+400(RPM)
+1500(RPM)
+3000(RPM)
+
+If the set speed is greater than the maximum speed of the control
+mode, the motor runs at the maximum speed of the control mode.
+Note: The speed value is calibrated based on 16/32/64
+subdivisions, and the speeds of other subdivisions need to be
+calculated based on 16 subdivisions.
+For example, setting speed=1200
+At 8 subdivisions, the speed is 2400 (RPM)
+At 16/32/64 subdivisions, the speed is 1200 (RPM)
+At 128 subdivisions, the speed is 150 (RPM)
+
+36
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2. acceleration
+The value of the acceleration(acc) ranges from 0 to 255. The
+larger the value, the faster the motor accelerates/decelerates.
+If acc=0, the motor runs without acceleration or deceleration,
+and runs directly at the set speed.
+① accelerates
+Suppose
+
+at time t1，the current speed is Vt1 (Vt1 < speed)
+at time t2，the current speed is Vt2
+t2 – t1 = （256-acc）* 50 (uS)
+The relationship between the current speed Vti, acc, and speed is
+as follows:
+Vt2 = Vt1 + 1 (Vt2 <= speed)
+For example: acc = 236,speed = 3000
+T(ms)
+0
+1
+2
+3
+…
+
+speed（RPM）
+0
+1
+2
+3
+…
+
+T(ms)
+…
+…
+2998
+2999
+3000
+
+speed (RPM)
+…
+…
+2998
+2999
+3000
+
+② decelerates
+Suppose
+
+at time t1，the current speed is Vt1 (Vt1 > speed)
+at time t2，the current speed is Vt2
+t2 – t1 = （256-acc）* 50 (uS)
+The relationship between the current speed Vti, acc, and speed is
+as follows:
+Vt2 = Vt1 - 1 (Vt2 >= speed)
+
+37
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+6.2 Query/Enable the motor command
+1. Query the motor status
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+CAN ID
+01
+
+DLC
+2
+
+…
+
+byte1
+F1
+
+byte2
+CRC(F2)
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+F1
+status(uint8_t)
+CRC
+
+status = 0
+status = 1
+status = 2
+status = 3
+status = 4
+status = 5
+status = 6
+
+query fail.
+motor stop
+motor speed up
+motor speed down
+motor full speed
+motor is homing
+motor is Cal…
+
+2. Enable the motor
+CAN ID
+01
+
+en = 00
+en = 01
+
+CAN ID
+01
+
+…
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+F3
+en(00~01)
+CRC
+
+disable.
+enable.
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+F3
+status(uint8_t)
+CRC
+
+status =1 Set success.
+status =0 Set fail.
+
+38
+
+User Manual
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+6.3 Emergency stop the motor
+Downlink frame(PC → SERVO42D/57D)
+CAN ID
+01
+
+CAN ID
+01
+
+…
+
+DLC
+2
+
+byte1
+F7
+
+byte2
+CRC
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+F7
+status(uint8_t)
+CRC
+
+status = 0
+stop fail.
+status = 1
+stop success.
+Note: If the motor rotating more than 1000RPM, it is not a good
+idea to stop the motor immediately!
+
+39
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+6.4 Speed mode command
+In speed mode, the motor can be run with a fixed acceleration and
+speed.
+1. Run the motor in speed mode
+
+CAN ID
+
+DLC
+…
+
+01
+
+5
+
+Downlink frame(PC → SERVO42D/57D)
+byte1
+byte 2
+byte 3
+code
+dir
+Rev
+speed
+b7
+b6-b4 b3-b0 b7-b0
+F6
+dir
+speed
+——
+
+byte 4
+acc
+
+byte 5
+Check
+
+acc
+
+CRC
+
+byte2: The highest bit indicates the direction, the lower 4 bits
+and byte3 together indicate the speed
+byte3: The lower 4 bits of byte2 and byte3 together indicate
+speed
+The parameter description is as follows:
+dir: the value range is 0/1 (CCW/CW)
+speed: the speed, the value range is 0-3000
+acc: the acceleration, the value range is 0-255
+for example：
+Send “01 F6 01 40 02 3A”,
+the motor rotates forward at acc=2, speed=320RPM
+Send “01 F6 81 40 02 BA”,
+the motor reverses at acc=2, speed=320RPM
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+F6
+status(uint8_t)
+CRC
+
+status = 1 run success.
+status = 0 run fail.
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+
+40
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2. Stop the motor in speed mode
+
+CAN ID
+
+DLC
+…
+
+01
+
+5
+
+Downlink frame(PC → SERVO42D/57D)
+byte1
+byte 2
+byte 3
+code
+dir
+Rev
+speed
+b7
+b6-b4 b3-b0 b7-b0
+F6
+0
+0
+0
+
+byte 4
+acc
+
+byte 5
+Check
+
+acc
+
+CRC
+
+The stop command can stop the motor slowly, or stop the motor
+immediately.
+When setting acc ≠ 0, the motor decelerates and stops slowly
+When setting acc = 0, the motor stops immediately
+① Deceleration and stop the motor slowly (acc ≠ 0)
+for example:
+Send 01 F6 00 00 02 F9
+Stop the motor with deceleration acc=2
+② Immediate stop command (acc = 0)
+for example:
+Send 01 F6 00 00 00 F7
+Stop the motor immediately
+Note: If the motor rotating more than 1000RPM, it is not a good
+idea to stop the motor immediately!
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+F6
+status(uint8_t)
+CRC
+
+status = 0 stop the motor fail.
+status = 1 start to stop the motor.
+status = 2 stop the motor success.
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+
+41
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+3. Save/Clean the parameter in speed mode
+
+CAN ID
+…
+
+01
+
+state = C8
+state = CA
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+DLC
+byte1
+byte2
+byte3
+code
+data
+Check
+3
+FF
+state
+CRC
+
+Save.
+Clean.
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+FF
+status(uint8_t)
+CRC
+
+status = 1
+status = 0
+
+success.
+fail.
+
+Note：The motor can rotates clockwise or counterclockwise at a
+constant speed when powered on.
+
+42
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+6.5 Position mode1: relative motion by pulses
+In the position control mode1, the motor can be run to the
+specified position with the set acceleration and speed.
+1. Run the motor in position mode1
+
+CAN ID
+01
+
+DLC
+…
+
+8
+
+Downlink frame(PC → SERVO42D/57D)
+byte1
+byte 2
+byte 3
+byte 4
+code
+dir
+Rev
+speed
+acc
+b7
+b6-b4 b3-b0 b7-b0
+FD
+acc
+dir
+speed
+——
+
+byte 5-7
+pulses
+
+byte 8
+Check
+
+pulses
+
+CRC
+
+byte2: The highest bit indicates the direction, the lower 4 bits
+and byte3 together indicate the speed
+byte3: The lower 4 bits of byte2 and byte3 together indicate
+speed
+The parameter description is as follows:
+dir: the value range is 0/1 (CCW/CW)
+speed: the speed, the value range is 0-3000
+acc: the acceleration, the value range is 0-255
+pulses: the motor run steps, the value range is 0 – 0xFFFFFF
+for example:
+Send 01 FD 01 40 02 00 FA 00 3B,
+the motor rotates 20 times in the forward direction with acc=2,
+speed=320RPM (16 subdivisions);
+Send 01 FD 81 40 02 00 FA 00 BB,
+the motor rotates 20 times in the reverse direction with acc=2,
+speed=320RPM (16 subdivisions);
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+FD
+status(uint8_t)
+CRC
+
+status = 0
+status = 1
+status = 2
+status = 3
+
+run fail.
+run starting….
+run complete.
+end limit stoped.
+
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+
+43
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2. Stop the motor in position mode1
+
+CAN ID
+01
+
+DLC
+…
+
+8
+
+Downlink frame(PC → SERVO42D/57D)
+byte1
+byte 2
+byte 3
+byte 4
+code
+dir
+Rev
+speed
+acc
+b7
+b6-b4 b3-b0 b7-b0
+FD
+acc
+0
+0
+0
+
+byte 5-7
+pulses
+0
+
+The stop command can stop the motor slowly, or stop the motor
+immediately.
+When setting acc ≠ 0, the motor decelerates and stops slowly
+When setting acc = 0, the motor stops immediately
+① Deceleration and stop the motor slowly (acc ≠ 0)
+for example:
+Send 01 FD 00 00 04 00 00 00 02
+Stop the motor with deceleration acc=4
+② Immediate stop command (acc = 0)
+for example:
+Send 01 FD 00 00 00 00 00 00 FE
+Stop the motor immediately
+Note: If the motor rotating more than 1000RPM, it is not a good
+idea to stop the motor immediately!
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+FD
+status(uint8_t)
+CRC
+
+status = 0
+status = 1
+status = 2
+status = 3
+
+stop the motor fail.
+stop the motor starting….
+stop the motor complete.
+end limit stoped.
+
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+
+44
+
+byte 8
+Check
+CRC
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+6.6 Position mode2: absolute motion by pulses
+In the position control mode2, the motor can be run to the
+specified axis with the set acceleration and speed.
+1. Run the motor in position mode2
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+byte1 byte2 byte3
+byte4
+byte5-byte7
+code
+speed
+acc
+absolute axis
+FE
+speed
+acc
+absPulses
+
+DLC
+…
+
+8
+
+字节 8
+Check
+CRC
+
+The parameter description is as follows:
+speed: the speed, the value range is 0-3000(RPM)
+acc: the acceleration, the value range is 0-255
+absPulses: the absolute pulses, int24_t（-8388607，+8388607）
+For example:
+If the current axis is any value
+Send 01 FE 02 58 02 00 40 00 9B
+The motor will move to 0x4000 (speed = 600(RPM),acc =2)
+After move the pulses is 0x4000.
+If the current axis is any value
+Send 01 FE 02 58 02 FF C0 00 1A
+The motor will move to -0x4000 (speed = 600(RPM),acc =2)
+After move the pulses is -0x4000.
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+FE
+status(uint8_t)
+CRC
+
+status = 0
+status = 1
+status = 2
+status = 3
+
+run fail.
+run starting….
+run complete.
+end limit stoped.
+
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+
+45
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2. Stop the motor in position mode3
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+byte1 byte2 byte3
+byte4
+byte5-byte7
+code
+speed
+acc
+absolute axis
+FE
+0
+acc
+0
+
+DLC
+…
+
+8
+
+字节 8
+Check
+CRC
+
+The stop command can stop the motor slowly, or stop the motor
+immediately.
+When setting acc ≠ 0, the motor decelerates and stops slowly
+When setting acc = 0, the motor stops immediately
+① Deceleration and stop the motor slowly (acc ≠ 0)
+for example:
+Send 01 FE 00 00 04 00 00 00 03
+Stop the motor with deceleration acc=4
+② Immediate stop command (acc = 0)
+for example:
+Send 01 FE 00 00 00 00 00 00 FF
+Stop the motor immediately
+Note: If the motor rotating more than 1000RPM, it is not a goog
+idea to stop the motor immediately!
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+FE
+status(uint8_t)
+CRC
+
+status = 0
+status = 1
+status = 2
+status = 3
+
+stop the motor fail.
+stop the motor starting….
+stop the motor complete.
+end limit stoped.
+
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+
+46
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+6.7 Position mode3: relative motion by axis
+In the position control mode3, the motor can be run to the
+specified axis with the set acceleration and speed.
+Note1: the axis is the encoder value(addition).It can be read by
+command “31”.
+1. Run the motor in position mode3
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+byte1 byte2 byte3
+byte4
+byte5-byte7
+code
+speed
+acc
+Relative axis
+F4
+speed
+acc
+relAxis
+
+DLC
+…
+
+8
+
+字节 8
+Check
+CRC
+
+The parameter description is as follows:
+speed: the speed, the value range is 0-3000(RPM)
+acc: the acceleration, the value range is 0-255
+relAxis: the relative axis, int24_t（-8388607，+8388607）
+For example:
+If the current axis is 0x8000.(read by code “31”)
+Send 01 F4 02 58 02 00 40 00 91
+The motor will relative move 0x4000 (speed = 600(RPM),acc =2)
+After move the axis is 0xC000.(0x8000+0x4000=0xC000)
+If the current axis is 0x8000.(read by code “31”)
+Send 01 F4 02 58 02 FF C0 00 09
+The motor will relative move -0x4000 (speed = 600(RPM),acc =2)
+After move the axis is 0x4000.(0x8000-0x4000=0x4000)
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+F4
+status(uint8_t)
+CRC
+
+status = 0
+status = 1
+status = 2
+status = 3
+
+run fail.
+run starting….
+run complete.
+end limit stoped.
+
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+
+47
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2. Stop the motor in position mode3
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+byte1 byte2 byte3
+byte4
+byte5-byte7
+code
+speed
+acc
+Relative axis
+F4
+0
+acc
+0
+
+DLC
+…
+
+8
+
+字节 8
+Check
+CRC
+
+The stop command can stop the motor slowly, or stop the motor
+immediately.
+When setting acc ≠ 0, the motor decelerates and stops slowly
+When setting acc = 0, the motor stops immediately
+① Deceleration and stop the motor slowly (acc ≠ 0)
+for example:
+Send 01 F4 00 00 04 00 00 00 F9
+Stop the motor with deceleration acc=4
+② Immediate stop command (acc = 0)
+for example:
+Send 01 F4 00 00 00 00 00 00 F5
+Stop the motor immediately
+Note: If the motor rotating more than 1000RPM, it is not a good
+idea to stop the motor immediately!
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+F4
+status(uint8_t)
+CRC
+
+status = 0
+status = 1
+status = 2
+status = 3
+
+stop the motor fail.
+stop the motor starting….
+stop the motor complete.
+end limit stoped.
+
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+
+48
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+6.8 Position mode4: absolute motion by axis
+In the position control mode4, the motor can be run to the
+specified axis with the set acceleration and speed.
+Note1: the axis is the encoder value(addition). It can be read by
+command “31”.
+Note2: Support real-time updates of speed and coordinates, that
+is, new commands can be issued to change speed and coordinates when
+the previous command is running
+1. Run the motor in position mode4
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+byte1 byte2 byte3
+byte4
+byte5-byte7
+code
+speed
+acc
+absolute axis
+F5
+speed
+acc
+absAxis
+
+DLC
+…
+
+8
+
+字节 8
+Check
+CRC
+
+The parameter description is as follows:
+speed: the speed, the value range is 0-3000(RPM)
+acc: the acceleration, the value range is 0-255
+absAxis: the absolute axis, int24_t（-8388607，+8388607）
+For example:
+If the current axis is any value
+Send 01 F5 02 58 02 00 40 00 92
+The motor will move to 0x4000 (speed = 600(RPM),acc =2)
+After move the axis is 0x4000.
+If the current axis is any value
+Send 01 F5 02 58 02 FF C0 00 11
+The motor will move to -0x4000 (speed = 600(RPM),acc =2)
+After move the axis is -0x4000.
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+F5
+status(uint8_t)
+CRC
+
+status = 0
+status = 1
+status = 2
+status = 3
+
+run fail.
+run starting….
+run complete.
+end limit stoped.
+
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+49
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+2. Stop the motor in position mode4
+
+CAN ID
+01
+
+Downlink frame(PC → SERVO42D/57D)
+byte1 byte2 byte3
+byte4
+byte5-byte7
+code
+speed
+acc
+absolute axis
+F5
+0
+acc
+0
+
+DLC
+…
+
+8
+
+字节 8
+Check
+CRC
+
+The stop command can stop the motor slowly, or stop the motor
+immediately.
+When setting acc ≠ 0, the motor decelerates and stops slowly
+When setting acc = 0, the motor stops immediately
+① Deceleration and stop the motor slowly (acc ≠ 0)
+for example:
+Send 01 F5 00 00 04 00 00 00 FA
+Stop the motor with deceleration acc=4
+② Immediate stop command (acc = 0)
+for example:
+Send 01 F5 00 00 00 00 00 00 F6
+Stop the motor immediately
+Note: If the motor rotating more than 1000RPM, it is not a goog
+idea to stop the motor immediately!
+
+CAN ID
+01
+
+Uplink frame（PC ← SERVO42D/57D）
+DLC
+byte1
+byte2
+byte3
+…
+code
+data
+Check
+3
+F5
+status(uint8_t)
+CRC
+
+status = 0
+status = 1
+status = 2
+status = 3
+
+stop the motor fail.
+stop the motor starting….
+stop the motor complete.
+end limit stoped.
+
+Note: the “Uplink frame”can be disable by Menu“CanRSP”or
+Command “8C”.
+
+50
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+Part7.
+
+User Manual
+
+CAN command example
+
+The following example uses "cangaroo.exe" PC software and "MKS
+CANable" USB to CAN module.
+
+7.1 Config the SERVO42D/57D
+1. Menu → Mode → SR_vFOC.
+2. Menu → CanRate → 500K.
+3. Menu → CanID → 01.
+
+7.2 Config the cangaroo
+1. run the “cangaroo.exe”.
+2. Select t“Measurement”->“Start Measurement”,as show below.
+
+3. In the pop-up “Measurement Setup” window, click "candle0",
+as shown below.
+
+51
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+4. Use the default parameters without any modification, click
+"ok", as shown below.
+
+5. The configuration is complete, as shown below.
+
+6. Select "File" -> "Save Workspace", select the save path and
+name, and save the configuration.
+
+52
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+7. After the save is completed, as shown below.
+
+53
+
+User Manual
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+7.3 Read the encoder value
+send
+“01 30 31”
+return “01 30 00 00 00 01 29 EF 4A”
+
+54
+
+User Manual
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+7.4 Run the motor in speed mode
+Note : Please configure the working mode to “SR_vFOC”.
+Menu-> Mode -> SR_vFOC
+1. Send 01 F6 01 40 02 3A, the motor will rotate at "speed =
+600RPM, acc=2";
+Return 01 F6 01 F8, the motor run in speed mode successful;
+
+2. Send 01 FF C8 C8 to save the speed mode parameters;
+Return 01 FF 01 01, save successful;
+
+55
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+3. Send 01 F6 00 00 02 F9 to stop the motor;
+Return 01 F6 01 F8, the motor stops successfully;
+
+After power-on again, the motor will run according to the save
+speed mode parameters.
+
+56
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+7.5 Run the motor in position mode1
+Note : Please configure the working mode to “SR_vFOC”.
+Menu-> Mode -> SR_vFOC
+1. Send 01 FD 01 40 05 09 C4 00 11, the motor will rotate forward
+200 circles (16 subdivisions) with "speed = 320RPM,acc = 5";
+Return 01 FD 01 FF, the motor starts to run;
+Return 01 FD 02 00, the motor is run completed;
+
+2. Send 01 FD 81 40 08 30 D4 00 CB, the motor to reverse 1000
+circles with "speed = 320RPM, acc = 8" (16 subdivisions);
+Return 01 FD 01 FF, the motor starts to run.
+Now, stop the motor by step 3.
+
+57
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+User Manual
+
+3. While the motor is running…
+Send 01 FD 00 00 01 00 00 00 FF, the motor to stop with acc=1;
+Return 01 FD 01 FF, the motor starting to stop;
+Return 01 FD 02 00, the motor has stopped;
+
+58
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+Part8.
+
+User Manual
+
+FAQ
+
+8.1 NOTE
+1.
+2.
+3.
+4.
+
+Power input voltage is 12V-24V.
+Don’t hot plug motor cable and data cable.
+When the motor is calibrating, do not carry a load.
+After installed the motor, or changed the motor wiring
+sequence, you need to re-calibrate the motor again.
+5. The default work mode is CR_vFOC(EN/STP/DIR interface).
+6. Press the "Next" key first, then power on, it can quickly
+restore the default parameters.
+7. If “Phase Line Error!” is displayed before calibration:
+b) Check the motor connection line sequence；
+c) Check the power supply voltage and output power (24V/1A,
+12V/2A);；
+d) If the power supply is connected to the motherboard
+through the MKS APT module, try to connect the MKS APT
+module to ports such as X, Y, Z, E, etc., and then restart
+again.
+e) Do not use the MKS APT module for power supply before
+calibration, and the power supply is directly connected to
+V+ and Gnd.
+
+8.2 FAQ
+No
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+Question
+Not Cal
+Reverse Lookup
+Error!
+Magnet Loss!
+Magnet Strong!
+Magnet Weak!
+Encoder Error!
+Offset Current
+Error!
+Phase Line Error!
+
+Solution
+Calibrate the motor.
+Calibrate Fail, Check magnet and
+motor shaft
+Not install the magent.
+the magnet too near.
+the magnet too far.
+Check magnet and motor shaft
+Reference voltage error
+The motor line sequence is wrong or
+the power supply is not enough
+Locked-rotor protection
+Going back to zero.
+
+Wrong Protect!
+Coming Back to
+Origin..
+Reboot Again
+The motor need to be restart.
+Press Next Key To Press Next Key，until it reboot.
+Fixed
+59
+
+MKS SERVO42D/57D_CAN V1.0.5
+
+Part9.
+
+Schematic
+
+Please download 《MKS SERVO57D V1.0 Schematic.pdf》 in
+https://github.com/makerbase-motor/MKS-SERVO42D
+https://github.com/makerbase-motor/MKS-SERVO57D
+
+Part10. contact us
+https://makerbase.aliexpress.com/
+https://www.youtube.com/channel/UC2i5I1tcOXRJ2ZJiRxwpCUQ
+https://github.com/makerbase-motor
+
+60
+
+User Manual
+
+
