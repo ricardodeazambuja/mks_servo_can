@@ -1,0 +1,424 @@
+{
+  "version": "1.0.6",
+  "source": "MKS SERVO42D/57D_CAN User Manual V1.0.6",
+  "protocol": {
+    "frame_type": "standard",
+    "crc_calculation": "(ID + byte1 + ... + byteN) & 0xFF",
+    "downlink_format": "CAN_ID | DLC | Command_Code | Data_Bytes | CRC",
+    "uplink_format": "CAN_ID | DLC | Command_Code | Response_Data | CRC"
+  },
+  "commands": {
+    "0x30": {
+      "name": "read_encoder_carry",
+      "category": "status",
+      "description": "Read encoder value with carry format",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x30 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 8,
+        "format": "CAN_ID | 8 | 0x30 | carry(int32) | value(uint16) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "bytes1-4": "carry_int32",
+          "bytes5-6": "value_uint16",
+          "byte7": "crc"
+        }
+      },
+      "notes": [
+        "carry: the carry value of the encoder",
+        "value: current value of encoder (range 0~0x3FFF)",
+        "When value > 0x3FFF, carry += 1",
+        "When value < 0, carry -= 1"
+      ],
+      "examples": [
+        {
+          "description": "Current carry|value is 0x3FF0, after one turn CCW becomes 0x13FF0",
+          "initial_state": {"carry": 0, "value": 16368},
+          "after_ccw_turn": {"carry": 1, "value": 16368}
+        }
+      ]
+    },
+    "0x31": {
+      "name": "read_encoder_addition",
+      "category": "status", 
+      "description": "Read encoder value in addition format",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x31 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 8,
+        "format": "CAN_ID | 8 | 0x31 | value(int48) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "bytes1-6": "value_int48",
+          "byte7": "crc"
+        }
+      },
+      "notes": [
+        "After one turn clockwise, value += 0x4000",
+        "After one turn CCW, value -= 0x4000"
+      ],
+      "examples": [
+        {
+          "description": "Current value 0x3FF0, after CCW turn becomes 0x7FF0",
+          "initial_value": 16368,
+          "after_ccw_turn": 32752
+        }
+      ]
+    },
+    "0x32": {
+      "name": "read_speed_rpm",
+      "category": "status",
+      "description": "Read real-time speed of motor in RPM",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x32 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 4,
+        "format": "CAN_ID | 4 | 0x32 | speed(int16) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "bytes1-2": "speed_int16_rpm",
+          "byte3": "crc"
+        }
+      },
+      "notes": [
+        "Speed is returned in RPM (revolutions per minute)",
+        "Positive values indicate clockwise rotation",
+        "Negative values indicate counter-clockwise rotation"
+      ]
+    },
+    "0x34": {
+      "name": "read_io_ports",
+      "category": "status",
+      "description": "Read IO ports status",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x34 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x34 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo", 
+          "byte1": "io_status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "notes": [
+        "Bit field representing status of various IO ports",
+        "Specific bit meanings depend on motor configuration"
+      ]
+    },
+    "0x35": {
+      "name": "read_encoder_raw",
+      "category": "status",
+      "description": "Read RAW data of encoder",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x35 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 4,
+        "format": "CAN_ID | 4 | 0x35 | raw_data(uint16) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "bytes1-2": "raw_encoder_uint16", 
+          "byte3": "crc"
+        }
+      },
+      "notes": [
+        "Returns unprocessed encoder data",
+        "Added in firmware V1.0.6"
+      ]
+    },
+    "0x36": {
+      "name": "write_io_port",
+      "category": "control",
+      "description": "Write IO port",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x36 | value(uint8) | CRC",
+        "parameters": [
+          {"name": "value", "type": "uint8", "description": "Value to write to IO port"}
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x36 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "notes": [
+        "Allows writing to configurable IO ports",
+        "Added in firmware V1.0.6"
+      ]
+    },
+    "0x3B": {
+      "name": "go_home",
+      "category": "motion",
+      "description": "Execute homing sequence",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x3B | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x3B | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "going to zero",
+        "1": "go back to zero success", 
+        "2": "go back to zero fail"
+      }
+    },
+    "0x3D": {
+      "name": "release_protection",
+      "category": "control",
+      "description": "Release motor shaft locked-rotor protection state",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x3D | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x3D | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8", 
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "release fail",
+        "1": "release success"
+      }
+    },
+    "0x3E": {
+      "name": "read_protection_state",
+      "category": "status",
+      "description": "Read motor shaft protection state",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x3E | CRC", 
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x3E | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "no protected",
+        "1": "protected"
+      }
+    },
+    "0x41": {
+      "name": "restart_motor",
+      "category": "control", 
+      "description": "Restart motor command",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x41 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x41 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "notes": [
+        "Added in firmware V1.0.6",
+        "Restarts motor after error conditions"
+      ]
+    },
+    "0x80": {
+      "name": "motor_calibration",
+      "category": "configuration",
+      "description": "Motor calibration command",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x80 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x80 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "notes": [
+        "Executes motor calibration sequence",
+        "Referenced as example in manual CRC calculation"
+      ]
+    },
+    "0x92": {
+      "name": "set_position_zero",
+      "category": "configuration",
+      "description": "Set current position to zero point",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x92 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x92 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8", 
+          "byte2": "crc"
+        }
+      },
+      "notes": [
+        "Added in firmware V1.0.1",
+        "Sets current position as the zero reference point"
+      ]
+    },
+    "0xF4": {
+      "name": "move_relative_pulses",
+      "category": "motion",
+      "description": "Move relative by pulses",
+      "request": {
+        "dlc": 8,
+        "format": "CAN_ID | 8 | 0xF4 | pulses(int32) | speed(uint16) | CRC",
+        "parameters": [
+          {"name": "pulses", "type": "int32", "description": "Number of pulses to move (signed)"},
+          {"name": "speed", "type": "uint16", "description": "Movement speed"}
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xF4 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "notes": [
+        "Moves motor relative to current position",
+        "Positive pulses = clockwise, negative = counter-clockwise"
+      ]
+    },
+    "0xF5": {
+      "name": "move_absolute_pulses",
+      "category": "motion", 
+      "description": "Move absolute by pulses",
+      "request": {
+        "dlc": 8,
+        "format": "CAN_ID | 8 | 0xF5 | position(int32) | speed(uint16) | CRC",
+        "parameters": [
+          {"name": "position", "type": "int32", "description": "Absolute position in pulses"},
+          {"name": "speed", "type": "uint16", "description": "Movement speed"}
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xF5 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo", 
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "notes": [
+        "Moves motor to absolute position",
+        "Bug fixed in V1.0.4",
+        "Supports real-time data update as of V1.0.5"
+      ]
+    },
+    "0xF7": {
+      "name": "emergency_stop",
+      "category": "motion",
+      "description": "Emergency stop command",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0xF7 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xF7 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "notes": [
+        "Added in firmware V1.0.4",
+        "Immediately stops motor movement"
+      ]
+    },
+    "0xFE": {
+      "name": "move_absolute_pulses_enhanced",
+      "category": "motion",
+      "description": "Enhanced absolute motion by pulses",
+      "request": {
+        "dlc": 8,
+        "format": "CAN_ID | 8 | 0xFE | position(int32) | speed(uint16) | CRC",
+        "parameters": [
+          {"name": "position", "type": "int32", "description": "Absolute position in pulses"},
+          {"name": "speed", "type": "uint16", "description": "Movement speed"}
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xFE | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "notes": [
+        "Added in firmware V1.0.4",
+        "Enhanced version of 0xF5 command with additional features"
+      ]
+    }
+  },
+  "categories": {
+    "status": "Commands for reading motor status, encoder values, and system state",
+    "motion": "Commands for controlling motor movement and positioning",
+    "control": "Commands for motor control operations (enable, disable, protection)",
+    "configuration": "Commands for motor setup, calibration, and parameter setting"
+  },
+  "firmware_history": {
+    "1.0.6": ["0x35", "0x36", "0x41"],
+    "1.0.5": ["0x94"],
+    "1.0.4": ["0xF7", "0xFE"],
+    "1.0.3": ["0x9A", "0x8F", "0x34"],
+    "1.0.1": ["0x92", "0x8D"]
+  }
+}
