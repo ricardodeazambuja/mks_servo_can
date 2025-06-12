@@ -1,33 +1,52 @@
-# Working with Multiple Axes (`MultiAxisController`)
+# Multi-Axis Control (`MultiAxisController`)
 
-The `MultiAxisController` class is a powerful tool for managing and coordinating multiple `Axis` objects simultaneously. It simplifies tasks that involve group operations, such as enabling all motors, initializing them together, or commanding concurrent movements.
+The `MultiAxisController` class provides coordinated control of multiple motors, enabling synchronized movements and group operations. This is essential for robotic systems where multiple axes must work together.
 
 ## Prerequisites
 
-- A successfully connected `CANInterface` instance. See [Connecting to Motors (Hardware & Simulator)](./connecting.md).
-- Understanding of how to initialize and use individual `Axis` objects. See [Basic Motor Control](./basic_control.md) and subsequent guides.
-- Knowledge of the CAN IDs for all motors you intend to control.
+* Successfully connected `CANInterface` instance. See [Connecting to Motors](./connecting.md).
+* Understanding of [Basic Motor Control](./basic_control.md) with the `Axis` class.
+* Knowledge of [Movement Commands](./movements.md) for individual axes.
 
-## Importing `MultiAxisController`
-
-First, ensure you import the `MultiAxisController` class along with other necessary components:
+## Importing Required Classes
 
 ```python
 import asyncio
-from mks_servo_can import CANInterface, Axis, MultiAxisController, exceptions, const
+from mks_servo_can import CANInterface, Axis, MultiAxisController, exceptions
 from mks_servo_can.kinematics import RotaryKinematics, LinearKinematics
 ```
 
-## Initializing MultiAxisController
+## Creating a MultiAxisController
 
-The controller is initialized with a `CANInterface` instance that will be shared by all axes it manages.
+The `MultiAxisController` manages multiple `Axis` instances and provides group operations:
 
 ```python
-import asyncio
-from mks_servo_can import CANInterface, MultiAxisController
+async def create_multi_axis_setup():
+    # Connect to CAN interface
+    can_interface = CANInterface()
+    await can_interface.connect()
+    
+    # Create individual axes
+    axis_x = Axis(can_interface, motor_can_id=1, name="AxisX", 
+                  kinematics=LinearKinematics(steps_per_mm=100))
+    axis_y = Axis(can_interface, motor_can_id=2, name="AxisY", 
+                  kinematics=LinearKinematics(steps_per_mm=100))
+    axis_z = Axis(can_interface, motor_can_id=3, name="AxisZ", 
+                  kinematics=LinearKinematics(steps_per_mm=200))
+    
+    # Create multi-axis controller
+    controller = MultiAxisController(can_interface)
+    
+    # Add axes to controller
+    controller.add_axis(axis_x)
+    controller.add_axis(axis_y) 
+    controller.add_axis(axis_z)
+    
+    print(f"Multi-axis controller created with axes: {controller.axis_names}")
+    return controller, can_interface
 
-async def initialize_multi_axis_controller_example():
-    # Assume can_if is a connected CANInterface instance
+# Example usage:
+# controller, can_if = await create_multi_axis_setup()
     can_if = CANInterface(use_simulator=True) # Example: using simulator
     await can_if.connect()
     print("CAN Interface connected.")

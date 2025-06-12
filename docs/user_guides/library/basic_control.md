@@ -1,207 +1,266 @@
 # Basic Motor Control (`Axis` class)
 
-Once you have a connected `CANInterface` instance, the next step is to interact with individual motors. The `Axis` class provides a high-level abstraction for controlling a single MKS servo motor. This guide covers the fundamental operations: initializing an `Axis` instance, enabling/disabling the motor, and checking its responsiveness (pinging).
+Once you have a connected `CANInterface` instance, the next step is to interact with individual motors. The `Axis` class provides a high-level abstraction for controlling a single MKS servo motor. This guide covers the fundamental operations: creating an `Axis` instance, initializing it, and controlling the motor.
 
 ## Prerequisites
 
 * A successfully connected `CANInterface` instance (either to the simulator or real hardware). See [Connecting to Motors (Hardware & Simulator)](./connecting.md).
 * Knowledge of the CAN ID of the motor you wish to control.
 
-## Importing `Axis`
+## Importing Required Classes
 
-First, ensure you import the `Axis` class along with other necessary components:
+First, ensure you import the necessary components:
 
 ```python
 import asyncio
-from mks_servo_can import CANInterface, Axis, exceptions, const
-# Assuming you might also use Kinematics later
-from mks_servo_can.kinematics import RotaryKinematics
+from mks_servo_can import CANInterface, Axis, exceptions
+from mks_servo_can.kinematics import RotaryKinematics, LinearKinematics
 ```
 
-## Initializing an Axis Instance
-To control a motor, you need to create an Axis object. It requires a connected `CANInterface` and the `can_id` of the target motor. You can optionally provide a name for easier identification and a kinematics object for unit conversions (covered in a later guide).
+## Creating an Axis Instance
+
+To control a motor, you need to create an `Axis` object. It requires a connected `CANInterface`, the `can_id` of the target motor, and optionally a kinematics object for unit conversions.
 
 ```python
-async def initialize_axis_example(can_interface: CANInterface, motor_can_id: int):
-    # For this basic example, we'll use default RotaryKinematics
-    # You might use LinearKinematics or a custom one depending on your setup
-    default_kinematics = RotaryKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION)
-
-    motor_axis = Axis(
+async def create_axis_example(can_interface: CANInterface, motor_can_id: int):
+    # Create kinematics for unit conversion (degrees for rotary motion)
+    kinematics = RotaryKinematics(steps_per_revolution=16384)  # MKS servo default
+    
+    # Create the axis instance
+    axis = Axis(
         can_interface=can_interface,
-        can_id=motor_can_id,
-        name=f"Motor_{motor_can_id}",
-        kinematics=default_kinematics  # Optional, but good practice
+        motor_can_id=motor_can_id,
+        name=f"Motor_{motor_can_id}",  # Optional, for easier identification
+        kinematics=kinematics
     )
-    print(f"Axis object '{motor_axis.name}' initialized for CAN ID {motor_axis.can_id}.")
-    return motor_axis
+    
+    print(f"Axis '{axis.name}' created for CAN ID {axis.motor_can_id}")
+    return axis
 
-# --- Example Usage (within an async function) ---
-# async def main():
-#     # Assume can_if is a connected CANInterface instance
-#     # can_if = CANInterface(...)
-#     # await can_if.connect()
-#
-#     try:
-#         motor1 = await initialize_axis_example(can_if, 1)
-#         # ... further operations with motor1 ...
-#     finally:
-#         if can_if.is_connected:
-#             await can_if.disconnect()
-#
-# # asyncio.run(main())
+# Example usage:
+# axis = await create_axis_example(can_interface, 1)
 ```
 
-## Key Parameters for Axis Initialization:
+## Key Parameters for Axis Creation:
 * `can_interface`: The active and connected CANInterface instance.
-* `can_id`: The unique CAN identifier of the motor (integer, typically 1-254).
-* `name` (optional): A string name for the axis. Defaults to f"Axis_{can_id}".
-* `kinematics` (optional): A Kinematics object for unit conversions. If not provided, a default RotaryKinematics instance with ENCODER_PULSES_PER_REVOLUTION is used. 
-* `default_timeout_ms` (optional): Default timeout in milliseconds for motor commands. Defaults to `const.DEFAULT_CAN_TIMEOUT_MS`. 
+* `motor_can_id`: The unique CAN identifier of the motor (integer, typically 1-254).
+* `name` (optional): A string name for the axis. Defaults to `f"Axis_{motor_can_id}"`.
+* `kinematics` (optional): A Kinematics object for unit conversions. If not provided, a default RotaryKinematics instance is used.
 
-## Pinging the Motor
-Before sending control commands, it's often useful to check if the motor is present and responding on the CAN bus. The `ping()` method serves this purpose.
+## Initializing the Axis
+
+Before using the motor, you should initialize the axis. This performs communication tests and optionally calibrates the encoder and homes the axis:
+
 ```python
-async def ping_motor_example(axis: Axis):
+async def initialize_axis_example(axis: Axis):
     try:
-        print(f"Pinging {axis.name} (CAN ID {axis.can_id})...")
-        response_time_ms = await axis.ping()
-        if response_time_ms is not None:
-            print(f"{axis.name} responded in {response_time_ms:.2f} ms.")
-            return True
-        else:
-            # This case should ideally be caught by TimeoutError or CommError
-            print(f"{axis.name} did not respond as expected (ping returned None).")
-            return False
-    except exceptions.MotorTimeoutError:
-        print(f"Timeout: {axis.name} did not respond to ping within the timeout period.")
+        print(f"Initializing {axis.name}...")
+        
+        # Basic initialization (communication test only)
+        await axis.initialize(calibrate=False, home=False)
+        print(f"{axis.name} initialized successfully.")
+        
+        return True
+        
+    except exceptions.CommunicationError as e:
+        print(f"Communication error with {axis.name}: {e}")
+        print("Check CAN wiring and motor power.")
         return False
-    except exceptions.MotorCommError as e:
-        print(f"Communication Error with {axis.name}: {e}")
+    except exceptions.MotorError as e:
+        print(f"Motor error with {axis.name}: {e}")
         return False
     except Exception as e:
-        print(f"An unexpected error occurred during ping for {axis.name}: {e}")
+        print(f"Unexpected error initializing {axis.name}: {e}")
         return False
 
-# --- Example Usage (within an async function with an initialized 'motor1' Axis object) ---
-# if await ping_motor_example(motor1):
-#     print(f"{motor1.name} is responsive.")
-# else:
-#     print(f"{motor1.name} is not responsive. Check connections and power.")
+# Example usage:
+# if await initialize_axis_example(axis):
+#     print(f"{axis.name} is ready for use.")
 ```
-The `ping()` method sends a command to read a simple parameter (like the firmware version) and waits for a response. It returns the response time in milliseconds if successful. If the motor doesn't reply within the timeout, a `MotorTimeoutError` is raised.
 
-## Enabling the Motor
-MKS servo motors typically need to be explicitly enabled before they will accept movement commands or actively hold their position. The `enable()` method activates the motor's servo loop.
+## Advanced Initialization
+
+For more thorough setup, you can include encoder calibration and homing:
+
 ```python
-async def enable_motor_example(axis: Axis):
+async def initialize_axis_advanced(axis: Axis):
     try:
-        if axis.is_enabled():
-            print(f"{axis.name} is already enabled.")
-            return True
+        print(f"Performing advanced initialization of {axis.name}...")
+        
+        # Full initialization: communication test + calibration + homing
+        await axis.initialize(calibrate=True, home=True)
+        print(f"{axis.name} fully initialized (calibrated and homed).")
+        
+        return True
+        
+    except exceptions.CalibrationError as e:
+        print(f"Calibration failed for {axis.name}: {e}")
+        return False
+    except exceptions.HomingError as e:
+        print(f"Homing failed for {axis.name}: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error during advanced initialization: {e}")
+        return False
+```
 
-        print(f"Enabling {axis.name}...")
-        await axis.enable_motor()
-        if axis.is_enabled():
+## Enabling and Disabling the Motor
+
+After initialization, you need to enable the motor before it will accept movement commands:
+
+```python
+async def motor_enable_disable_example(axis: Axis):
+    try:
+        # Check current status
+        current_status = await axis.get_current_status()
+        print(f"{axis.name} enabled status: {current_status.get('enabled', 'unknown')}")
+        
+        # Enable the motor
+        if not await axis.is_enabled():
+            print(f"Enabling {axis.name}...")
+            await axis.enable_motor()
             print(f"{axis.name} enabled successfully.")
-            return True
         else:
-            # This state might occur if the command was sent but confirmation wasn't processed correctly
-            # or if an error occurred that didn't raise an exception but prevented enabling.
-            print(f"Attempted to enable {axis.name}, but it's still reported as disabled.")
-            # It's good practice to re-query the status or attempt again if necessary.
-            # For instance, by calling await axis.update_status()
-            return False
-            
-    except exceptions.MotorTimeoutError:
-        print(f"Timeout: {axis.name} did not respond to enable command.")
-        return False
-    except exceptions.MotorOperationError as e:
-        print(f"Operation Error enabling {axis.name}: {e}")
-        return False
-    except Exception as e:
-        print(f"An unexpected error occurred while enabling {axis.name}: {e}")
-        return False
-
-# --- Example Usage ---
-# if await enable_motor_example(motor1):
-#     print(f"{motor1.name} is ready for commands.")
-```
-The `enable()` method sets the motor to servo mode. You can check the enabled state using `axis.is_enabled()`, which returns `True` or `False` based on the last known status (polled or received via commands).
-
-## Disabling the Motor
-Disabling the motor releases it, meaning it will no longer actively try to hold its position or respond to movement commands (other than re-enabling). This is often done when the application finishes or if manual movement of the axis is required.
-```python
-async def disable_motor_example(axis: Axis):
-    try:
-        if not axis.is_enabled():
-            print(f"{axis.name} is already disabled.")
-            return True
-
+            print(f"{axis.name} is already enabled.")
+        
+        # Do some work with the motor here...
+        await asyncio.sleep(1)
+        
+        # Disable the motor when done
         print(f"Disabling {axis.name}...")
         await axis.disable_motor()
-        if not axis.is_enabled():
-            print(f"{axis.name} disabled successfully.")
-            return True
-        else:
-            print(f"Attempted to disable {axis.name}, but it's still reported as enabled.")
-            return False
-
-    except exceptions.MotorTimeoutError:
-        print(f"Timeout: {axis.name} did not respond to disable command.")
-        return False
-    except exceptions.MotorOperationError as e:
-        print(f"Operation Error disabling {axis.name}: {e}")
+        print(f"{axis.name} disabled successfully.")
+        
+        return True
+        
+    except exceptions.MotorError as e:
+        print(f"Motor operation error: {e}")
         return False
     except Exception as e:
-        print(f"An unexpected error occurred while disabling {axis.name}: {e}")
+        print(f"Unexpected error: {e}")
         return False
-
-# --- Example Usage ---
-# await disable_motor_example(motor1)
 ```
 
-The `disable()` method sets the motor to idle/release mode. Similar to `enable()`, you can check the state with `axis.is_enabled()`.
-## Full Example Flow
-Here's a combined example demonstrating the typical sequence:
+## Checking Motor Status
+
+You can query various motor parameters and status:
+
 ```python
-async def basic_motor_operations_flow():
-    # 1. Setup CANInterface (replace with your actual hardware/simulator setup)
-    can_if = CANInterface(use_simulator=True) # Assuming simulator is running
-    motor_id_to_test = 1
-
+async def check_motor_status(axis: Axis):
     try:
-        await can_if.connect()
+        # Get current position in user units (degrees for rotary)
+        position_user = await axis.get_current_position_user()
+        print(f"{axis.name} current position: {position_user:.2f}°")
+        
+        # Get current position in raw steps
+        position_steps = await axis.get_current_position_steps()
+        print(f"{axis.name} current position: {position_steps} steps")
+        
+        # Check if motor is enabled
+        enabled = await axis.is_enabled()
+        print(f"{axis.name} enabled: {enabled}")
+        
+        # Get comprehensive status
+        status = await axis.get_current_status()
+        print(f"{axis.name} status: {status}")
+        
+    except exceptions.CommunicationError as e:
+        print(f"Communication error: {e}")
+    except Exception as e:
+        print(f"Error checking status: {e}")
+```
+
+## Complete Example
+
+Here's a complete example demonstrating the typical sequence:
+
+```python
+async def complete_basic_control_example():
+    # 1. Connect to CAN interface (simulator or hardware)
+    can_interface = CANInterface()  # Auto-detect simulator or use hardware
+    
+    try:
+        await can_interface.connect()
         print("CAN Interface connected.")
-
-        # 2. Initialize Axis
-        # Using default RotaryKinematics for simplicity here
-        motor = Axis(can_if, motor_id_to_test, kinematics=RotaryKinematics())
-        print(f"Axis for motor {motor_id_to_test} initialized.")
-
-        # 3. Ping the motor
-        if not await ping_motor_example(motor):
-            print(f"Motor {motor.can_id} not responding. Aborting.")
-            return
-
-        # 4. Enable the motor
-        if not await enable_motor_example(motor):
-            print(f"Failed to enable motor {motor.can_id}. Aborting.")
+        
+        # 2. Create and initialize axis
+        kinematics = RotaryKinematics(steps_per_revolution=16384)
+        axis = Axis(can_interface, motor_can_id=1, name="TestMotor", kinematics=kinematics)
+        
+        if not await initialize_axis_example(axis):
+            print("Failed to initialize axis. Aborting.")
             return
         
-        print(f"{motor.name} is now enabled and ready.")
-        # ... (Movement commands would go here - covered in the next guide) ...
-        await asyncio.sleep(1) # Placeholder for operations
-
-        # 5. Disable the motor
-        await disable_motor_example(motor)
-        print(f"{motor.name} has been disabled.")
-
-    except exceptions.MKSServoCANError as e:
-        print(f"A library-specific error occurred: {e}")
+        # 3. Enable the motor
+        await axis.enable_motor()
+        print(f"{axis.name} is now enabled and ready.")
+        
+        # 4. Check current status
+        await check_motor_status(axis)
+        
+        # 5. Disable motor when done
+        await axis.disable_motor()
+        print(f"{axis.name} has been disabled.")
+        
+    except exceptions.CANError as e:
+        print(f"CAN interface error: {e}")
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"Unexpected error: {e}")
     finally:
-        if can_if.is_connected
+        if can_interface.is_connected:
+            await can_interface.disconnect()
 
+# Run the example
+# asyncio.run(complete_basic_control_example())
+```
+
+## Next Steps
+
+Once you have basic motor control working:
+* Learn about [Movement Commands](./movements.md) to actually move the motor
+* Explore [Kinematics](./kinematics.md) for different unit systems
+* Check out [Multi-Axis Control](./multi_axis.md) for coordinating multiple motors
+
+## Common Patterns
+
+### Simple Setup for Quick Testing
+```python
+# Quick setup for testing with simulator
+async def quick_axis_setup(motor_id=1):
+    can_if = CANInterface()
+    await can_if.connect()
+    
+    axis = Axis(can_if, motor_id, kinematics=RotaryKinematics())
+    await axis.initialize()
+    await axis.enable_motor()
+    
+    return can_if, axis
+
+# Usage:
+# can_if, axis = await quick_axis_setup(1)
+# # ... use axis ...
+# await can_if.disconnect()
+```
+
+### Error Handling Best Practices
+```python
+async def robust_axis_operation(axis: Axis):
+    try:
+        await axis.enable_motor()
+        # ... do motor operations ...
+        
+    except exceptions.MotorError as e:
+        print(f"Motor error: {e}")
+        # Handle motor-specific errors
+    except exceptions.CommunicationError as e:
+        print(f"Communication error: {e}")
+        # Handle communication timeouts/failures
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+    finally:
+        # Always try to disable motor safely
+        try:
+            await axis.disable_motor()
+        except:
+            pass  # Motor may already be disabled or disconnected
 ```

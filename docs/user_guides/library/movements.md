@@ -1,173 +1,341 @@
 # Movement Commands
 
-The `Axis` class provides several methods for commanding motor movement, catering to different use cases such as moving to a specific position, moving by a certain amount, or running at a continuous speed. This guide details these movement commands.
+The `Axis` class provides several methods for commanding motor movement. This guide covers the different types of movements available: absolute positioning, relative movements, and continuous speed control.
 
 ## Prerequisites
 
 * An `Axis` instance that is initialized and connected. See [Basic Motor Control](./basic_control.md).
-* The motor must be **enabled** using `await axis.enable_motor()` before most movement commands will be accepted.
-* Understanding of how `Kinematics` are used if you intend to work with physical units (degrees, mm) rather than raw motor steps. See [Using Kinematics](./kinematics.md). For simplicity, some examples here will use raw steps, but using kinematics for unit conversion is highly recommended for most applications.
+* The motor must be **enabled** using `await axis.enable_motor()` before movement commands will be accepted.
+* Understanding of [Kinematics](./kinematics.md) for unit conversions is recommended but not required.
 
-## Common Parameters for Movement
+## Movement Method Overview
 
-Many movement commands share common parameters:
+The `Axis` class provides these main movement methods:
+- `move_to_position_abs_user()` - Move to absolute position in user units
+- `move_to_position_abs_pulses()` - Move to absolute position in motor steps
+- `move_relative_user()` - Move relative distance in user units
+- `move_relative_pulses()` - Move relative distance in motor steps
 
-* `speed`: The desired speed for the movement. The units depend on the active `Kinematics` object (e.g., degrees/sec, mm/sec) or steps/sec if no specific kinematics are used or if `use_kinematics=False`.
-* `acceleration` (optional): The desired acceleration for the movement. Units also depend on kinematics (e.g., degrees/sec^2, mm/sec^2) or steps/sec^2. If not provided, the motor's pre-configured acceleration or a library default might be used.
-* `deceleration` (optional): The desired deceleration. Similar to acceleration. Often, if not specified, it defaults to the acceleration value.
-* `use_kinematics` (optional, boolean): Defaults to `True`. If `True`, position, speed, and acceleration values are interpreted according to the `Axis` object's `kinematics` settings (e.g., degrees, mm). If `False`, values are interpreted as raw motor encoder steps. [cite: mks_servo_can_library/mks_servo_can/axis.py]
-* `wait_for_completion` (optional, boolean): Defaults to `True`. If `True`, the method will wait until the motor reports that the movement is complete (or a timeout occurs). If `False`, the command is sent, and the method returns immediately, allowing other operations to proceed while the motor moves. [cite: mks_servo_can_library/mks_servo_can/axis.py]
-* `timeout_ms` (optional, int): Specific timeout in milliseconds for this command. Overrides the `Axis` default timeout.
+## Common Parameters
 
-## 1. Absolute Movement (`move_absolute`)
+Most movement methods share these parameters:
+* `speed_user` or `speed_pulses_per_sec`: Movement speed in user units/sec or pulses/sec
+* `accel_user` or `accel_pulses_per_sec2` (optional): Acceleration in user units/sec² or pulses/sec²
+* `wait` (optional, default `True`): If `True`, waits for movement completion; if `False`, returns immediately
 
-Moves the motor to a specific target position.
+## 1. Absolute Movement (User Units)
+
+Move to a specific position using user-friendly units (degrees, mm, etc.):
 
 ```python
-async def move_absolute_example(axis: Axis, target_position: float, speed: float):
+async def absolute_movement_example(axis: Axis):
     try:
-        print(f"Moving {axis.name} to absolute position {target_position} at speed {speed} (units via kinematics).")
-        # Assuming axis.kinematics is set, e.g., to RotaryKinematics for degrees
-        await axis.move_absolute(
-            target_position=target_position,
-            speed=speed,
-            # acceleration=accel, # Optional
-            wait_for_completion=True
-        )
-        current_pos = await axis.get_current_position()
-        print(f"{axis.name} move complete. Current position: {current_pos:.2f}")
-    except exceptions.MotorTimeoutError:
-        print(f"Timeout: {axis.name} did not complete absolute move.")
-    except exceptions.MotorOperationError as e:
-        print(f"Operation Error during absolute move for {axis.name}: {e}")
-
-# --- Example Usage (assuming 'motor1' is an enabled Axis object) ---
-# await motor1.set_kinematics(RotaryKinematics(steps_per_revolution=16384)) # Example
-# await move_absolute_example(motor1, target_position=90.0, speed=30.0) # Move to 90 degrees at 30 deg/s
-# await move_absolute_example(motor1, target_position=0.0, speed=30.0)   # Move back to 0 degrees
-```
-
-If `use_kinematics=False`, `target_position` would be in raw motor steps.
-
-## 2. Relative Movement (move_relative)
-
-Moves the motor by a specified amount from its current position.
-```python
-async def move_relative_example(axis: Axis, distance: float, speed: float):
-    try:
-        print(f"Moving {axis.name} by relative distance {distance} at speed {speed} (units via kinematics).")
-        initial_pos = await axis.get_current_position(use_kinematics=True)
-        print(f"Initial position: {initial_pos:.2f}")
-
-        await axis.move_relative(
-            distance=distance,
-            speed=speed,
-            wait_for_completion=True
-        )
-        final_pos = await axis.get_current_position(use_kinematics=True)
-        print(f"{axis.name} relative move complete. Final position: {final_pos:.2f}")
-        print(f"Actual distance moved: {final_pos - initial_pos:.2f}")
-
-    except exceptions.MotorTimeoutError:
-        print(f"Timeout: {axis.name} did not complete relative move.")
-    except exceptions.MotorOperationError as e:
-        print(f"Operation Error during relative move for {axis.name}: {e}")
-
-# --- Example Usage ---
-# await motor1.set_kinematics(RotaryKinematics(steps_per_revolution=16384)) # Example
-# await move_relative_example(motor1, distance=45.0, speed=20.0)  # Move 45 degrees forward
-# await asyncio.sleep(1)
-# await move_relative_example(motor1, distance=-45.0, speed=20.0) # Move 45 degrees backward
-```
-A positive distance moves in one direction, and a negative distance moves in the opposite. If `use_kinematics=False`, distance is in raw motor steps.
-
-## 3. Speed Control Mode (`set_speed_mode`)
-Commands the motor to run continuously at a specified speed until explicitly stopped or another movement command is issued. This is also known as velocity mode or jog mode.
-```python
-async def speed_mode_example(axis: Axis, target_speed: float):
-    try:
-        print(f"Setting {axis.name} to speed mode with target speed {target_speed} (units via kinematics).")
-        await axis.set_speed_mode(
-            speed=target_speed
-            # acceleration=accel # Optional
-        )
-        print(f"{axis.name} is now running in speed mode at {target_speed}.")
+        # Get current position first
+        current_pos = await axis.get_current_position_user()
+        print(f"Current position: {current_pos:.2f}°")
         
-        # Let it run for a few seconds
-        await asyncio.sleep(3)
+        # Move to 90 degrees at 30 degrees/second
+        print("Moving to 90°...")
+        await axis.move_to_position_abs_user(
+            target_position_user=90.0,
+            speed_user=30.0,
+            wait=True  # Wait for completion
+        )
         
-        print(f"Stopping {axis.name} from speed mode...")
-        await axis.stop_movement() # or axis.set_speed_mode(speed=0)
-        print(f"{axis.name} stopped.")
+        # Check final position
+        final_pos = await axis.get_current_position_user()
+        print(f"Movement complete. Final position: {final_pos:.2f}°")
         
-    except exceptions.MotorTimeoutError:
-        print(f"Timeout: {axis.name} did not respond to speed mode command.")
-    except exceptions.MotorOperationError as e:
-        print(f"Operation Error during speed mode for {axis.name}: {e}")
+    except exceptions.MotorError as e:
+        print(f"Motor error during movement: {e}")
+    except exceptions.CommunicationError as e:
+        print(f"Communication error: {e}")
 
-# --- Example Usage ---
-# await motor1.set_kinematics(RotaryKinematics(steps_per_revolution=16384)) # Example
-# await speed_mode_example(motor1, target_speed=50.0)  # Run at 50 degrees/sec
-# await asyncio.sleep(1)
-# await speed_mode_example(motor1, target_speed=-25.0) # Run at -25 degrees/sec (reverse)
+# Example usage:
+# await absolute_movement_example(axis)
 ```
-To stop a motor running in speed mode, you can call `axis.set_speed_mode(speed=0)` or `axis.stop_movement()`.
 
-## 4. Stopping Movement (`stop_movement`)
-This command attempts to halt any ongoing motor movement immediately. It's useful as an emergency stop or to interrupt a long move.
+## 2. Relative Movement (User Units)
+
+Move by a specific distance from the current position:
+
 ```python
-async def stop_movement_example(axis: Axis):
+async def relative_movement_example(axis: Axis):
     try:
-        print(f"Attempting to stop any movement on {axis.name}.")
-        await axis.stop_movement()
-        print(f"{axis.name} stop command sent.")
-        # Note: After a stop, the motor might be in an intermediate position.
-        # You might want to query its current position.
-        current_pos = await axis.get_current_position()
-        print(f"Position after stop: {current_pos:.2f}")
-    except exceptions.MotorTimeoutError:
-        print(f"Timeout: {axis.name} did not respond to stop command.")
-    except exceptions.MotorOperationError as e:
-        print(f"Operation Error stopping {axis.name}: {e}")
+        # Get starting position
+        start_pos = await axis.get_current_position_user()
+        print(f"Starting position: {start_pos:.2f}°")
+        
+        # Move 45 degrees clockwise (positive direction)
+        print("Moving +45° relative...")
+        await axis.move_relative_user(
+            distance_user=45.0,
+            speed_user=20.0,
+            wait=True
+        )
+        
+        # Check new position
+        new_pos = await axis.get_current_position_user()
+        print(f"After +45°: {new_pos:.2f}°")
+        
+        # Move 90 degrees counter-clockwise (negative direction)
+        print("Moving -90° relative...")
+        await axis.move_relative_user(
+            distance_user=-90.0,
+            speed_user=20.0,
+            wait=True
+        )
+        
+        # Check final position
+        final_pos = await axis.get_current_position_user()
+        print(f"After -90°: {final_pos:.2f}°")
+        
+    except exceptions.MotorError as e:
+        print(f"Motor error during relative movement: {e}")
 
-# --- Example Usage (e.g., after a non-waiting move or speed mode) ---
-# await motor1.move_absolute(target_position=1000, speed=10, wait_for_completion=False)
-# await asyncio.sleep(0.5) # Let it move a bit
-# await stop_movement_example(motor1)
+# Example usage:
+# await relative_movement_example(axis)
 ```
-The `stop_movement()` command typically uses the motor's configured deceleration (or a default) to ramp down the speed.
 
-## `wait_for_completion` and Asynchronous Movement
-When `wait_for_completion=False` is used with `move_absolute` or `move_relative`, the method returns an `asyncio.Future`. You can await this future later if you need to ensure the move has finished. This allows for concurrent operations:
+## 3. Raw Pulse Movement
+
+For precise control or when working without kinematics, you can command movements in raw motor pulses:
+
 ```python
-async def concurrent_move_example(axis1: Axis, axis2: Axis):
-    print("Starting concurrent moves...")
-    
-    # Start moves without waiting
-    future1 = axis1.move_relative(distance=90, speed=30, wait_for_completion=False)
-    future2 = axis2.move_relative(distance=-90, speed=30, wait_for_completion=False)
-    
-    print("Move commands sent. Doing other work...")
-    await asyncio.sleep(1) # Simulate other operations
-    print("Other work done. Now waiting for moves to complete.")
-    
+async def pulse_movement_example(axis: Axis):
     try:
-        await future1 # Wait for axis1 to finish
-        print(f"{axis1.name} completed its move.")
-        await future2 # Wait for axis2 to finish
-        print(f"{axis2.name} completed its move.")
-    except exceptions.MotorTimeoutError:
-        print("A motor timed out during concurrent move.")
-    except exceptions.MotorOperationError as e:
-        print(f"Operation Error during concurrent move: {e}")
+        # MKS servos typically have 16384 pulses per revolution
+        # So 4096 pulses = 90 degrees
+        target_pulses = 4096  # 90 degrees
+        speed_pulses_per_sec = 1000  # Moderate speed
+        
+        print(f"Moving to {target_pulses} pulses...")
+        await axis.move_to_position_abs_pulses(
+            target_position_pulses=target_pulses,
+            speed_pulses_per_sec=speed_pulses_per_sec,
+            wait=True
+        )
+        
+        # Check position in both pulses and user units
+        pos_pulses = await axis.get_current_position_steps()
+        pos_user = await axis.get_current_position_user()
+        print(f"Final position: {pos_pulses} pulses ({pos_user:.2f}°)")
+        
+    except exceptions.MotorError as e:
+        print(f"Motor error during pulse movement: {e}")
 
-# --- Example (requires two Axis objects, motor1 and motor2) ---
-# await concurrent_move_example(motor1, motor2)
+# Example usage:
+# await pulse_movement_example(axis)
 ```
 
-## Important Considerations
-* Motor Limits: This library layer does not inherently manage software limits. It's the application's responsibility to ensure commanded positions are within safe mechanical ranges.
-* Clearing Errors: If a motor encounters an error (e.g., stall), it might need to be explicitly cleared of errors and re-enabled before accepting new movement commands. See `Reading Motor Status` & `Parameters and Error Handling & Exceptions`.
-* Tuning: Movement smoothness and accuracy can depend on the motor's PID tuning and configured acceleration/deceleration parameters. These are typically set using MKS configuration software or potentially via low-level CAN commands if supported.
+## 4. Non-blocking Movement
 
-This guide provides the foundation for controlling motor movement. For more advanced scenarios, such as coordinating multiple axes or implementing custom unit conversions, refer to the subsequent guides
+Start a movement and do other work while the motor moves:
+
+```python
+async def non_blocking_movement_example(axis: Axis):
+    try:
+        print("Starting non-blocking movement...")
+        
+        # Start movement but don't wait for completion
+        await axis.move_to_position_abs_user(
+            target_position_user=180.0,
+            speed_user=15.0,  # Slower speed for longer movement
+            wait=False  # Don't wait - return immediately
+        )
+        
+        print("Movement started, doing other work...")
+        
+        # Do other work while motor moves
+        for i in range(10):
+            await asyncio.sleep(0.5)
+            
+            # Check if movement is complete
+            status = await axis.get_current_status()
+            position = await axis.get_current_position_user()
+            
+            print(f"  Step {i+1}: Position = {position:.1f}°")
+            
+            # Check if motor has reached target
+            if abs(position - 180.0) < 1.0:  # Within 1 degree
+                print("Movement completed!")
+                break
+        
+    except exceptions.MotorError as e:
+        print(f"Motor error during non-blocking movement: {e}")
+
+# Example usage:
+# await non_blocking_movement_example(axis)
+```
+
+## 5. Movement with Custom Acceleration
+
+Control acceleration and deceleration for smooth movements:
+
+```python
+async def custom_acceleration_example(axis: Axis):
+    try:
+        print("Movement with custom acceleration...")
+        
+        await axis.move_to_position_abs_user(
+            target_position_user=360.0,  # Full rotation
+            speed_user=45.0,             # 45 degrees/second
+            accel_user=90.0,             # 90 degrees/second²
+            wait=True
+        )
+        
+        print("Smooth movement complete!")
+        
+    except exceptions.MotorError as e:
+        print(f"Motor error during accelerated movement: {e}")
+
+# Example usage:
+# await custom_acceleration_example(axis)
+```
+
+## 6. Emergency Stop
+
+Stop the motor immediately:
+
+```python
+async def emergency_stop_example(axis: Axis):
+    try:
+        # Start a long movement
+        print("Starting long movement...")
+        await axis.move_to_position_abs_user(
+            target_position_user=720.0,  # Two full rotations
+            speed_user=10.0,              # Slow speed for long movement
+            wait=False  # Don't wait
+        )
+        
+        # Let it run for a bit
+        await asyncio.sleep(2.0)
+        
+        # Emergency stop
+        print("Emergency stop!")
+        await axis.emergency_stop()
+        
+        # Check where it stopped
+        final_pos = await axis.get_current_position_user()
+        print(f"Stopped at position: {final_pos:.2f}°")
+        
+    except exceptions.MotorError as e:
+        print(f"Motor error during emergency stop: {e}")
+
+# Example usage:
+# await emergency_stop_example(axis)
+```
+
+## 7. Speed Limits and Safety
+
+Always consider speed limits based on your mechanical system:
+
+```python
+async def safe_movement_example(axis: Axis):
+    # Define safe limits for your system
+    MAX_SPEED_USER = 60.0      # degrees/second
+    MAX_ACCEL_USER = 120.0     # degrees/second²
+    
+    def clamp_speed(speed):
+        return min(abs(speed), MAX_SPEED_USER) * (1 if speed >= 0 else -1)
+    
+    def clamp_accel(accel):
+        return min(abs(accel), MAX_ACCEL_USER)
+    
+    try:
+        # User requests fast movement
+        requested_speed = 100.0    # Too fast!
+        requested_accel = 200.0    # Too fast!
+        
+        # Apply safety limits
+        safe_speed = clamp_speed(requested_speed)
+        safe_accel = clamp_accel(requested_accel)
+        
+        print(f"Requested: {requested_speed}°/s, {requested_accel}°/s²")
+        print(f"Using safe: {safe_speed}°/s, {safe_accel}°/s²")
+        
+        await axis.move_to_position_abs_user(
+            target_position_user=90.0,
+            speed_user=safe_speed,
+            accel_user=safe_accel,
+            wait=True
+        )
+        
+        print("Safe movement complete!")
+        
+    except exceptions.MotorError as e:
+        print(f"Motor error: {e}")
+
+# Example usage:
+# await safe_movement_example(axis)
+```
+
+## Complete Movement Example
+
+Here's a comprehensive example showing different movement types:
+
+```python
+async def complete_movement_demo():
+    # Setup (assuming simulator is running)
+    can_interface = CANInterface()
+    await can_interface.connect()
+    
+    # Create axis with rotary kinematics (degrees)
+    kinematics = RotaryKinematics(steps_per_revolution=16384)
+    axis = Axis(can_interface, motor_can_id=1, kinematics=kinematics)
+    
+    try:
+        # Initialize and enable
+        await axis.initialize()
+        await axis.enable_motor()
+        
+        print("=== Movement Demo ===")
+        
+        # 1. Absolute movements
+        print("1. Absolute movements...")
+        await axis.move_to_position_abs_user(90.0, speed_user=30.0)
+        await asyncio.sleep(1)
+        await axis.move_to_position_abs_user(180.0, speed_user=30.0)
+        await asyncio.sleep(1)
+        
+        # 2. Relative movements
+        print("2. Relative movements...")
+        await axis.move_relative_user(90.0, speed_user=20.0)   # +90°
+        await asyncio.sleep(1)
+        await axis.move_relative_user(-180.0, speed_user=20.0) # -180°
+        await asyncio.sleep(1)
+        
+        # 3. Return to zero
+        print("3. Returning to zero...")
+        await axis.move_to_position_abs_user(0.0, speed_user=45.0)
+        
+        print("Movement demo complete!")
+        
+    except Exception as e:
+        print(f"Error during demo: {e}")
+    finally:
+        # Cleanup
+        try:
+            await axis.disable_motor()
+        except:
+            pass
+        await can_interface.disconnect()
+
+# Run the demo:
+# asyncio.run(complete_movement_demo())
+```
+
+## Best Practices
+
+1. **Always check motor status** before commanding movements
+2. **Use appropriate speeds** for your mechanical system
+3. **Handle timeouts gracefully** - motors may not reach target due to mechanical issues
+4. **Use emergency stop** when needed for safety
+5. **Disable motors** when finished to save power and allow manual movement
+6. **Consider using user units** (degrees, mm) instead of raw pulses for readability
+
+## Next Steps
+
+* Learn about [Multi-Axis Control](./multi_axis.md) for coordinating multiple motors
+* Explore [Robot Kinematics](./robot_control.md) for higher-level robot control
+* Check out [Error Handling](./error_handling.md) for robust error management

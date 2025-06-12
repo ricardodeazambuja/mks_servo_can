@@ -92,5 +92,76 @@ INFO:VirtualCANBus:VirtualBus sending to lib: SIM_CAN_RECV 001 8 310000000000003
 ## Stopping the Simulator
 To stop the simulator, press `Ctrl+C` in the terminal where it is running. The simulator is designed to perform a graceful shutdown, stopping its internal tasks and closing connections.
 
+## Connecting to the Simulator
+
+Once the simulator is running, you can connect to it from your Python scripts. The library will automatically detect and connect to a running simulator:
+
+```python
+import asyncio
+from mks_servo_can import CANInterface, Axis
+from mks_servo_can.kinematics import RotaryKinematics
+
+async def test_simulator_connection():
+    # CANInterface will auto-detect the running simulator
+    can_interface = CANInterface()
+    
+    try:
+        await can_interface.connect()
+        print("Connected to simulator!")
+        
+        # Create and test an axis
+        axis = Axis(can_interface, motor_can_id=1, 
+                   kinematics=RotaryKinematics())
+        await axis.initialize()
+        await axis.enable_motor()
+        
+        # Test movement
+        await axis.move_to_position_abs_user(90.0, speed_user=30.0)
+        position = await axis.get_current_position_user()
+        print(f"Motor position: {position:.2f}°")
+        
+        await axis.disable_motor()
+        
+    finally:
+        await can_interface.disconnect()
+
+# Run the test
+# asyncio.run(test_simulator_connection())
+```
+
+## Typical Development Workflow
+
+1. **Start the simulator** in one terminal:
+   ```bash
+   mks-servo-simulator --num-motors 4 --start-can-id 1 --latency-ms 5
+   ```
+
+2. **Run your Python scripts** in another terminal that use the library to connect to the simulator.
+
+3. **Monitor the simulator output** to see the CAN messages and motor state changes.
+
+4. **Stop the simulator** with `Ctrl+C` when done.
+
+## Troubleshooting
+
+### Simulator Won't Start
+- Check if another instance is already running on the same port
+- Try a different port: `mks-servo-simulator --port 6790`
+- Ensure the simulator package is properly installed
+
+### Library Can't Connect to Simulator  
+- Verify the simulator is running and shows "Simulator server running"
+- Check that no firewall is blocking the connection
+- Ensure you're using the correct host/port if not using defaults
+
+### Performance Issues
+- Reduce the number of simulated motors if experiencing lag
+- Increase latency if your system is slow: `--latency-ms 10`
+- Use DEBUG logging to identify bottlenecks: `--log-level DEBUG`
+
 ## Next Steps
-Once the simulator is running, you can connect to it from your Python scripts using the `mks-servo-can` library by initializing `CANInterface` with `use_simulator=True` and matching the host/port.
+
+With the simulator running, proceed to:
+* [Connecting to Motors](./connecting.md) to learn how to establish connections
+* [Basic Motor Control](../user_guides/library/basic_control.md) to start controlling motors
+* [Movement Commands](../user_guides/library/movements.md) to learn about motor movements

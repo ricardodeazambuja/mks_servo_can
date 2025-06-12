@@ -9,66 +9,107 @@ Before proceeding, please ensure you have met all the software and hardware prer
 * Python 3.8+
 * `pip` (Python package installer)
 * A virtual environment (recommended)
-* Core dependencies (`python-can` for hardware, `click` for simulator) which can be installed via `pip install -r requirements.txt` from the project root.
 
-## Installing the `mks-servo-can` Library
+## Quick Installation (Recommended)
 
-The library allows you to control MKS servo motors from your Python scripts.
+For most users, install both the library and simulator from the project root:
 
-### For Users (Standard Installation)
+```bash
+# Clone or download the project
+git clone <repository-url>
+cd mks_servo_can
 
-If you intend to use the library as a dependency in your project:
-1.  Navigate to the `mks_servo_can_library` directory within the project.
-    ```bash
-    cd path/to/mks_servo_can/mks_servo_can_library
-    ```
-2.  Install using pip:
-    ```bash
-    pip install .
-    ```
+# Create and activate virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-### For Developers (Editable Installation)
+# Install library in editable mode
+cd mks_servo_can_library
+pip install -e .
+cd ..
 
-If you plan to modify or contribute to the library, an editable installation is recommended. This links the installed package directly to your source code, so changes are reflected immediately.
-1.  Navigate to the `mks_servo_can_library` directory within the project.
-    ```bash
-    cd path/to/mks_servo_can/mks_servo_can_library
-    ```
-2.  Install in editable mode:
-    ```bash
-    pip install -e .
-    ```
+# Install simulator in editable mode  
+cd mks_servo_simulator
+pip install -e .
+cd ..
+```
 
-## Installing the `mks-servo-simulator` CLI Tool
+This installs both packages in editable mode, making the `mks-servo-simulator` command available and allowing you to import `mks_servo_can` in your Python scripts.
 
-The simulator allows you to test your control logic without physical hardware.
+## Verifying Installation
 
-### For Users (Standard Installation)
+Test that everything is installed correctly:
 
-If you just want to use the simulator:
-1.  Navigate to the `mks_servo_simulator` directory within the project.
-    ```bash
-    cd path/to/mks_servo_can/mks_servo_simulator
-    ```
-2.  Install using pip:
-    ```bash
-    pip install .
-    ```
-This will make the `mks-servo-simulator` command available in your shell path (if your virtual environment's script directory is in the PATH).
+### Test Library Import
+```bash
+python -c "import mks_servo_can; print('Library installed successfully!')"
+```
 
-### For Developers (Editable Installation)
+### Test Simulator Command
+```bash
+mks-servo-simulator --help
+```
 
-For developing or modifying the simulator:
-1.  Navigate to the `mks_servo_simulator` directory within the project.
-    ```bash
-    cd path/to/mks_servo_can/mks_servo_simulator
-    ```
-2.  Install in editable mode:
-    ```bash
-    pip install -e .
-    ```
+You should see the simulator help text if installation was successful.
 
-This also makes the `mks-servo-simulator` command available and reflects source code changes immediately.
+### Test with Examples
+```bash
+# Start the simulator (in one terminal)
+mks-servo-simulator --num-motors 4 --start-can-id 1 --latency-ms 5
+
+# Run an example (in another terminal)
+cd examples
+python benchmark_command_latency.py
+```
+
+## Detailed Installation Options
+
+### Installing the `mks-servo-can` Library Only
+
+If you only need the library (not the simulator):
+
+```bash
+cd mks_servo_can_library
+pip install .  # Standard installation
+# OR
+pip install -e .  # Editable installation (for development)
+```
+
+### Installing the `mks-servo-simulator` Only
+
+If you only need the simulator:
+
+```bash
+cd mks_servo_simulator  
+pip install .  # Standard installation
+# OR
+pip install -e .  # Editable installation (for development)
+```
+
+## Hardware Dependencies (Optional)
+
+For connecting to real hardware, install python-can:
+
+```bash
+pip install python-can
+```
+
+This is **not required** if you only plan to use the simulator.
+
+## Development Setup
+
+For contributing to the project:
+
+```bash
+# Install both packages in editable mode
+cd mks_servo_can_library
+pip install -e .
+cd ../mks_servo_simulator
+pip install -e .
+
+# Install development dependencies (if available)
+pip install -r requirements-dev.txt  # If this file exists
+```
 
 ## Development Note on `PYTHONPATH`
 
