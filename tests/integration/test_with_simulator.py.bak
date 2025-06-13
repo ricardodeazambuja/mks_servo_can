@@ -2,9 +2,6 @@
 # This line specifies the path to the test file within the project structure.
 # It's an integration test file, meaning it tests the interaction between different parts of the system,
 # specifically focusing on tests that utilize the MKS Servo Simulator.
-#
-# NOTE: This file has been updated to use the shared conftest.py fixtures,
-# but the local fixtures are kept for backward compatibility.
 
 import math
 
@@ -300,7 +297,6 @@ async def sim_axis1_linear(can_interface_sim: CANInterface):
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 # Marks the test function as an asynchronous test to be run with 'pytest-asyncio'.
 
 async def test_sim_axis_ping(sim_axis1: Axis):
@@ -348,7 +344,6 @@ async def test_sim_axis_ping(sim_axis1: Axis):
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 # Marks this as an asynchronous test function.
 
 async def test_sim_axis_relative_move(sim_axis1: Axis):
@@ -404,7 +399,6 @@ async def test_sim_axis_relative_move(sim_axis1: Axis):
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 # Marks this as an asynchronous test function.
 
 async def test_sim_axis_absolute_move_user(sim_axis1_linear: Axis):
@@ -477,7 +471,6 @@ async def sim_plotter_controller(can_interface_sim: CANInterface) -> MultiAxisCo
     return controller
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_sim_linear_move_with_interpolation(
     # You would need a fixture that provides a connected MultiAxisController
     # with at least two linear axes, similar to the setup in the examples.

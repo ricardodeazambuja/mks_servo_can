@@ -6,6 +6,17 @@ python-can>=3.0.0,<5.0.0
 # For the mks-servo-simulator CLI
 click>=7.0
 
+# Enhanced simulator features (optional but recommended)
+rich>=12.0.0  # For interactive dashboard
+fastapi>=0.68.0  # For HTTP debug API
+uvicorn>=0.15.0  # For HTTP debug API server
+psutil>=5.8.0  # For performance monitoring (optional)
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.20.0
+pytest-mock>=3.0.0
+
 # Note: For development (testing, linting, docs), refer to the [dev]
 # and [docs] extras in the setup.py files of the respective packages:
 #   mks_servo_can_library/setup.py

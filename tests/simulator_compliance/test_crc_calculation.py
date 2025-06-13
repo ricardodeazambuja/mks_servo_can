@@ -3,22 +3,19 @@ Test CRC calculation compliance with MKS manual specification.
 
 Validates that CRC calculation matches the exact algorithm specified
 in the manual: CRC = (ID + byte1 + ... + byteN) & 0xFF
+
+Updated to use shared simulator management fixtures.
 """
 
 import pytest
-import sys
 from pathlib import Path
 from typing import List
-
-# Add library to path
-test_dir = Path(__file__).parent.parent.parent
-lib_path = test_dir / "mks_servo_can_library"
-sys.path.append(str(lib_path))
 
 from mks_servo_can import const
 from mks_servo_can.crc import calculate_crc
 
 
+@pytest.mark.compliance
 class TestCRCCalculation:
     """Test CRC calculation against manual specification"""
     

@@ -3,20 +3,15 @@ Test CAN frame format compliance with MKS manual specification.
 
 Validates that CAN messages use standard frames with correct arbitration IDs,
 DLC values, and data field formats as specified in the manual.
+
+Updated to use shared simulator management fixtures.
 """
 
 import pytest
-import asyncio
-import sys
 import json
 import struct
 from pathlib import Path
 from typing import Dict, List, Optional
-
-# Add library to path
-test_dir = Path(__file__).parent.parent.parent
-lib_path = test_dir / "mks_servo_can_library"
-sys.path.append(str(lib_path))
 
 from mks_servo_can import CANInterface, const
 
@@ -26,6 +21,7 @@ with open(FIXTURES_DIR / "manual_commands_v106.json") as f:
     MANUAL_SPEC = json.load(f)
 
 
+@pytest.mark.compliance
 class TestCANFrameFormat:
     """Test CAN frame format compliance with manual specification"""
     
@@ -134,6 +130,7 @@ class TestCANFrameFormat:
                 f"CRC field not found in last position for {cmd_code}"
 
 
+@pytest.mark.compliance
 class TestMessageStructure:
     """Test message structure compliance"""
     
@@ -164,6 +161,7 @@ class TestMessageStructure:
         assert crc_method == expected_method, f"CRC method mismatch: {crc_method}"
 
 
+@pytest.mark.compliance
 class TestDataTypeCompliance:
     """Test data type specifications from manual"""
     
@@ -212,6 +210,7 @@ class TestDataTypeCompliance:
             assert byte_order == "little-endian", f"Expected little-endian for {data_type}"
 
 
+@pytest.mark.compliance
 class TestCommandCodeMapping:
     """Test command code mapping against manual"""
     

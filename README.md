@@ -33,10 +33,31 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 * **Hardware-less Development**: Test the `mks-servo-can` library without physical motors.
 * **Motor Behavior Modeling**: Simulates multiple MKS servo motors, responding to CAN commands by updating internal states (position, speed, etc.).
 * **Virtual CAN Bus**: Emulates CAN bus interactions, managing communication with the library via a TCP socket.
+* **Rich Interactive Dashboard**: Modern text-based interface with real-time motor status display.
+    * Live motor position, speed, encoder values, and status indicators.
+    * Interactive keyboard controls for motor selection and direct command injection.
+    * Performance monitoring with latency tracking, throughput metrics, and connection health.
+    * Color-coded status indicators and auto-refreshing displays.
+* **Configuration Management**: 
+    * Save/load configuration profiles for different simulator setups.
+    * Motor templates for quick motor configuration (SERVO42D, SERVO57D, high-precision, high-speed).
+    * Live parameter adjustment during runtime without restart.
+    * Configuration file management with automatic persistence.
+* **Advanced Debugging Tools**:
+    * **LLM-Friendly Interface**: JSON output mode and HTTP API for Claude Code integration.
+    * **Command Injection**: Direct command injection with raw hex commands or pre-defined templates.
+    * **Test Scenarios**: Pre-built test sequences for validation and debugging.
+    * **HTTP REST API**: Programmatic access to simulator state, command injection, and configuration management.
+* **Performance Monitoring**:
+    * Real-time latency tracking with percentiles (P95, P99) and histograms.
+    * Throughput metrics, error rates, and success statistics.
+    * Memory usage monitoring and connection health tracking.
+    * Historical performance data and trend analysis.
 * **Configurable Parameters**:
     * Number of simulated motors and their CAN IDs.
     * Simulated CAN bus latency to mimic real-world delays.
     * Motor type and basic characteristics (e.g., steps per revolution).
+    * Individual motor current limits, speed limits, and position constraints.
 * **TCP Socket Interface**: The library connects to the simulator via a TCP socket (default: `localhost:6789`).
 
 ### General
@@ -75,6 +96,15 @@ mks_servo_can/
 │   │   ├── cli.py                   # Command-line interface (using Click)
 │   │   ├── motor_model.py           # Simulates individual motor behavior
 │   │   ├── virtual_can_bus.py       # Manages simulated CAN traffic
+│   │   ├── interface/               # User interface modules ✅ NEW
+│   │   │   ├── __init__.py
+│   │   │   ├── rich_dashboard.py    # Rich console dashboard with real-time display
+│   │   │   ├── interactive_controls.py # Keyboard controls and user interaction
+│   │   │   ├── config_manager.py    # Configuration profiles and live parameter adjustment
+│   │   │   ├── debug_tools.py       # Command injection and testing framework
+│   │   │   ├── performance_monitor.py # Performance tracking and monitoring
+│   │   │   ├── llm_debug_interface.py # LLM-friendly debugging interface
+│   │   │   └── http_debug_server.py # HTTP REST API for programmatic access
 │   │   └── main.py                  # Entry point for the simulator CLI
 │   └── setup.py                     # Packaging script for the simulator
 ├── tests/                           # Unit, integration, HIL, determinism tests
@@ -127,6 +157,11 @@ mks_servo_can/
 **For the simulator CLI:**
 * `click` library: `pip install click`
 
+**For enhanced simulator features (✅ NEW):**
+* `rich` library: `pip install rich` (for interactive dashboard and real-time displays)
+* `fastapi` and `uvicorn`: `pip install fastapi uvicorn` (for HTTP debug API)
+* `psutil`: `pip install psutil` (optional, for advanced performance monitoring)
+
 **For enhanced digitizer features (optional):**
 * `numpy` library: `pip install numpy` (for advanced surface calculations)
 * `matplotlib` library: `pip install matplotlib` (for visualization capabilities)
@@ -171,10 +206,64 @@ Using editable installs (`pip install -e .`) for both packages within the same v
 
 ### 1. Running the Simulator
 
-Open a terminal and start the simulator. For example, to simulate two motors with CAN IDs 1 and 2, and a 5ms round-trip bus latency:
+**Basic Simulator Usage:**
 ```bash
+# Start basic simulator with two motors
 mks-servo-simulator --num-motors 2 --start-can-id 1 --latency-ms 5
 ```
+
+**Rich Interactive Dashboard (✅ NEW):**
+```bash
+# Start with interactive dashboard and real-time monitoring
+mks-servo-simulator --dashboard --num-motors 3 --refresh-rate 200
+```
+Interactive controls include:
+- **Arrow keys**: Select motors  
+- **Space**: Pause/resume updates
+- **h**: Show help  
+- **i**: Command injection mode
+- **p**: Configuration profiles
+- **l**: Live parameter adjustment
+- **+/-**: Adjust refresh rate
+
+**Debug API with Configuration Management (✅ NEW):**
+```bash
+# Start with HTTP API for programmatic access
+mks-servo-simulator --debug-api --dashboard --num-motors 2
+# API available at: http://localhost:8765/docs
+# Configuration endpoints: http://localhost:8765/config/*
+```
+
+**Configuration Profiles (✅ NEW):**
+```bash
+# Load saved configuration profile
+mks-servo-simulator --config-profile my_setup
+
+# Save current configuration as profile
+mks-servo-simulator --save-config my_setup --num-motors 2
+
+# Use custom config directory
+mks-servo-simulator --config-dir ./my_configs --dashboard
+```
+
+**JSON Output for LLMs (✅ NEW):**
+```bash
+# JSON output mode for Claude Code integration
+mks-servo-simulator --json-output --num-motors 2
+```
+
+**Combined Features:**
+```bash
+# Full-featured simulator with all capabilities
+mks-servo-simulator \
+  --dashboard \
+  --debug-api \
+  --num-motors 3 \
+  --refresh-rate 150 \
+  --latency-ms 2.5 \
+  --config-profile production
+```
+
 The simulator will listen for connections from the library (default: `localhost:6789`). Use `mks-servo-simulator --help` for all options.
 
 ### 2. Using the Library
@@ -282,6 +371,71 @@ async def digitizer_example():
     
     await digitizer.cleanup()
     await can_if.disconnect()
+```
+
+### 4. Using the HTTP Debug API (✅ NEW)
+
+The simulator provides a comprehensive REST API for programmatic access and LLM integration:
+
+**Configuration Management:**
+```bash
+# List available configuration profiles
+curl http://localhost:8765/config/profiles
+
+# Load a configuration profile
+curl -X POST http://localhost:8765/config/profiles/my_setup/load
+
+# Get current configuration
+curl http://localhost:8765/config
+
+# Get available motor templates
+curl http://localhost:8765/config/templates
+
+# Apply motor template
+curl -X POST http://localhost:8765/config/templates/servo42d/apply \
+  -H "Content-Type: application/json" \
+  -d '{"motor_id": 1}'
+```
+
+**Live Parameter Adjustment:**
+```bash
+# Get adjustable parameters
+curl http://localhost:8765/config/parameters
+
+# Update CAN bus latency
+curl -X POST http://localhost:8765/config/parameters/latency_ms \
+  -H "Content-Type: application/json" \
+  -d '{"value": 3.5}'
+
+# Update motor current limit
+curl -X POST http://localhost:8765/config/parameters/motors.0.max_current \
+  -H "Content-Type: application/json" \
+  -d '{"value": 1200}'
+```
+
+**Command Injection:**
+```bash
+# Inject raw command
+curl -X POST http://localhost:8765/inject \
+  -H "Content-Type: application/json" \
+  -d '{"motor_id": 1, "command_code": 246, "data_bytes": [1, 0, 100, 0]}'
+
+# Use template command
+curl -X POST http://localhost:8765/inject_template \
+  -H "Content-Type: application/json" \
+  -d '{"motor_id": 1, "template_name": "enable"}'
+```
+
+**Performance Monitoring:**
+```bash
+# Get current performance metrics
+curl http://localhost:8765/performance
+
+# Get performance history
+curl http://localhost:8765/performance/history
+
+# Get connection statistics
+curl http://localhost:8765/performance/connections
 ```
 
 ## Documentation

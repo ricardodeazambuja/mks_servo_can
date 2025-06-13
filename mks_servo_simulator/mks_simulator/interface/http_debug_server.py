@@ -37,7 +37,7 @@ class DebugHTTPServer:
     command execution history.
     """
     
-    def __init__(self, debug_interface: LLMDebugInterface, port: int = 8765, host: str = "127.0.0.1"):
+    def __init__(self, debug_interface: LLMDebugInterface, port: int = 8765, host: str = "127.0.0.1", config_manager=None, live_config=None):
         """
         Initialize HTTP debug server.
         
@@ -45,11 +45,15 @@ class DebugHTTPServer:
             debug_interface: LLMDebugInterface instance providing data
             port: Port to bind server to
             host: Host address to bind to
+            config_manager: Optional configuration manager for profile management
+            live_config: Optional live configuration interface for runtime updates
         """
         if not FASTAPI_AVAILABLE:
             raise ImportError("FastAPI and uvicorn are required for HTTP debug server. Install with: pip install fastapi uvicorn")
         
         self.debug_interface = debug_interface
+        self.config_manager = config_manager
+        self.live_config = live_config
         self.port = port
         self.host = host
         
@@ -81,8 +85,8 @@ class DebugHTTPServer:
             """Get API information and available endpoints"""
             return {
                 "name": "MKS Servo Simulator Debug API",
-                "version": "1.0.0",
-                "description": "Provides programmatic access to simulator state for LLM debugging",
+                "version": "1.1.0",
+                "description": "Provides programmatic access to simulator state and command injection for LLM debugging",
                 "endpoints": {
                     "/status": "Get complete system status",
                     "/motors/{motor_id}": "Get specific motor status",
@@ -91,6 +95,15 @@ class DebugHTTPServer:
                     "/commands": "Get available commands",
                     "/summary": "Get concise debug summary",
                     "/health": "Health check",
+                    "/inject": "Inject raw command (POST)",
+                    "/inject_template": "Inject template command (POST)",
+                    "/templates": "Get available command templates",
+                    "/injection_stats": "Get command injection statistics",
+                    "/run_scenario": "Run test scenario (POST)",
+                    "/performance": "Get current performance metrics",
+                    "/performance/history": "Get performance trends over time",
+                    "/performance/connections": "Get connection details and statistics",
+                    "/performance/reset": "Reset performance metrics (POST)",
                     "/docs": "Interactive API documentation"
                 }
             }
@@ -217,6 +230,266 @@ class DebugHTTPServer:
                 headers={"Content-Disposition": "attachment; filename=simulator_status.json"}
             )
         
+        # Command injection endpoints
+        @self.app.post("/inject", summary="Inject raw command")
+        async def inject_command(request_data: dict):
+            """
+            Inject a raw command into a specified motor.
+            
+            Request body example:
+            ```json
+            {
+                "motor_id": 1,
+                "command_code": 246,  // 0xF6 for speed mode
+                "data_bytes": [1, 0, 100, 0],
+                "expect_response": true
+            }
+            ```
+            
+            Returns:
+                Command execution result with response data
+            """
+            try:
+                motor_id = request_data.get("motor_id")
+                command_code = request_data.get("command_code")
+                data_bytes = request_data.get("data_bytes", [])
+                expect_response = request_data.get("expect_response", True)
+                
+                if motor_id is None or command_code is None:
+                    raise HTTPException(status_code=400, detail="motor_id and command_code are required")
+                
+                # Get command injector from debug interface
+                if not hasattr(self.debug_interface, 'command_injector'):
+                    from .debug_tools import CommandInjector
+                    self.debug_interface.command_injector = CommandInjector(
+                        self.debug_interface.virtual_can_bus, 
+                        self.debug_interface
+                    )
+                
+                result = await self.debug_interface.command_injector.inject_command(
+                    motor_id=motor_id,
+                    command_code=command_code,
+                    data_bytes=data_bytes,
+                    expect_response=expect_response
+                )
+                
+                return {
+                    "success": result.success,
+                    "command_name": result.command_name,
+                    "execution_time_ms": result.execution_time_ms,
+                    "response_data": list(result.response_data) if result.response_data else None,
+                    "error_message": result.error_message
+                }
+                
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.post("/inject_template", summary="Inject template command")
+        async def inject_template_command(request_data: dict):
+            """
+            Inject a pre-defined template command.
+            
+            Request body example:
+            ```json
+            {
+                "motor_id": 1,
+                "template_name": "enable"
+            }
+            ```
+            
+            Returns:
+                Command execution result
+            """
+            try:
+                motor_id = request_data.get("motor_id")
+                template_name = request_data.get("template_name")
+                
+                if motor_id is None or template_name is None:
+                    raise HTTPException(status_code=400, detail="motor_id and template_name are required")
+                
+                # Get command injector from debug interface
+                if not hasattr(self.debug_interface, 'command_injector'):
+                    from .debug_tools import CommandInjector
+                    self.debug_interface.command_injector = CommandInjector(
+                        self.debug_interface.virtual_can_bus, 
+                        self.debug_interface
+                    )
+                
+                result = await self.debug_interface.command_injector.inject_template_command(
+                    motor_id=motor_id,
+                    template_name=template_name
+                )
+                
+                return {
+                    "success": result.success,
+                    "command_name": result.command_name,
+                    "execution_time_ms": result.execution_time_ms,
+                    "response_data": list(result.response_data) if result.response_data else None,
+                    "error_message": result.error_message
+                }
+                
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.get("/templates", summary="Get available command templates")
+        async def get_command_templates():
+            """
+            Get all available command templates.
+            
+            Returns:
+                Dictionary of template names and their specifications
+            """
+            # Get command injector from debug interface
+            if not hasattr(self.debug_interface, 'command_injector'):
+                from .debug_tools import CommandInjector
+                self.debug_interface.command_injector = CommandInjector(
+                    self.debug_interface.virtual_can_bus, 
+                    self.debug_interface
+                )
+            
+            return self.debug_interface.command_injector.get_available_templates()
+        
+        @self.app.get("/injection_stats", summary="Get command injection statistics")
+        async def get_injection_stats():
+            """
+            Get statistics about injected commands.
+            
+            Returns:
+                Statistics including success rates and most used commands
+            """
+            # Get command injector from debug interface
+            if not hasattr(self.debug_interface, 'command_injector'):
+                from .debug_tools import CommandInjector
+                self.debug_interface.command_injector = CommandInjector(
+                    self.debug_interface.virtual_can_bus, 
+                    self.debug_interface
+                )
+            
+            return self.debug_interface.command_injector.get_command_statistics()
+        
+        @self.app.post("/run_scenario", summary="Run test scenario")
+        async def run_test_scenario(request_data: dict):
+            """
+            Run a pre-defined test scenario.
+            
+            Request body example:
+            ```json
+            {
+                "motor_id": 1,
+                "scenario_name": "basic_movement"
+            }
+            ```
+            
+            Returns:
+                List of executed commands with results
+            """
+            try:
+                motor_id = request_data.get("motor_id")
+                scenario_name = request_data.get("scenario_name", "basic_movement")
+                
+                if motor_id is None:
+                    raise HTTPException(status_code=400, detail="motor_id is required")
+                
+                # Get command injector from debug interface
+                if not hasattr(self.debug_interface, 'command_injector'):
+                    from .debug_tools import CommandInjector
+                    self.debug_interface.command_injector = CommandInjector(
+                        self.debug_interface.virtual_can_bus, 
+                        self.debug_interface
+                    )
+                
+                results = await self.debug_interface.command_injector.run_test_scenario(
+                    motor_id=motor_id,
+                    scenario_name=scenario_name
+                )
+                
+                return {
+                    "scenario_name": scenario_name,
+                    "motor_id": motor_id,
+                    "total_commands": len(results),
+                    "successful_commands": sum(1 for r in results if r.success),
+                    "results": [
+                        {
+                            "command_name": r.command_name,
+                            "success": r.success,
+                            "execution_time_ms": r.execution_time_ms,
+                            "error_message": r.error_message
+                        }
+                        for r in results
+                    ]
+                }
+                
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        # Performance monitoring endpoints
+        @self.app.get("/performance", summary="Get current performance metrics")
+        async def get_performance_metrics():
+            """
+            Get current performance monitoring data.
+            
+            Returns:
+                Current performance metrics including latency, throughput, and memory usage
+            """
+            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+                return {"error": "Performance monitoring not enabled"}
+            
+            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            return performance_monitor.get_performance_summary()
+        
+        @self.app.get("/performance/history", summary="Get performance history")
+        async def get_performance_history(minutes: int = 10):
+            """
+            Get performance trends over time.
+            
+            Args:
+                minutes: Number of minutes of history to return
+                
+            Returns:
+                Performance trends data
+            """
+            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+                return {"error": "Performance monitoring not enabled"}
+            
+            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            return performance_monitor.get_performance_trends(minutes)
+        
+        @self.app.get("/performance/connections", summary="Get connection details")
+        async def get_connection_details():
+            """
+            Get detailed information about active connections.
+            
+            Returns:
+                List of connection details with statistics
+            """
+            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+                return {"error": "Performance monitoring not enabled"}
+            
+            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            return {
+                "connections": performance_monitor.get_connection_details(),
+                "summary": {
+                    "total_connections": len(performance_monitor.connections),
+                    "active_connections": sum(1 for conn in performance_monitor.connections.values() if conn.is_active)
+                }
+            }
+        
+        @self.app.post("/performance/reset", summary="Reset performance metrics")
+        async def reset_performance_metrics():
+            """
+            Reset all performance monitoring data.
+            
+            Returns:
+                Confirmation message
+            """
+            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+                raise HTTPException(status_code=404, detail="Performance monitoring not enabled")
+            
+            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            performance_monitor.reset_metrics()
+            
+            return {"message": "Performance metrics reset successfully"}
+        
         # Error handlers
         @self.app.exception_handler(404)
         async def not_found_handler(request: Request, exc: HTTPException):
@@ -231,6 +504,185 @@ class DebugHTTPServer:
                 status_code=500,
                 content={"error": "Internal server error", "detail": str(exc)}
             )
+        
+        # Configuration management endpoints (only if config manager is available)
+        if self.config_manager:
+            @self.app.get("/config", summary="Get current configuration")
+            async def get_configuration():
+                """
+                Get current simulator configuration.
+                
+                Returns the current configuration summary including motors, settings, and features.
+                """
+                return self.config_manager.get_config_summary()
+            
+            @self.app.get("/config/profiles", summary="List configuration profiles")
+            async def list_profiles():
+                """
+                List all available configuration profiles.
+                
+                Returns a list of profile names that can be loaded.
+                """
+                profiles = self.config_manager.list_profiles()
+                return {"profiles": profiles}
+            
+            @self.app.post("/config/profiles/{profile_name}/load", summary="Load configuration profile")
+            async def load_profile(profile_name: str):
+                """
+                Load a specific configuration profile.
+                
+                Args:
+                    profile_name: Name of profile to load
+                
+                Returns:
+                    Success/failure status with details
+                """
+                try:
+                    config = self.config_manager.load_config(profile_name)
+                    if config:
+                        self.config_manager.current_config = config
+                        return {"success": True, "message": f"Loaded profile '{profile_name}'"}
+                    else:
+                        return {"success": False, "message": f"Profile '{profile_name}' not found"}
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
+            
+            @self.app.post("/config/profiles/{profile_name}/save", summary="Save configuration profile")
+            async def save_profile(profile_name: str):
+                """
+                Save current configuration as a profile.
+                
+                Args:
+                    profile_name: Name to save profile as
+                
+                Returns:
+                    Success/failure status with details
+                """
+                try:
+                    if not self.config_manager.current_config:
+                        return {"success": False, "message": "No current configuration to save"}
+                    
+                    success = self.config_manager.save_config(self.config_manager.current_config, profile_name)
+                    if success:
+                        return {"success": True, "message": f"Saved profile '{profile_name}'"}
+                    else:
+                        return {"success": False, "message": f"Failed to save profile '{profile_name}'"}
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
+            
+            @self.app.delete("/config/profiles/{profile_name}", summary="Delete configuration profile")
+            async def delete_profile(profile_name: str):
+                """
+                Delete a configuration profile.
+                
+                Args:
+                    profile_name: Name of profile to delete
+                
+                Returns:
+                    Success/failure status with details
+                """
+                try:
+                    success = self.config_manager.delete_profile(profile_name)
+                    if success:
+                        return {"success": True, "message": f"Deleted profile '{profile_name}'"}
+                    else:
+                        return {"success": False, "message": f"Profile '{profile_name}' not found"}
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
+            
+            @self.app.get("/config/templates", summary="Get motor templates")
+            async def get_motor_templates():
+                """
+                Get available motor templates.
+                
+                Returns a dictionary of template names and their configurations.
+                """
+                templates = self.config_manager.get_motor_templates()
+                # Convert MotorConfig objects to dictionaries for JSON serialization
+                serializable_templates = {}
+                for name, template in templates.items():
+                    template_dict = {
+                        "motor_type": template.motor_type,
+                        "steps_per_rev": template.steps_per_rev,
+                        "max_current": template.max_current,
+                        "max_speed": template.max_speed,
+                        "description": getattr(template, 'description', '')
+                    }
+                    serializable_templates[name] = template_dict
+                return {"templates": serializable_templates}
+            
+            @self.app.post("/config/templates/{template_name}/apply", summary="Apply motor template")
+            async def apply_motor_template(template_name: str, request_data: dict):
+                """
+                Apply a motor template to a specific motor.
+                
+                Args:
+                    template_name: Name of template to apply
+                
+                Request body example:
+                ```json
+                {
+                    "motor_id": 1
+                }
+                ```
+                
+                Returns:
+                    Success/failure status with details
+                """
+                try:
+                    motor_id = request_data.get("motor_id")
+                    if motor_id is None:
+                        raise HTTPException(status_code=400, detail="motor_id is required")
+                    
+                    success = self.config_manager.apply_motor_template(motor_id - 1, template_name)  # Convert to 0-based
+                    if success:
+                        return {"success": True, "message": f"Applied template '{template_name}' to motor {motor_id}"}
+                    else:
+                        return {"success": False, "message": f"Failed to apply template '{template_name}' to motor {motor_id}"}
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
+        
+        # Live configuration endpoints (only if live config is available)
+        if self.live_config:
+            @self.app.get("/config/parameters", summary="Get adjustable parameters")
+            async def get_adjustable_parameters():
+                """
+                Get list of parameters that can be adjusted during runtime.
+                
+                Returns parameter names, types, ranges, and current values.
+                """
+                return {"parameters": self.live_config.get_adjustable_parameters()}
+            
+            @self.app.post("/config/parameters/{parameter_name}", summary="Update parameter")
+            async def update_parameter(parameter_name: str, request_data: dict):
+                """
+                Update a configuration parameter during runtime.
+                
+                Args:
+                    parameter_name: Name of parameter to update
+                
+                Request body example:
+                ```json
+                {
+                    "value": 5.0
+                }
+                ```
+                
+                Returns:
+                    Success/failure status with details
+                """
+                try:
+                    value = request_data.get("value")
+                    if value is None:
+                        raise HTTPException(status_code=400, detail="value is required")
+                    
+                    success = await self.live_config.update_parameter(parameter_name, value)
+                    if success:
+                        return {"success": True, "message": f"Updated {parameter_name} = {value}"}
+                    else:
+                        return {"success": False, "message": f"Failed to update {parameter_name}"}
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
     
     async def start_server(self):
         """

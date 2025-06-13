@@ -448,7 +448,6 @@ class TestRRRArm:
         (0, -30, 60), # Case with negative shoulder angle
         # Add more diverse test cases for angles
     ])
-    @pytest.mark.asyncio
     async def test_rrr_arm_forward_kinematics(
         self,
         rrr_robot_model: RRRArm, # Uses the fixture which now uses LINK_1_LENGTH, LINK_2_LENGTH
@@ -498,7 +497,6 @@ class TestRRRArm:
         _calculate_rrr_fk_for_test(0, 60, -30, LINK_1_LENGTH, LINK_2_LENGTH),
         # Add a few more varied, reachable points
     ])
-    @pytest.mark.asyncio
     async def test_rrr_arm_inverse_kinematics_reachable(
         self,
         rrr_robot_model: RRRArm,
@@ -525,7 +523,6 @@ class TestRRRArm:
         except KinematicsError as e:
             pytest.fail(f"IK failed for a supposedly reachable target {target_pose} (derived from FK): {e}")
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_rrr_arm_ik_unreachable(self, rrr_robot_model: RRRArm):
         """Tests RRRArm IK for points that should be unreachable."""
@@ -555,7 +552,6 @@ class TestRRRArm:
 
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_rrr_arm_move_to_cartesian_pose(
         self, rrr_robot_model: RRRArm, mock_multi_axis_controller: MultiAxisController
     ):
@@ -584,7 +580,6 @@ class TestRRRArm:
             wait_for_all=True
         )
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_rrr_arm_get_current_pose(
         self, rrr_robot_model: RRRArm, mock_multi_axis_controller: MultiAxisController

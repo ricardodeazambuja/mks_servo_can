@@ -1,6 +1,0 @@
-1. Change the --no-simulator / --use-simulator to just ONE argument
-2. Improve the height_map_generator.py. Maybe it could become a multi-motor digitizer as a base class (separate file)
-2.1. Ideally, I should be able to use the digitizer as a way to test the precision of the system by recording something and playing it back
-3. Fix the documentation that is outdated
-4. Test all the examples (not sure how to do it with the robot arm ones)
-5. Are we controlling speeds and accelerations properly?

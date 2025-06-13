@@ -200,7 +200,6 @@ def axis_instance(
 class TestAxisBasicOps:
     # This test class groups tests for basic operations and initialization aspects of the Axis class.
 
-    @pytest.mark.asyncio
     async def test_axis_init(self, mock_can_interface_for_axis: MagicMock):
         # Tests the successful initialization of an Axis object.
         # It verifies that attributes are set correctly based on constructor arguments.
@@ -226,7 +225,6 @@ class TestAxisBasicOps:
         assert axis.is_calibrated() is False
         # Asserts that the default 'is_calibrated' state is False.
 
-    @pytest.mark.asyncio
     async def test_axis_init_default_kinematics(
         self, mock_can_interface_for_axis: MagicMock
     ):
@@ -243,7 +241,6 @@ class TestAxisBasicOps:
         # Verifies that the default 'steps_per_revolution' for the default kinematics
         # matches the library constant 'ENCODER_PULSES_PER_REVOLUTION'.
 
-    @pytest.mark.asyncio
     async def test_axis_init_invalid_can_id(self, mock_can_interface_for_axis: MagicMock):
         # Tests that the Axis constructor raises a 'ParameterError' if an invalid CAN ID is provided.
         # Valid CAN IDs for MKS servos are typically 1 to 0x7FF (2047).
@@ -256,7 +253,6 @@ class TestAxisBasicOps:
             # raises a ParameterError.
             Axis(mock_can_interface_for_axis, 0x800, "AxisHigh")
 
-    @pytest.mark.asyncio
     async def test_enable_motor(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
         # Tests the 'enable_motor' method of the Axis class.
         # It uses the 'axis_instance' fixture (which has a mocked LowLevelAPI)
@@ -280,7 +276,6 @@ class TestAxisBasicOps:
         # Asserts that 'enable_motor' on the LowLevelAPI was NOT called again,
         # because the Axis class should optimize by checking its cached state first.
 
-    @pytest.mark.asyncio
     async def test_disable_motor(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
         # Tests the 'disable_motor' method, similar in structure to 'test_enable_motor'.
         axis_instance._is_enabled = True # Manually set the state to enabled for this test's starting condition.
@@ -301,7 +296,6 @@ class TestAxisBasicOps:
         mock_low_level_api.enable_motor.assert_not_called()
         # Asserts that LowLevelAPI's 'enable_motor' was NOT called again.
 
-    @pytest.mark.asyncio
     async def test_get_current_position_user(
         self, axis_instance: Axis, mock_low_level_api: AsyncMock
     ):
@@ -331,7 +325,6 @@ class TestAxisInitialization:
     # This test class focuses on the 'initialize' method of the Axis class,
     # covering scenarios with and without calibration/homing, and error conditions.
 
-    @pytest.mark.asyncio
     async def test_initialize_success_no_actions(
         self, axis_instance: Axis, mock_low_level_api: AsyncMock
     ):
@@ -358,7 +351,6 @@ class TestAxisInitialization:
         # (as per current Axis.initialize logic: if not calibrate, it sets _is_calibrated = True).
         assert axis_instance._is_calibrated is True 
 
-    @pytest.mark.asyncio
     async def test_initialize_with_calibrate_and_home(
         self, axis_instance: Axis, mock_low_level_api: AsyncMock
     ):
@@ -389,7 +381,6 @@ class TestAxisInitialization:
         # Since 'home_axis' is mocked here, we don't assert '_is_homed' based on this mock directly,
         # but rather trust that 'initialize' correctly delegated the homing call.
 
-    @pytest.mark.asyncio
     async def test_initialize_calibrate_fails_no_home(
         self, axis_instance: Axis, mock_low_level_api: AsyncMock
     ):
@@ -425,7 +416,6 @@ class TestAxisMovement:
     # This test class focuses on the movement methods of the Axis class,
     # such as relative moves, absolute moves, handling of limits, and timeouts.
 
-    @pytest.mark.asyncio
     async def test_move_relative_pulses_success(
         self,
         axis_instance: Axis, # The Axis instance with mocked dependencies.
@@ -520,7 +510,6 @@ class TestAxisMovement:
         # Assert that the encoder value was read after the move (to update Axis's internal position).
         mock_low_level_api.read_encoder_value_addition.assert_called()
 
-    @pytest.mark.asyncio
     async def test_move_relative_pulses_limit_hit(
         self,
         axis_instance: Axis,
@@ -580,7 +569,6 @@ class TestAxisMovement:
         )
 
 
-    @pytest.mark.asyncio
     async def test_move_timeout(
         self,
         axis_instance: Axis,
@@ -642,7 +630,6 @@ class TestAxisMovement:
         )
 
 
-    @pytest.mark.asyncio
     async def test_move_relative_pulses_calls_execute_move(
         self, axis_instance: Axis, mock_low_level_api: AsyncMock # mock_low_level_api not strictly needed for this test but fine as fixture
     ):
@@ -675,7 +662,6 @@ class TestAxisMovement:
             assert kwargs.get("pulses_to_move_for_timeout") == 100 # abs(relative_pulses)
             assert kwargs.get("speed_param_for_calc") == 100 # speed_param
 
-    @pytest.mark.asyncio
     async def test_move_to_position_abs_axis_success(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
         """Tests that move_to_position_abs_axis calls the correct low-level command (0xF5)."""
         # Patch the internal helper to isolate this method's logic
@@ -699,7 +685,6 @@ class TestAxisMovement:
                 axis_instance.can_id, speed, axis_instance.default_accel_param, target_steps
             )
 
-    @pytest.mark.asyncio
     async def test_move_relative_axis_success(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
         """Tests that move_relative_axis calls the correct low-level command (0xF4)."""
         with patch.object(axis_instance, "_execute_move", new_callable=AsyncMock) as mock_exec_move:
@@ -726,7 +711,6 @@ class TestAxisPing:
     # This test class is dedicated to testing the 'ping' functionality of the Axis.
     # Ping is typically used to check if a motor is responsive using a lightweight command.
 
-    @pytest.mark.asyncio
     async def test_ping_success(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
         # Tests a successful ping operation.
         """Test that ping returns True when the low-level call succeeds."""
@@ -744,7 +728,6 @@ class TestAxisPing:
         # was called once with the correct CAN ID.
         mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
 
-    @pytest.mark.asyncio
     async def test_ping_failure_communication_error(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
         # Tests that ping returns False if the underlying low-level call
         # (e.g., read_en_pin_status) raises a CommunicationError (like a timeout).
@@ -760,7 +743,6 @@ class TestAxisPing:
         # Verify the LowLevelAPI method was still called (even though it raised an error).
         mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
 
-    @pytest.mark.asyncio
     async def test_ping_failure_other_mks_servo_error(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
         # Tests that ping returns False if the underlying low-level call raises
         # any other MKSServoError (e.g., MotorError).
@@ -773,7 +755,6 @@ class TestAxisPing:
         assert result is False
         mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
 
-    @pytest.mark.asyncio
     async def test_ping_failure_unexpected_exception(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
         # Tests that ping returns False if the underlying low-level call raises
         # an unexpected non-MKSServoError Exception (e.g., a standard Python Exception).
@@ -786,7 +767,6 @@ class TestAxisPing:
         assert result is False
         mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
 
-    @pytest.mark.asyncio
     async def test_ping_with_timeout_param(self, axis_instance: Axis, mock_low_level_api: AsyncMock):
         # Tests that the ping method can be called with an explicit 'timeout' parameter.
         # The Axis.ping() method uses asyncio.wait_for with this timeout to cap the overall ping operation.

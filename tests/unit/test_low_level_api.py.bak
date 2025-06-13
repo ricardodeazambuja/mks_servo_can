@@ -138,7 +138,6 @@ def _pack_int24_be(value: int) -> bytes:
 class TestLowLevelAPIReads:
     # This test class groups tests specifically for the read operations of the LowLevelAPI.
 
-    @pytest.mark.asyncio
     async def test_read_encoder_value_addition_success(
         self, low_level_api, mock_can_interface
     ):
@@ -201,7 +200,6 @@ class TestLowLevelAPIReads:
         assert args[3] == const.CAN_TIMEOUT_SECONDS
         # Asserts that the fourth argument (timeout) matches the default CAN timeout.
 
-    @pytest.mark.asyncio
     async def test_read_motor_speed_rpm_success(
         self, low_level_api, mock_can_interface
     ):
@@ -226,7 +224,6 @@ class TestLowLevelAPIReads:
         # (Assertions for the sent message would be similar to the previous test if needed for full coverage,
         # but here the focus is on parsing the response for this specific command.)
 
-    @pytest.mark.asyncio
     async def test_read_command_communication_error(
         self, low_level_api, mock_can_interface
     ):
@@ -242,7 +239,6 @@ class TestLowLevelAPIReads:
             # and that the error message matches.
             await low_level_api.read_encoder_value_addition(can_id)
 
-    @pytest.mark.asyncio
     async def test_read_command_response_crc_error(
         self, low_level_api, mock_can_interface
     ):
@@ -263,7 +259,6 @@ class TestLowLevelAPIReads:
             # Asserts that a 'CRCError' is raised with the expected message format.
             await low_level_api.read_encoder_value_addition(can_id)
 
-    @pytest.mark.asyncio
     async def test_read_command_response_dlc_mismatch(
         self, low_level_api, mock_can_interface
     ):
@@ -293,7 +288,6 @@ class TestLowLevelAPIReads:
 class TestLowLevelAPISets:
     # This test class groups tests for the 'set' operations of the LowLevelAPI.
 
-    @pytest.mark.asyncio
     async def test_set_work_mode_success(
         self, low_level_api, mock_can_interface
     ):
@@ -335,7 +329,6 @@ class TestLowLevelAPISets:
         assert args[3] == const.CAN_TIMEOUT_SECONDS
         # Verifies default timeout.
 
-    @pytest.mark.asyncio
     async def test_set_work_mode_failure_response(
         self, low_level_api, mock_can_interface
     ):
@@ -364,14 +357,12 @@ class TestLowLevelAPISets:
             # when the motor indicates the operation failed.
             await low_level_api.set_work_mode(can_id, mode_to_set)
 
-    @pytest.mark.asyncio
     async def test_set_work_mode_invalid_param(self, low_level_api):
         # Tests that 'set_work_mode' raises a 'ParameterError' if an invalid work mode value is provided.
         with pytest.raises(ParameterError, match="Invalid work mode: 99"):
             # 99 is not a valid work mode constant.
             await low_level_api.set_work_mode(0x01, 99)
 
-    @pytest.mark.asyncio
     async def test_calibrate_encoder_failure(
         self, low_level_api, mock_can_interface
     ):
@@ -402,7 +393,6 @@ class TestLowLevelAPISetSystemParamsExtended:
         (const.DIR_CW, "CW"), (const.DIR_CCW, "CCW")
     ])
     # Parameterizes the test with two sets of values: Clockwise (0) and Counter-Clockwise (1).
-    @pytest.mark.asyncio
     async def test_set_motor_direction(self, low_level_api, mock_can_interface, direction_code, direction_name):
         # Tests the 'set_motor_direction' method.
         can_id = 0x01
@@ -428,7 +418,6 @@ class TestLowLevelAPISetSystemParamsExtended:
         # Verifies the sent message.
         assert args[1:] == (can_id, command_code, const.CAN_TIMEOUT_SECONDS)
 
-    @pytest.mark.asyncio
     async def test_set_motor_direction_invalid_param(self, low_level_api):
         # Tests that an invalid direction code raises a ParameterError.
         with pytest.raises(ParameterError, match="Invalid motor direction code: 2"):
@@ -436,7 +425,6 @@ class TestLowLevelAPISetSystemParamsExtended:
 
     @pytest.mark.parametrize("enable_auto_off, enable_code", [(True, 0x01), (False, 0x00)])
     # Parameterizes for enabling (True, 0x01) and disabling (False, 0x00) auto screen off.
-    @pytest.mark.asyncio
     async def test_set_auto_screen_off(self, low_level_api, mock_can_interface, enable_auto_off, enable_code):
         # Tests the 'set_auto_screen_off' method.
         can_id = 0x01
@@ -459,7 +447,6 @@ class TestLowLevelAPISetSystemParamsExtended:
         _assert_message_properties(args[0], can_id, expected_sent_bytes)
         assert args[1:] == (can_id, command_code, const.CAN_TIMEOUT_SECONDS)
 
-    @pytest.mark.asyncio
     async def test_set_can_id_success(self, low_level_api, mock_can_interface):
         # Tests the 'set_can_id' method for changing the motor's CAN ID.
         current_can_id = 0x01
@@ -485,13 +472,11 @@ class TestLowLevelAPISetSystemParamsExtended:
         _assert_message_properties(args[0], current_can_id, expected_sent_bytes)
         assert args[1:] == (current_can_id, command_code, const.CAN_TIMEOUT_SECONDS)
 
-    @pytest.mark.asyncio
     async def test_set_can_id_invalid_new_id(self, low_level_api):
         # Tests that setting an invalid new CAN ID (e.g., > 0x7FF) raises a ParameterError.
         with pytest.raises(ParameterError, match="Invalid new CAN ID: 2048"):
             await low_level_api.set_can_id(0x01, 0x800) # 0x800 (2048) is out of range.
 
-    @pytest.mark.asyncio
     async def test_set_slave_respond_active_success(self, low_level_api, mock_can_interface):
         # Tests the 'set_slave_respond_active' method, which configures if the motor sends
         # responses and if it actively initiates data transmission.
@@ -523,7 +508,6 @@ class TestLowLevelAPISetSystemParamsExtended:
 class TestLowLevelAPIWriteAndHomeCommands:
     # This class tests commands related to writing to IO ports and homing procedures.
 
-    @pytest.mark.asyncio
     async def test_write_io_port_success(self, low_level_api, mock_can_interface):
         # Tests the 'write_io_port' command. This command allows setting the state of output pins.
         can_id = 0x01
@@ -557,7 +541,6 @@ class TestLowLevelAPIWriteAndHomeCommands:
         _assert_message_properties(args[0], can_id, expected_sent_bytes)
         assert args[1:] == (can_id, command_code, const.CAN_TIMEOUT_SECONDS)
 
-    @pytest.mark.asyncio
     async def test_set_home_parameters_success(self, low_level_api, mock_can_interface):
         # Tests the 'set_home_parameters' command, which configures how the homing process behaves.
         can_id = 0x01
@@ -587,7 +570,6 @@ class TestLowLevelAPIWriteAndHomeCommands:
         _assert_message_properties(args[0], can_id, expected_sent_bytes)
         assert args[1:] == (can_id, command_code, const.CAN_TIMEOUT_SECONDS)
 
-    @pytest.mark.asyncio
     async def test_go_home_starts(self, low_level_api, mock_can_interface):
         # Tests the 'go_home' command, specifically checking if it correctly handles the "homing started" response.
         can_id = 0x01
@@ -626,7 +608,6 @@ class TestLowLevelAPIRunCommandsExtended:
 
     @pytest.mark.parametrize("relative_axis_val", [-1000, 0, 1000])
     # Parameterizes the test to run with different relative axis values.
-    @pytest.mark.asyncio
     async def test_run_position_mode_relative_axis_success(self, low_level_api, mock_can_interface, relative_axis_val):
         # Tests the 'run_position_mode_relative_axis' command (0xF4).
         # This command moves the motor by a relative amount specified in "axis units" (often encoder pulses).
@@ -662,7 +643,6 @@ class TestLowLevelAPIRunCommandsExtended:
 
     @pytest.mark.parametrize("save_action, action_code", [(True, const.SPEED_MODE_PARAM_SAVE), (False, const.SPEED_MODE_PARAM_CLEAN)])
     # Parameterizes for saving (True) and cleaning (False) speed mode parameters.
-    @pytest.mark.asyncio
     async def test_save_or_clean_speed_mode_params(self, low_level_api, mock_can_interface, save_action, action_code):
         # Tests the command 0xFF, which is used to save or clear parameters related to speed mode.
         # This command has a peculiar response: it echoes the 'action_code' (0xC8 or 0xCA) instead of 0xFF.
@@ -699,7 +679,6 @@ class TestLowLevelAPIReadSystemParameter:
     # This command is used to read various system parameters by sending 0x00 followed by the
     # command code of the parameter to be read.
 
-    @pytest.mark.asyncio
     async def test_read_system_parameter_success(
         self, low_level_api, mock_can_interface
     ):
@@ -749,7 +728,6 @@ class TestLowLevelAPIReadSystemParameter:
         assert args[2] == param_to_read_cmd_code
         assert args[3] == const.CAN_TIMEOUT_SECONDS # Default timeout.
 
-    @pytest.mark.asyncio
     async def test_read_system_parameter_not_readable(
         self, low_level_api, mock_can_interface
     ):

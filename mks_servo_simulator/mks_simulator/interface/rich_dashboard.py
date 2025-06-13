@@ -66,6 +66,7 @@ class RichDashboard:
         """
         self.virtual_can_bus = virtual_can_bus
         self.debug_interface = debug_interface
+        self.performance_monitor = getattr(virtual_can_bus, 'performance_monitor', None)
         self.console = Console(force_terminal=not no_color)
         self.state = DashboardState(
             start_time=time.time(),
@@ -104,9 +105,10 @@ class RichDashboard:
             Layout(name="communication", ratio=1)
         )
         
-        # Right panel: system info and logs
+        # Right panel: system info, performance, and logs
         self.layout["right_panel"].split_column(
-            Layout(name="system_info", size=8),
+            Layout(name="system_info", size=6),
+            Layout(name="performance", size=8),
             Layout(name="event_log", ratio=1)
         )
     
@@ -137,6 +139,10 @@ class RichDashboard:
                 border_style="yellow"
             )
         
+        # Show detailed view if requested
+        if self.state.show_detailed_view and self.state.selected_motor_id:
+            return self._create_detailed_motor_view()
+        
         # Create table for motor overview
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("ID", style="cyan", width=4)
@@ -147,8 +153,13 @@ class RichDashboard:
         table.add_column("Enabled", width=8)
         
         for motor_id, motor in sorted(self.virtual_can_bus.simulated_motors.items()):
+            # Highlight selected motor
+            row_style = "bold" if motor_id == self.state.selected_motor_id else None
+            
             # Status color coding
             status_style = "green" if motor.is_enabled else "red"
+            if row_style:
+                status_style = f"{status_style} {row_style}"
             status_text = self._get_motor_status_text(motor)
             
             # Position in degrees
@@ -168,16 +179,23 @@ class RichDashboard:
             # Enabled status
             enabled_text = "Yes" if motor.is_enabled else "No"
             
+            # Add selection indicator
+            id_text = f"► {motor_id}" if motor_id == self.state.selected_motor_id else str(motor_id)
+            
             table.add_row(
-                str(motor_id),
+                Text(id_text, style=f"cyan {row_style or ''}".strip()),
                 Text(status_text, style=status_style),
-                pos_text,
-                speed_text,
-                target_text,
-                Text(enabled_text, style=status_style)
+                Text(pos_text, style=row_style),
+                Text(speed_text, style=row_style),
+                Text(target_text, style=row_style),
+                Text(enabled_text, style=f"{status_style}")
             )
         
-        return Panel(table, title="Motor Status", border_style="green")
+        title = "Motor Status"
+        if self.state.selected_motor_id:
+            title += f" (Selected: {self.state.selected_motor_id})"
+        
+        return Panel(table, title=title, border_style="green")
     
     def _create_communication_panel(self) -> Panel:
         """Create the communication panel showing command stats"""
@@ -266,12 +284,46 @@ class RichDashboard:
     
     def _create_footer(self) -> Panel:
         """Create the dashboard footer with controls"""
+        # Show help if requested
+        if hasattr(self, 'interactive_controller') and self.interactive_controller and hasattr(self.interactive_controller, 'show_help') and self.interactive_controller.show_help:
+            help_text = Text(self.interactive_controller.get_help_text(), style="dim")
+            return Panel(help_text, title="Help (press 'h' to hide)", border_style="yellow")
+        
+        # Show injection mode if active
+        if hasattr(self, 'interactive_controller') and self.interactive_controller and hasattr(self.interactive_controller, 'injection_mode') and self.interactive_controller.injection_mode:
+            prompt_text = Text()
+            controller = self.interactive_controller
+            
+            if controller.injection_step == 0:
+                prompt_text.append("Command Code (hex): ", style="bold yellow")
+                prompt_text.append(controller.command_buffer, style="white")
+                prompt_text.append("█", style="yellow")
+            elif controller.injection_step == 1:
+                prompt_text.append("Data Bytes (hex, space-separated): ", style="bold yellow")
+                prompt_text.append(controller.command_buffer, style="white")
+                prompt_text.append("█", style="yellow")
+            
+            return Panel(prompt_text, title=f"Command Injection - Motor {controller.injection_data['motor_id']} (ESC to cancel)", border_style="yellow")
+        
+        # Show command mode if active
+        if hasattr(self, 'interactive_controller') and self.interactive_controller and hasattr(self.interactive_controller, 'command_mode') and self.interactive_controller.command_mode:
+            prompt_text = Text()
+            prompt_text.append("Command: ", style="bold yellow")
+            prompt_text.append(self.interactive_controller.command_buffer, style="white")
+            prompt_text.append("█", style="yellow")  # Cursor
+            return Panel(prompt_text, title="Command Mode (ESC to cancel)", border_style="yellow")
+        
+        # Regular controls
         controls = Text()
         controls.append("Controls: ", style="bold")
-        controls.append("[SPACE] Pause/Resume  ", style="cyan")
-        controls.append("[R] Restart  ", style="cyan")
-        controls.append("[Q] Quit  ", style="cyan")
-        controls.append("[H] Help", style="cyan")
+        controls.append("[SPACE] Pause  ", style="cyan")
+        controls.append("[↑↓] Select  ", style="cyan")
+        controls.append("[E] Enable  ", style="cyan")
+        controls.append("[I] Inject  ", style="cyan")
+        controls.append("[T] Templates  ", style="cyan")
+        controls.append("[C] Command  ", style="cyan")
+        controls.append("[H] Help  ", style="cyan")
+        controls.append("[Q] Quit", style="cyan")
         
         return Panel(Align.center(controls), border_style="blue")
     
@@ -290,6 +342,56 @@ class RichDashboard:
         }
         
         return status_map.get(motor.motor_status_code, f"Status {motor.motor_status_code}")
+    
+    def _create_performance_panel(self) -> Panel:
+        """Create the performance monitoring panel"""
+        if not self.performance_monitor:
+            return Panel(
+                Align.center(Text("Performance monitoring disabled", style="dim")),
+                title="Performance",
+                border_style="yellow"
+            )
+        
+        current_metrics = self.performance_monitor.get_current_metrics()
+        if not current_metrics:
+            return Panel(
+                Align.center(Text("No performance data yet...", style="dim")),
+                title="Performance",
+                border_style="cyan"
+            )
+        
+        # Create performance metrics table
+        perf_table = Table(show_header=False, box=None, pad_edge=False)
+        perf_table.add_column("Metric", style="bold cyan", width=12)
+        perf_table.add_column("Value", style="white")
+        
+        # Latency metrics
+        perf_table.add_row("Avg Latency:", f"{current_metrics.avg_response_time:.1f}ms")
+        perf_table.add_row("P95 Latency:", f"{current_metrics.p95_response_time:.1f}ms")
+        perf_table.add_row("P99 Latency:", f"{current_metrics.p99_response_time:.1f}ms")
+        perf_table.add_row("", "")  # Separator
+        
+        # Throughput metrics
+        perf_table.add_row("Commands/sec:", f"{current_metrics.commands_per_second:.1f}")
+        perf_table.add_row("Total Cmds:", str(current_metrics.total_commands))
+        perf_table.add_row("Error Rate:", f"{current_metrics.error_rate*100:.1f}%")
+        perf_table.add_row("", "")  # Separator
+        
+        # Memory metrics
+        perf_table.add_row("Memory:", f"{current_metrics.memory_usage_mb:.1f}MB")
+        perf_table.add_row("Memory %:", f"{current_metrics.memory_percent:.1f}%")
+        perf_table.add_row("", "")  # Separator
+        
+        # Connection metrics
+        perf_table.add_row("Connections:", str(current_metrics.active_connections))
+        perf_table.add_row("Timeouts:", str(current_metrics.connection_timeouts))
+        
+        # Check for alerts
+        alerts = self.performance_monitor.alerts
+        border_style = "red" if alerts else "cyan"
+        title = "Performance" + (f" ({len(alerts)} alerts)" if alerts else "")
+        
+        return Panel(perf_table, title=title, border_style=border_style)
     
     def add_event(self, message: str):
         """Add an event to the log"""
@@ -311,6 +413,7 @@ class RichDashboard:
         self.layout["motor_status"].update(self._create_motor_status_panel())
         self.layout["communication"].update(self._create_communication_panel())
         self.layout["system_info"].update(self._create_system_info_panel())
+        self.layout["performance"].update(self._create_performance_panel())
         self.layout["event_log"].update(self._create_event_log_panel())
         self.layout["footer"].update(self._create_footer())
     
@@ -340,3 +443,55 @@ class RichDashboard:
         """Set the dashboard refresh rate"""
         self.state.refresh_rate_ms = max(50, min(2000, rate_ms))  # Clamp between 50ms and 2s
         self.add_event(f"Refresh rate set to {self.state.refresh_rate_ms}ms")
+    
+    def _create_detailed_motor_view(self) -> Panel:
+        """Create detailed view for selected motor"""
+        if not self.state.selected_motor_id:
+            return Panel(Text("No motor selected", style="dim"), title="Motor Details", border_style="red")
+        
+        motor = self.virtual_can_bus.simulated_motors.get(self.state.selected_motor_id)
+        if not motor:
+            return Panel(Text("Motor not found", style="dim"), title="Motor Details", border_style="red")
+        
+        # Create detailed information table
+        detail_table = Table(show_header=False, box=None, pad_edge=False)
+        detail_table.add_column("Property", style="bold cyan", width=20)
+        detail_table.add_column("Value", style="white")
+        
+        # Motor identification
+        detail_table.add_row("Motor ID:", str(motor.can_id))
+        detail_table.add_row("Motor Type:", motor.motor_type)
+        detail_table.add_row("Enabled:", "Yes" if motor.is_enabled else "No")
+        detail_table.add_row("Status Code:", f"{motor.motor_status_code} ({self._get_motor_status_text(motor)})")
+        detail_table.add_row("", "")  # Separator
+        
+        # Position information
+        pos_degrees = (motor.position_steps / motor.steps_per_rev_encoder) * 360
+        detail_table.add_row("Position (steps):", str(motor.position_steps))
+        detail_table.add_row("Position (degrees):", f"{pos_degrees:.2f}°")
+        detail_table.add_row("Position (revolutions):", f"{pos_degrees/360:.2f}")
+        
+        if motor.target_position_steps is not None:
+            target_degrees = (motor.target_position_steps / motor.steps_per_rev_encoder) * 360
+            detail_table.add_row("Target (steps):", str(motor.target_position_steps))
+            detail_table.add_row("Target (degrees):", f"{target_degrees:.2f}°")
+            detail_table.add_row("Remaining (steps):", str(abs(motor.target_position_steps - motor.position_steps)))
+        
+        detail_table.add_row("", "")  # Separator
+        
+        # Speed and movement
+        detail_table.add_row("Current Speed (RPM):", f"{motor.current_rpm:.2f}")
+        detail_table.add_row("Max Speed (RPM):", f"{motor.max_rpm}")
+        detail_table.add_row("Steps per Rev:", str(motor.steps_per_rev_encoder))
+        detail_table.add_row("", "")  # Separator
+        
+        # Configuration
+        detail_table.add_row("Acceleration:", f"{motor.acceleration_rpm_per_s} RPM/s")
+        detail_table.add_row("Deceleration:", f"{motor.deceleration_rpm_per_s} RPM/s")
+        detail_table.add_row("Position Limits:", f"{motor.min_position_steps} to {motor.max_position_steps}")
+        
+        return Panel(detail_table, title=f"Motor {self.state.selected_motor_id} Details (press Enter to close)", border_style="magenta")
+    
+    def set_interactive_controller(self, controller):
+        """Set the interactive controller reference"""
+        self.interactive_controller = controller

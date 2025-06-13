@@ -13,6 +13,7 @@ from .motor_model import SimulatedMotor
 
 if TYPE_CHECKING:
     from .interface.llm_debug_interface import LLMDebugInterface
+    from .interface.performance_monitor import PerformanceMonitor
 
 # CRC and constants might be needed if we re-validate here, but motor_model handles it.
 try:
@@ -53,6 +54,11 @@ class VirtualCANBus:
             0  # Milliseconds for command transmission and response
         )
         self.debug_interface: Optional['LLMDebugInterface'] = None
+        self.performance_monitor: Optional['PerformanceMonitor'] = None
+        
+        # Connection tracking for performance monitoring
+        self._client_counter = 0
+        self._client_ids: Dict[Tuple[asyncio.StreamWriter, asyncio.StreamReader], str] = {}
         
         # Alias for compatibility with LLMDebugInterface
         self.motors = self.simulated_motors
@@ -260,12 +266,31 @@ class VirtualCANBus:
                 send_async_completion_to_client,
             )
             
-            # Record command execution for debug interface
-            if self.debug_interface:
-                command_end_time = time.time()
-                response_time = command_end_time - command_start_time
-                success = response_tuple is not None
+            # Record command execution for debug interface and performance monitoring
+            command_end_time = time.time()
+            response_time_ms = (command_end_time - command_start_time) * 1000
+            success = response_tuple is not None
+            
+            # Performance monitoring
+            if self.performance_monitor:
+                self.performance_monitor.record_command_latency(response_time_ms)
                 
+                # Get client ID for connection tracking
+                client_key = (writer, reader)
+                client_id = self._client_ids.get(client_key, "unknown")
+                
+                # Record command event
+                bytes_sent = len(response_tuple[1]) if response_tuple else 0
+                bytes_received = len(full_payload_bytes)
+                
+                self.performance_monitor.record_connection_event(
+                    "command", client_id,
+                    bytes_sent=bytes_sent,
+                    bytes_received=bytes_received
+                )
+            
+            # Debug interface recording
+            if self.debug_interface:
                 # Get command name from manual or use hex code
                 command_name = f"0x{command_code:02X}"
                 if hasattr(self.debug_interface, 'MANUAL_COMMANDS'):
@@ -285,7 +310,7 @@ class VirtualCANBus:
                     command_code=command_code,
                     command_name=command_name,
                     parameters=parameters,
-                    response_time=response_time,
+                    response_time=response_time_ms / 1000,  # Convert back to seconds for debug interface
                     success=success,
                     error_message=None if success else "No response generated"
                 )
@@ -311,6 +336,15 @@ class VirtualCANBus:
         addr = writer.get_extra_info("peername")
         logger.info(f"Client {addr} connected to virtual CAN bus.")
         self.clients.append((writer, reader))
+        
+        # Performance monitoring - track connection
+        client_key = (writer, reader)
+        self._client_counter += 1
+        client_id = f"client_{self._client_counter}_{addr[0]}:{addr[1]}"
+        self._client_ids[client_key] = client_id
+        
+        if self.performance_monitor:
+            self.performance_monitor.record_connection_event("connect", client_id)
         try:
             while True:
                 line_bytes = await reader.readline()
@@ -332,6 +366,12 @@ class VirtualCANBus:
             )
         finally:
             logger.info(f"Closing connection for client {addr}.")
+            
+            # Performance monitoring - track disconnection
+            if self.performance_monitor and client_key in self._client_ids:
+                self.performance_monitor.record_connection_event("disconnect", client_id)
+                del self._client_ids[client_key]
+            
             if (writer, reader) in self.clients:
                 self.clients.remove((writer, reader))
             if not writer.is_closing():

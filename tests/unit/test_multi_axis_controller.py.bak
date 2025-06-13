@@ -109,7 +109,6 @@ class TestMultiAxisControllerSetup:
 class TestMultiAxisControllerGroupOps:
     """Tests for collective operations like enable, disable, get status, etc."""
 
-    @pytest.mark.asyncio
     async def test_enable_all_axes_success(self, populated_controller: MultiAxisController):
         """Test that enable_all_axes calls enable_motor on all managed axes."""
         await populated_controller.enable_all_axes()
@@ -118,7 +117,6 @@ class TestMultiAxisControllerGroupOps:
         for axis in populated_controller.axes.values():
             axis.enable_motor.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_group_op_with_one_failure(self, populated_controller: MultiAxisController):
         """Test that a group operation correctly raises MultiAxisError if one axis fails."""
         # Configure the 'AxisY' mock to raise an error when enable_motor is called
@@ -135,7 +133,6 @@ class TestMultiAxisControllerGroupOps:
         # Ensure the other axis's method was still called
         populated_controller.axes["AxisX"].enable_motor.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_get_all_positions_user_success(self, populated_controller: MultiAxisController):
         """Test successfully fetching all user positions."""
         # Configure mock return values for each axis
@@ -153,7 +150,6 @@ class TestMultiAxisControllerGroupOps:
 class TestMultiAxisControllerMovement:
     """Tests for multi-axis movement commands, including interpolation logic."""
 
-    @pytest.mark.asyncio
     async def test_move_linearly_to_calculates_speeds_correctly(self, populated_controller: MultiAxisController):
         """Unit test for move_linearly_to to verify its interpolation logic."""
         # 1. Setup mocks for this specific test

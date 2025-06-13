@@ -88,7 +88,8 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "mks-servo-simulator=mks_simulator.main:main",
+            "mks_servo_simulator=mks_simulator.main:main",
+            "mks-servo-simulator=mks_simulator.main:main",  # Keep hyphenated version for compatibility
         ],
     },
     project_urls={
