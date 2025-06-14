@@ -39,7 +39,7 @@ except ImportError as exc:
         MOTOR_TYPE_SERVO57D = "SERVO57D"
 
 
-async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, dashboard_task=None, interactive_task=None, performance_monitor=None):
+async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, dashboard_task=None, interactive_task=None, textual_dashboard_task=None, performance_monitor=None):
     """Graceful shutdown for the simulator."""
     logger.info(f"Received exit signal {sig.name}...")
     logger.info("Shutting down simulated motors...")
@@ -85,6 +85,16 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
             logger.info("Interactive controller task cancelled successfully.")
         except Exception as e:
             logger.error(f"Error during interactive controller shutdown: {e}")
+
+    if textual_dashboard_task and not textual_dashboard_task.done():
+        logger.info("Cancelling Textual dashboard task...")
+        textual_dashboard_task.cancel()
+        try:
+            await textual_dashboard_task
+        except asyncio.CancelledError:
+            logger.info("Textual dashboard task cancelled successfully.")
+        except Exception as e:
+            logger.error(f"Error during Textual dashboard task shutdown: {e}")
     
     if performance_monitor:
         logger.info("Stopping performance monitor...")
@@ -327,6 +337,7 @@ def main(
     json_handler: Optional[JSONOutputHandler] = None
     dashboard_instance: Optional[RichDashboard] = None
     dashboard_task: Optional[asyncio.Task] = None
+    textual_dashboard_task: Optional[asyncio.Task] = None # Initialize textual_dashboard_task
     interactive_controller: Optional[InteractiveController] = None
     interactive_task: Optional[asyncio.Task] = None
 
@@ -467,18 +478,10 @@ def main(
                 logger.info("Starting Textual dashboard...")
                 textual_app = TextualDashboard(bus)
                 
-                # Run textual synchronously (it handles its own event loop)
-                textual_app.run()
+                # Run textual asynchronously
+                textual_dashboard_task = loop.create_task(textual_app.run_async())
                 
-                logger.info("Textual dashboard finished")
-                
-                # Explicit cleanup when textual dashboard exits
-                logger.info("Shutting down simulated motors...")
-                if bus:
-                    asyncio.run(bus.stop_all_motors())
-                
-                logger.info("Simulator shutdown complete.")
-                return  # Exit cleanly
+                logger.info("Textual dashboard task created")
                 
             except Exception as e:
                 logger.error(f"Failed to start textual dashboard: {e}")
@@ -494,7 +497,7 @@ def main(
         loop.add_signal_handler(
             s,
             lambda s=s: asyncio.create_task(
-                shutdown(s, loop, server_task, bus, debug_server_task, json_handler, dashboard_task, interactive_task, performance_monitor if 'performance_monitor' in locals() else None)
+                shutdown(s, loop, server_task, bus, debug_server_task, json_handler, dashboard_task, interactive_task, textual_dashboard_task if 'textual_dashboard_task' in locals() else None, performance_monitor if 'performance_monitor' in locals() else None)
             ),
         )
 
@@ -549,6 +552,15 @@ def main(
                     loop.run_until_complete(interactive_task)
                 except asyncio.CancelledError:
                     pass  # Expected
+
+        # Clean up textual dashboard if running
+        if 'textual_dashboard_task' in locals() and textual_dashboard_task and not textual_dashboard_task.done():
+            textual_dashboard_task.cancel()
+            if loop.is_running():
+                try:
+                    loop.run_until_complete(textual_dashboard_task)
+                except asyncio.CancelledError:
+                    pass # Expected
 
         # Final cleanup for motors if shutdown wasn't fully completed by signal
         if (
