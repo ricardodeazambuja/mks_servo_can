@@ -67,15 +67,14 @@ class RichDashboard:
         self.virtual_can_bus = virtual_can_bus
         self.debug_interface = debug_interface
         self.performance_monitor = getattr(virtual_can_bus, 'performance_monitor', None)
+        # Simple console - let Rich auto-detect (works fine without Live)
         self.console = Console(force_terminal=not no_color)
         self.state = DashboardState(
             start_time=time.time(),
             refresh_rate_ms=refresh_rate_ms
         )
         
-        # Layout configuration
-        self.layout = Layout()
-        self._setup_layout()
+        # No layout needed - direct printing approach
         
         # Event log (circular buffer)
         self.event_log: List[str] = []
@@ -85,33 +84,6 @@ class RichDashboard:
         self._last_command_times: Dict[int, float] = {}
         self._command_rates: Dict[int, float] = {}
         
-    def _setup_layout(self):
-        """Configure the dashboard layout structure"""
-        self.layout.split_column(
-            Layout(name="header", size=3),
-            Layout(name="main", ratio=1),
-            Layout(name="footer", size=3)
-        )
-        
-        # Main area split into left and right panels
-        self.layout["main"].split_row(
-            Layout(name="left_panel", ratio=2),
-            Layout(name="right_panel", ratio=1)
-        )
-        
-        # Left panel: motor status and communication
-        self.layout["left_panel"].split_column(
-            Layout(name="motor_status", ratio=2),
-            Layout(name="communication", ratio=1)
-        )
-        
-        # Right panel: system info, performance, and logs
-        self.layout["right_panel"].split_column(
-            Layout(name="system_info", size=6),
-            Layout(name="performance", size=8),
-            Layout(name="event_log", ratio=1)
-        )
-    
     def _create_header(self) -> Panel:
         """Create the dashboard header"""
         uptime = time.time() - self.state.start_time
@@ -143,14 +115,14 @@ class RichDashboard:
         if self.state.show_detailed_view and self.state.selected_motor_id:
             return self._create_detailed_motor_view()
         
-        # Create table for motor overview
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("ID", style="cyan", width=4)
-        table.add_column("Status", width=10)
-        table.add_column("Position", width=12)
-        table.add_column("Speed", width=10)
-        table.add_column("Target", width=12)
-        table.add_column("Enabled", width=8)
+        # Create table for motor overview with compact widths
+        table = Table(show_header=True, header_style="bold magenta", box=None)
+        table.add_column("ID", style="cyan", width=3)
+        table.add_column("Status", width=8)
+        table.add_column("Position", width=9)
+        table.add_column("Speed", width=8)
+        table.add_column("Target", width=9)
+        table.add_column("Enabled", width=6)
         
         for motor_id, motor in sorted(self.virtual_can_bus.simulated_motors.items()):
             # Highlight selected motor
@@ -199,12 +171,12 @@ class RichDashboard:
     
     def _create_communication_panel(self) -> Panel:
         """Create the communication panel showing command stats"""
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Motor ID", width=8)
-        table.add_column("Last Command", width=12)
-        table.add_column("Response Time", width=12)
-        table.add_column("Cmd/sec", width=8)
-        table.add_column("Errors", width=8)
+        table = Table(show_header=True, header_style="bold cyan", box=None)
+        table.add_column("Motor ID", width=6)
+        table.add_column("Last Command", width=10)
+        table.add_column("Response Time", width=10)
+        table.add_column("Cmd/sec", width=6)
+        table.add_column("Errors", width=6)
         
         # Get communication stats from debug interface if available
         if self.debug_interface:
@@ -403,35 +375,61 @@ class RichDashboard:
         if len(self.event_log) > self.max_log_entries:
             self.event_log.pop(0)
     
-    def update_display(self):
-        """Update all dashboard panels"""
-        if self.state.paused:
-            return
-        
-        # Update layout panels
-        self.layout["header"].update(self._create_header())
-        self.layout["motor_status"].update(self._create_motor_status_panel())
-        self.layout["communication"].update(self._create_communication_panel())
-        self.layout["system_info"].update(self._create_system_info_panel())
-        self.layout["performance"].update(self._create_performance_panel())
-        self.layout["event_log"].update(self._create_event_log_panel())
-        self.layout["footer"].update(self._create_footer())
     
     async def run(self):
-        """Run the dashboard with live updates"""
+        """Run the dashboard with simple ANSI positioning"""
         self.add_event("Dashboard started")
         
-        with Live(self.layout, console=self.console, refresh_per_second=1000/self.state.refresh_rate_ms) as live:
-            try:
-                while True:
-                    self.update_display()
-                    await asyncio.sleep(self.state.refresh_rate_ms / 1000.0)
-            except KeyboardInterrupt:
-                self.add_event("Dashboard stopped by user")
-                raise
-            except Exception as e:
-                self.add_event(f"Dashboard error: {e}")
-                raise
+        # Hide cursor and clear screen once
+        print("\033[?25l", end="")  # Hide cursor
+        print("\033[2J", end="")    # Clear screen
+        
+        try:
+            while True:
+                if not self.state.paused:
+                    # Move cursor to top-left
+                    print("\033[H", end="")
+                    
+                    # Render each panel with Rich but print normally
+                    with self.console.capture() as capture:
+                        self.console.print(self._create_header())
+                    print(capture.get(), end="")
+                    
+                    with self.console.capture() as capture:
+                        from rich.columns import Columns
+                        row1 = Columns([
+                            self._create_motor_status_panel(), 
+                            self._create_system_info_panel()
+                        ], equal=False, expand=True)
+                        self.console.print(row1)
+                    print(capture.get(), end="")
+                    
+                    with self.console.capture() as capture:
+                        row2 = Columns([
+                            self._create_communication_panel(),
+                            self._create_performance_panel()
+                        ], equal=False, expand=True)
+                        self.console.print(row2)
+                    print(capture.get(), end="")
+                    
+                    with self.console.capture() as capture:
+                        self.console.print(self._create_event_log_panel())
+                    print(capture.get(), end="")
+                    
+                    with self.console.capture() as capture:
+                        self.console.print(self._create_footer())
+                    print(capture.get(), end="")
+                
+                await asyncio.sleep(self.state.refresh_rate_ms / 1000.0)
+        except KeyboardInterrupt:
+            self.add_event("Dashboard stopped by user")
+            raise
+        except Exception as e:
+            self.add_event(f"Dashboard error: {e}")
+            raise
+        finally:
+            # Restore cursor
+            print("\033[?25h", end="")
     
     def toggle_pause(self):
         """Toggle pause state"""

@@ -14,6 +14,7 @@ from .virtual_can_bus import VirtualCANBus
 from .interface.llm_debug_interface import LLMDebugInterface
 from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
 from .interface.rich_dashboard import RichDashboard
+from .interface.textual_dashboard import TextualDashboard
 from .interface.interactive_controls import InteractiveController
 from .interface.config_manager import ConfigurationManager, LiveConfigurationInterface
 
@@ -194,6 +195,11 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
     help="Enable Rich console dashboard for real-time monitoring.",
 )
 @click.option(
+    "--textual-dashboard",
+    is_flag=True,
+    help="Enable Textual TUI dashboard (experimental).",
+)
+@click.option(
     "--refresh-rate",
     default=200,
     type=int,
@@ -233,6 +239,7 @@ def main(
     debug_api: bool,
     debug_api_port: int,
     dashboard: bool,
+    textual_dashboard: bool,
     refresh_rate: int,
     no_color: bool,
     config_profile: Optional[str],
@@ -284,6 +291,7 @@ def main(
             json_output = loaded_config.json_output
             debug_api = loaded_config.debug_api
             dashboard = loaded_config.dashboard
+            textual_dashboard = getattr(loaded_config, 'textual_dashboard', False)
             
             # Use motors from profile
             num_motors = len(loaded_config.motors)
@@ -302,6 +310,7 @@ def main(
         current_config.json_output = json_output
         current_config.debug_api = debug_api
         current_config.dashboard = dashboard
+        current_config.textual_dashboard = textual_dashboard
         config_manager.current_config = current_config
 
     loop = asyncio.get_event_loop()
@@ -379,19 +388,19 @@ def main(
     server_task = loop.create_task(bus.start_server(host, port))
     
     # Initialize LLM debug interface if needed
-    if json_output or debug_api or dashboard:
+    if json_output or debug_api or dashboard or textual_dashboard:
         debug_interface = LLMDebugInterface(bus.simulated_motors, bus)
         
         # Set up debug interface in the bus for command tracking
         bus.debug_interface = debug_interface
         
-        # Initialize performance monitoring
+        # Initialize performance monitoring (will be started after loop is available)
         from .interface.performance_monitor import PerformanceMonitor
         performance_monitor = PerformanceMonitor(bus, debug_interface)
         bus.performance_monitor = performance_monitor
-        performance_monitor.start_monitoring()
+        # Note: performance_monitor.start_monitoring() will be called after loop setup
         
-        logger.info("Performance monitoring enabled")
+        logger.info("Performance monitoring initialized")
         
         if json_output:
             json_handler = JSONOutputHandler(debug_interface)
@@ -451,6 +460,33 @@ def main(
             except ImportError as e:
                 logger.error(f"Failed to start dashboard: {e}")
                 logger.error("Install Rich library: pip install rich")
+        
+        # Textual Dashboard (Phase 2 test)  
+        if textual_dashboard:
+            try:
+                logger.info("Starting Textual dashboard...")
+                textual_app = TextualDashboard(bus)
+                
+                # Run textual synchronously (it handles its own event loop)
+                textual_app.run()
+                
+                logger.info("Textual dashboard finished")
+                
+                # Explicit cleanup when textual dashboard exits
+                logger.info("Shutting down simulated motors...")
+                if bus:
+                    asyncio.run(bus.stop_all_motors())
+                
+                logger.info("Simulator shutdown complete.")
+                return  # Exit cleanly
+                
+            except Exception as e:
+                logger.error(f"Failed to start textual dashboard: {e}")
+
+    # Start performance monitoring if initialized
+    if 'performance_monitor' in locals() and performance_monitor:
+        performance_monitor.start_monitoring(loop)
+        logger.info("Performance monitoring started")
 
     # Setup signal handlers for graceful shutdown
     signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)

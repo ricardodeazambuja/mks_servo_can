@@ -162,12 +162,33 @@ class PerformanceMonitor:
         
         # Thread-safe locks
         self._lock = threading.RLock()
+        
+        # Deferred start flag for when no event loop is available
+        self._deferred_start = False
     
-    def start_monitoring(self):
+    def start_monitoring(self, loop=None):
         """Start the performance monitoring loop"""
         if not self.running:
             self.running = True
-            self.monitor_task = asyncio.create_task(self._monitoring_loop())
+            
+            # If loop is provided, use it; otherwise try to get the running loop
+            if loop is not None:
+                self.monitor_task = loop.create_task(self._monitoring_loop())
+            else:
+                try:
+                    # Try to get the running loop
+                    current_loop = asyncio.get_running_loop()
+                    self.monitor_task = current_loop.create_task(self._monitoring_loop())
+                except RuntimeError:
+                    # No running loop - defer task creation
+                    self.monitor_task = None
+                    self._deferred_start = True
+    
+    def start_deferred_monitoring_if_needed(self, loop):
+        """Start monitoring if it was deferred due to no event loop"""
+        if hasattr(self, '_deferred_start') and self._deferred_start and self.running:
+            self.monitor_task = loop.create_task(self._monitoring_loop())
+            self._deferred_start = False
     
     def stop_monitoring(self):
         """Stop the performance monitoring"""
