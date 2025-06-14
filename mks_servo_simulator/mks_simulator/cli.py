@@ -272,6 +272,8 @@ def main(
     logging.getLogger("VirtualCANBus").setLevel(numeric_log_level)
     logging.getLogger("SimulatedMotor").setLevel(numeric_log_level)
 
+    # logger.info calls below this point will be affected by the redirection if textual_dashboard is true.
+
     logger.info("Starting MKS Servo CAN Simulator...")
     logger.info(
         f"Config: Host={host}, Port={port}, NumMotors={num_motors}, StartID={start_can_id}, Type={motor_type}, Latency={latency_ms}ms"
@@ -322,6 +324,43 @@ def main(
         current_config.dashboard = dashboard
         current_config.textual_dashboard = textual_dashboard
         config_manager.current_config = current_config
+
+    # Final check and setup for Textual dashboard logging after all config is resolved
+    # The 'textual_dashboard' variable now holds its definitive value.
+    if textual_dashboard:
+        # Check if a file handler for simulator.log has already been added to prevent duplication.
+        # This is important if this main() function could somehow be re-entered or the CLI options re-parsed,
+        # though standard Click usage makes this unlikely for a single run.
+        root_logger = logging.getLogger()
+        has_sim_log_handler = any(
+            isinstance(h, logging.FileHandler) and "simulator.log" in getattr(h, 'baseFilename', '')
+            for h in root_logger.handlers
+        )
+
+        if not has_sim_log_handler:
+            file_handler = logging.FileHandler("simulator.log", mode="w")
+            formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+            file_handler.setFormatter(formatter)
+            # Set file handler to INFO to capture INFO and DEBUG (if root logger is set to DEBUG elsewhere)
+            # Or set to DEBUG explicitly if you always want DEBUG in file regardless of global log_level for console.
+            # For now, respecting the global numeric_log_level for the file handler's max level.
+            file_handler.setLevel(min(numeric_log_level, logging.INFO)) # Ensure it captures at least INFO
+            if numeric_log_level == logging.DEBUG: # If global is debug, file is also debug
+                file_handler.setLevel(logging.DEBUG)
+
+            root_logger.addHandler(file_handler)
+
+            # Adjust existing console StreamHandlers
+            for handler in root_logger.handlers:
+                if isinstance(handler, logging.StreamHandler) and handler is not file_handler:
+                    # Only elevate level of console handlers if they are currently set to INFO or DEBUG
+                    if handler.level < logging.WARNING:
+                        handler.setLevel(logging.WARNING) # Restrict console to WARNING and above
+
+            logger.info("Textual dashboard active. Logging detailed messages to simulator.log. Console will show WARNINGs and above.")
+        else:
+            logger.info("Textual dashboard active and file logger already configured.")
+
 
     loop = asyncio.get_event_loop()
     bus = VirtualCANBus(loop)
