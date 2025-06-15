@@ -1126,21 +1126,31 @@ class SimulatedMotor:
 
     @property
     def work_mode_str(self) -> str:
-        # Assuming 'const' is available (imported from mks_servo_can or fallback)
-        # If not, this map would need to be defined locally in SimulatedMotor or this module.
+        logger.info(f"Motor {self.can_id}: work_mode_str requested. self.work_mode = {self.work_mode} (type: {type(self.work_mode)})")
+        logger.info(f"Motor {self.can_id}: const object type: {type(const)}")
+        logger.info(f"Motor {self.can_id}: const.MODE_SR_VFOC is {getattr(const, 'MODE_SR_VFOC', 'Not Found')}")
+
         _work_modes_map = {
             getattr(const, 'MODE_CR_OPEN', 0): "CR_OPEN",
-            getattr(const, 'MODE_CR_CLOSE', 1): "CR_CLOSE", # Placeholder if const not fully loaded
-            getattr(const, 'MODE_SR_OPEN', 2): "SR_OPEN",   # Placeholder
-            getattr(const, 'MODE_SR_CLOSE', 3): "SR_CLOSE",  # Placeholder
-            getattr(const, 'MODE_PL_VFOC', 4): "PL_VFOC",   # Placeholder
-            getattr(const, 'MODE_SR_VFOC', 5): "SR_VFOC",
+            getattr(const, 'MODE_CR_CLOSE', 1): "CR_CLOSE",
+            getattr(const, 'MODE_SR_OPEN', 2): "SR_OPEN",
+            getattr(const, 'MODE_SR_CLOSE', 3): "SR_CLOSE",
+            getattr(const, 'MODE_PL_VFOC', 4): "PL_VFOC",
+            getattr(const, 'MODE_SR_VFOC', 5): "SR_VFOC", # This should make key 5 if const.MODE_SR_VFOC is 5
         }
-        # Ensure const.WORK_MODES is preferred if available from full library
-        if hasattr(const, 'WORK_MODES') and isinstance(const.WORK_MODES, dict):
-            # Invert the WORK_MODES map from the library for easier lookup: {value: key_name_str}
-            inverted_work_modes_map = {v: k_str for k_str, v in const.WORK_MODES.items()}
-            return inverted_work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
+        logger.info(f"Motor {self.can_id}: _work_modes_map constructed: {_work_modes_map}")
 
-        return _work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
+        # Ensure const.WORK_MODES is preferred if available from full library
+        if hasattr(const, 'WORK_MODES') and isinstance(const.WORK_MODES, dict) and const.WORK_MODES: # Added check for non-empty
+            logger.info(f"Motor {self.can_id}: Using const.WORK_MODES from library: {const.WORK_MODES}")
+            inverted_work_modes_map = {v: k_str for k_str, v in const.WORK_MODES.items()}
+            logger.info(f"Motor {self.can_id}: inverted_work_modes_map: {inverted_work_modes_map}")
+            result = inverted_work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
+            logger.info(f"Motor {self.can_id}: Result from inverted_work_modes_map.get({self.work_mode}): {result}")
+            return result
+
+        logger.info(f"Motor {self.can_id}: Falling back to local _work_modes_map.")
+        result = _work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
+        logger.info(f"Motor {self.can_id}: Result from _work_modes_map.get({self.work_mode}): {result}")
+        return result
         
