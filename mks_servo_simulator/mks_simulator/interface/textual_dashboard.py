@@ -14,6 +14,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, DataTable, Static, Label
 from textual.timer import Timer
+from rich.markup import escape
 
 from mks_servo_can import constants as const
 
@@ -282,7 +283,12 @@ class CommandLogWidget(Static):
                 problematic_record_details += f"success={getattr(record, 'success', 'ErrorAccessing')}, "
                 problematic_record_details += f"resp_time_ms={getattr(record, 'response_time_ms', 'ErrorAccessing')}"
 
-                error_line_for_ui = f"[CmdLog TypeError: {te}. Details: {problematic_record_details}]"
+                # At the beginning of the 'except TypeError as te:' block, ensure 'escape' is available
+                # from rich.markup import escape # This import should be at the top of the file.
+
+                escaped_te = escape(str(te))
+                escaped_details = escape(problematic_record_details)
+                error_line_for_ui = f"[CmdLog TypeError: {escaped_te}. Details: {escaped_details}]"
                 formatted_log_lines.append(error_line_for_ui)
 
                 # --- BEGIN MANUAL LOGGING MODIFICATION ---
