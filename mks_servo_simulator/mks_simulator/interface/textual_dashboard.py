@@ -339,11 +339,17 @@ class TextualDashboard(App):
     
     def __init__(self, virtual_can_bus: "VirtualCANBus" = None, enable_auto_refresh: bool = True, refresh_interval: float = 2.0):
         super().__init__()
+
+        # --- BEGINNING OF CHANGE ---
+        self.log_file = "dashboard.log"  # Directs Textual's internal logging to this file
+        self.log_verbosity = 2           # Set verbosity (1=normal, 2=verbose including debug)
+        # --- END OF CHANGE ---
+
         self.virtual_can_bus = virtual_can_bus
         self.debug_interface = virtual_can_bus.debug_interface if virtual_can_bus else None
         self.enable_auto_refresh = enable_auto_refresh
         self.refresh_interval = refresh_interval
-        self.refresh_timer: Timer = None
+        self.refresh_timer: Timer = None # Timer should be Textual's Timer, not just Optional[Timer]
         self.start_time = time.time()
         self.is_paused = False
         self.selected_motor_id: Optional[int] = None
