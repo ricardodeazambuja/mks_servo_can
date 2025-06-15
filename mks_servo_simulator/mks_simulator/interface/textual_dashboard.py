@@ -229,17 +229,43 @@ class CommandLogWidget(Static):
 
         formatted_log_lines = []
         for record in log_entries_to_display:
-            ts = record.timestamp
-            motor_id_str = f"M{record.motor_id}" if record.motor_id is not None else "SYS"
-            cmd_name = record.command_name if record.command_name else f"0x{record.command_code:02X}"
-            success_str = "Ok" if record.success else "Fail"
-            resp_time_str = f"{record.response_time_ms:.1f}ms" if record.response_time_ms is not None else "-"
+            try:
+                ts_val = record.timestamp
+                ts_str = f"[{ts_val:.2f}]"
 
-            # Basic formatting, can be enhanced
-            line = f"[{ts:.2f}] {motor_id_str}: {cmd_name} - {success_str} ({resp_time_str})"
-            # Truncate long lines if necessary for display
-            max_line_len = 80 # Example max length
-            formatted_log_lines.append(line[:max_line_len] + "..." if len(line) > max_line_len else line)
+                motor_id_val = record.motor_id
+                motor_id_display_str = f"M{motor_id_val}" if motor_id_val is not None else "SYS"
+
+                cmd_code_val = record.command_code
+                cmd_name_val = record.command_name
+                cmd_display_str = str(cmd_name_val) if cmd_name_val else f"0x{cmd_code_val:02X}"
+
+                success_val = record.success
+                success_display_str = "Ok" if success_val else "Fail"
+
+                resp_time_ms_val = record.response_time_ms
+                resp_time_display_str = f"{resp_time_ms_val:.1f}ms" if resp_time_ms_val is not None else "-"
+
+                # Combine parts ensuring they are strings
+                line_parts = [
+                    str(ts_str),
+                    " ",
+                    str(motor_id_display_str),
+                    ": ",
+                    str(cmd_display_str),
+                    " - ",
+                    str(success_display_str),
+                    " (",
+                    str(resp_time_display_str),
+                    ")"
+                ]
+                line = "".join(line_parts)
+
+                max_line_len = 80
+                formatted_log_lines.append(line[:max_line_len] + "..." if len(line) > max_line_len else line)
+            except Exception as e_format:
+                # If formatting a specific record fails, log that and continue
+                formatted_log_lines.append(f"[Error formatting record: {type(e_format).__name__}]")
 
         self.update("\n".join(formatted_log_lines))
 
