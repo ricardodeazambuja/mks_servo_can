@@ -30,6 +30,7 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
         * [Command-Line Options](user_guides/simulator/cli_options.md)
         * [Interpreting Simulator Logs](user_guides/simulator/logs.md)
         * [Simulating Latency and Multiple Motors](user_guides/simulator/advanced_simulation.md)
+        * [HTTP Debug API Guide](user_guides/http_debug_api.md)
 
 4.  **API Reference**
     * **`mks_servo_can` (Library)**

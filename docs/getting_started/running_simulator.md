@@ -92,6 +92,15 @@ INFO:VirtualCANBus:VirtualBus sending to lib: SIM_CAN_RECV 001 8 310000000000003
 ## Stopping the Simulator
 To stop the simulator, press `Ctrl+C` in the terminal where it is running. The simulator is designed to perform a graceful shutdown, stopping its internal tasks and closing connections.
 
+## HTTP Debug API Server
+
+In addition to its core simulation capabilities, the `mks-servo-simulator` also starts an HTTP Debug API server. This server provides programmatic access to the simulator's internal state, allows for command injection, and supports state validation, which can be very useful for automated testing or advanced debugging scenarios.
+
+- **Default URL**: `http://localhost:8765`
+- **Interactive API Docs**: Available at `http://localhost:8765/docs` (Swagger UI) and `http://localhost:8765/redoc` when the simulator is running.
+
+For detailed information on using this API, please refer to the [HTTP Debug API Guide](../user_guides/http_debug_api.md).
+
 ## Connecting to the Simulator
 
 Once the simulator is running, you can connect to it from your Python scripts. The library will automatically detect and connect to a running simulator:
