@@ -410,6 +410,17 @@ class TextualDashboard(App):
             except ValueError:
                 self.selected_motor_id = motor_ids[-1]
 
+        # --- BEGIN MANUAL LOGGING ---
+        import datetime # Ensure available
+        log_file_path = "manual_dashboard_debug.log"
+        timestamp_str = datetime.datetime.now().isoformat()
+        try:
+            with open(log_file_path, "a") as f_log:
+                f_log.write(f"{timestamp_str} [action_select_previous_motor] self.selected_motor_id set to: {self.selected_motor_id}\n")
+        except Exception as e_log:
+            print(f"Failed to write to manual_dashboard_debug.log: {e_log}")
+        # --- END MANUAL LOGGING ---
+
         selected_motor = self.virtual_can_bus.simulated_motors.get(self.selected_motor_id)
         self.query_one(DetailedMotorViewWidget).update_details(selected_motor)
         self.notify(f"Selected Motor ID: {self.selected_motor_id}")
@@ -436,6 +447,17 @@ class TextualDashboard(App):
                     self.selected_motor_id = motor_ids[0] # Wrap around
             except ValueError:
                 self.selected_motor_id = motor_ids[0]
+
+        # --- BEGIN MANUAL LOGGING ---
+        import datetime # Ensure available
+        log_file_path = "manual_dashboard_debug.log"
+        timestamp_str = datetime.datetime.now().isoformat()
+        try:
+            with open(log_file_path, "a") as f_log:
+                f_log.write(f"{timestamp_str} [action_select_next_motor] self.selected_motor_id set to: {self.selected_motor_id}\n")
+        except Exception as e_log:
+            print(f"Failed to write to manual_dashboard_debug.log: {e_log}")
+        # --- END MANUAL LOGGING ---
 
         selected_motor = self.virtual_can_bus.simulated_motors.get(self.selected_motor_id)
         self.query_one(DetailedMotorViewWidget).update_details(selected_motor)
