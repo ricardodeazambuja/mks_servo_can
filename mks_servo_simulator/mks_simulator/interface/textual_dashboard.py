@@ -225,7 +225,7 @@ class CommandLogWidget(Static):
 
         history = self.debug_interface.command_history
         # Get the last N entries, most recent first for display usually, but log is chronological
-        log_entries_to_display = history[-self.max_log_entries:]
+        log_entries_to_display = list(history[-self.max_log_entries:])
 
         formatted_log_lines = []
         for record in log_entries_to_display:
@@ -383,24 +383,29 @@ class TextualDashboard(App):
     
     def action_refresh(self) -> None:
         """Manual refresh action - updates all widgets with real data"""
+        # Try to refresh MotorStatusWidget
         try:
-            # Refresh motor status table
             motor_status_widget = self.query_one(MotorStatusWidget)
             motor_status_widget.refresh_data()
-            
-            # Refresh detailed motor view
+        except Exception as e:
+            self.notify(f'Refresh error (MotorStatus): {type(e).__name__}', severity='error', timeout=10)
+
+        # Try to refresh DetailedMotorViewWidget
+        try:
             detailed_view_widget = self.query_one(DetailedMotorViewWidget)
             selected_motor_object = None
             if self.virtual_can_bus and self.selected_motor_id is not None:
                 selected_motor_object = self.virtual_can_bus.simulated_motors.get(self.selected_motor_id)
             detailed_view_widget.update_details(selected_motor_object)
+        except Exception as e:
+            self.notify(f'Refresh error (DetailView): {type(e).__name__}', severity='error', timeout=10)
 
-            # Refresh command log
+        # Try to refresh CommandLogWidget
+        try:
             command_log_widget = self.query_one(CommandLogWidget)
             command_log_widget.update_log()
-            
         except Exception as e:
-            self.notify(f"Refresh error: {e}", severity="error")
+            self.notify(f'Refresh error (CmdLog): {type(e).__name__}', severity='error', timeout=10)
     
     def action_toggle_pause(self) -> None:
         """Toggle pause/resume of auto-refresh"""
