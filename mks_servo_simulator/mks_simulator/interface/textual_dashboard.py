@@ -6,7 +6,7 @@ Enhanced version with auto-refresh and improved layout.
 import asyncio
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
@@ -17,6 +17,8 @@ from mks_servo_can import constants as const
 
 if TYPE_CHECKING:
     from ..virtual_can_bus import VirtualCANBus
+    from ..motor_model import SimulatedMotor # Added import
+    from .llm_debug_interface import LLMDebugInterface # Add this
 
 
 class MotorStatusWidget(Static):
@@ -32,7 +34,7 @@ class MotorStatusWidget(Static):
     def on_mount(self) -> None:
         """Initialize the motor status table"""
         table = self.query_one(DataTable)
-        table.add_columns("ID", "Status", "Position", "Speed", "Target", "Enabled")
+        table.add_columns("ID", "Status", "Position (units)", "Speed", "Target (units)", "Velocity (u/s)", "WorkMode", "MStep", "Enabled")
         self.refresh_data()
     
     def refresh_data(self) -> None:
@@ -60,35 +62,44 @@ class MotorStatusWidget(Static):
                         # Position in degrees with safe defaults
                         position_steps = getattr(motor, 'position_steps', 0)
                         steps_per_rev = getattr(motor, 'steps_per_rev_encoder', 1)
-                        pos_degrees = (position_steps / steps_per_rev) * 360
-                        position = f"{pos_degrees:.1f}°"
+                        pos_degrees = (position_steps / steps_per_rev) * 360 # This is a simplification if units change
+                        units = getattr(motor, 'kinematics_units', 'N/A')
+                        position = f"{pos_degrees:.1f} {units}"
                         
                         # Speed in RPM
                         current_rpm = getattr(motor, 'current_rpm', 0.0)
-                        speed = f"{current_rpm:.1f} RPM"
+                        speed = f"{current_rpm:.1f} RPM" # This is motor RPM, not user speed
                         
+                        # User velocity
+                        user_velocity = getattr(motor, 'current_speed_user_units_per_sec', 0.0)
+                        velocity_str = f"{user_velocity:.1f} {units}/s"
+
                         # Target position
                         target_position_steps = getattr(motor, 'target_position_steps', None)
                         if target_position_steps is not None:
-                            target_degrees = (target_position_steps / steps_per_rev) * 360
-                            target = f"{target_degrees:.1f}°"
+                            target_degrees = (target_position_steps / steps_per_rev) * 360 # Simplification
+                            target = f"{target_degrees:.1f} {units}"
                         else:
                             target = "None"
                         
                         # Enabled status
                         is_enabled = getattr(motor, 'is_enabled', False)
                         enabled = "Yes" if is_enabled else "No"
+
+                        # Work Mode and Microsteps
+                        work_mode_str = getattr(motor, 'work_mode_str', 'N/A')
+                        microsteps_val = getattr(motor, 'microsteps', 'N/A')
                         
-                        table.add_row(str(motor_id), status, position, speed, target, enabled)
+                        table.add_row(str(motor_id), status, position, speed, target, velocity_str, work_mode_str, str(microsteps_val), enabled)
                     except Exception as e:
                         # Handle individual motor errors gracefully
-                        table.add_row(str(motor_id), "Error", "N/A", "N/A", "N/A", "N/A")
+                        table.add_row(str(motor_id), "Error", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A")
             else:
                 # Fallback to demo data if no bus or connection issues
                 demo_motors = [
-                    ("1", "Disabled", "0.0°", "0.0 RPM", "None", "No"),
-                    ("2", "Disabled", "45.0°", "0.0 RPM", "90.0°", "No"),
-                    ("3", "Disabled", "180.0°", "0.0 RPM", "None", "No"),
+                    ("1", "Disabled", "0.0 deg", "0.0 RPM", "None", "0.0 deg/s", "N/A", "N/A", "No"),
+                    ("2", "Disabled", "45.0 deg", "0.0 RPM", "90.0 deg", "0.0 deg/s", "N/A", "N/A", "No"),
+                    ("3", "Disabled", "180.0 deg", "0.0 RPM", "None", "0.0 deg/s", "N/A", "N/A", "No"),
                 ]
                 for motor_data in demo_motors:
                     table.add_row(*motor_data)
@@ -97,7 +108,7 @@ class MotorStatusWidget(Static):
             try:
                 table = self.query_one(DataTable)
                 table.clear()
-                table.add_row("Error", str(e)[:20], "N/A", "N/A", "N/A", "N/A")
+                table.add_row("Error", str(e)[:20], "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A")
             except:
                 pass
 
@@ -160,6 +171,79 @@ class SystemInfoWidget(Static):
                 pass
 
 
+class DetailedMotorViewWidget(Static):
+    """Widget to display detailed information for a selected motor."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.selected_motor: Optional['SimulatedMotor'] = None
+
+    def on_mount(self) -> None:
+        """Called when the widget is mounted."""
+        self.update_details(None)
+
+    def update_details(self, motor: Optional['SimulatedMotor']) -> None:
+        """Update the displayed motor details."""
+        self.selected_motor = motor
+        if motor:
+            details = []
+            details.append(f"[bold]Motor ID {getattr(motor, 'can_id', 'N/A')}[/bold] ({getattr(motor, 'motor_type', 'N/A')})")
+            details.append(f"  Enabled: {'Yes' if getattr(motor, 'is_enabled', False) else 'No'}")
+            details.append(f"  Work Mode: {getattr(motor, 'work_mode_str', 'N/A')}")
+            details.append(f"  Microsteps: {getattr(motor, 'microsteps', 'N/A')}")
+            units = getattr(motor, 'kinematics_units', 'N/A')
+            details.append(f"  Position: {getattr(motor, 'position_steps', 0.0):.1f} steps ({ (getattr(motor, 'position_steps', 0.0) / getattr(motor, 'steps_per_rev_encoder', 1)) * 360:.1f} {units})")
+            details.append(f"  Target Pos: {getattr(motor, 'target_position_steps', 'None')} steps")
+            details.append(f"  Speed (RPM): {getattr(motor, 'current_rpm', 0.0):.1f}")
+            details.append(f"  Speed (User): {getattr(motor, 'current_speed_user_units_per_sec', 0.0):.1f} {units}/s")
+            details.append(f"  Target RPM: {getattr(motor, 'target_rpm', 0.0):.1f}")
+            details.append(f"  Calibrated: {'Yes' if getattr(motor, 'is_calibrated', False) else 'No'}")
+            details.append(f"  Homed: {'Yes' if getattr(motor, 'is_homed', False) else 'No'}")
+
+            self.update("\n".join(details))
+        else:
+            self.update("Select a motor (Up/Down)")
+
+
+class CommandLogWidget(Static):
+    """Widget to display a log of the most recent commands."""
+
+    def __init__(self, debug_interface: Optional['LLMDebugInterface'] = None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.debug_interface = debug_interface
+        self.max_log_entries = 10
+
+    def on_mount(self) -> None:
+        """Called when the widget is mounted."""
+        self.update_log()
+
+    def update_log(self) -> None:
+        """Update the command log display."""
+        if not self.debug_interface or not self.debug_interface.command_history:
+            self.update("No commands yet.")
+            return
+
+        history = self.debug_interface.command_history
+        # Get the last N entries, most recent first for display usually, but log is chronological
+        log_entries_to_display = history[-self.max_log_entries:]
+
+        formatted_log_lines = []
+        for record in log_entries_to_display:
+            ts = record.timestamp
+            motor_id_str = f"M{record.motor_id}" if record.motor_id is not None else "SYS"
+            cmd_name = record.command_name if record.command_name else f"0x{record.command_code:02X}"
+            success_str = "Ok" if record.success else "Fail"
+            resp_time_str = f"{record.response_time_ms:.1f}ms" if record.response_time_ms is not None else "-"
+
+            # Basic formatting, can be enhanced
+            line = f"[{ts:.2f}] {motor_id_str}: {cmd_name} - {success_str} ({resp_time_str})"
+            # Truncate long lines if necessary for display
+            max_line_len = 80 # Example max length
+            formatted_log_lines.append(line[:max_line_len] + "..." if len(line) > max_line_len else line)
+
+        self.update("\n".join(formatted_log_lines))
+
+
 class TextualDashboard(App):
     """
     Textual-based dashboard application.
@@ -168,23 +252,29 @@ class TextualDashboard(App):
     
     CSS = """
     Screen {
-        layout: grid;
-        grid-size: 2 2;
-        grid-gutter: 1 2;
+        layout: vertical;
+        overflow-y: auto; /* Allow screen to scroll if content is too tall */
         padding: 1;
     }
     
-    #motor-status {
-        column-span: 2;
+    #motor-status-widget { /* Ensure ID matches compose */
         height: 12;
+        margin-bottom: 1;
     }
-    
-    #system-info {
-        height: 8;
+
+    #detailed-motor-view {
+        height: 12; /* Adjusted height */
+        border: round white;
+        padding: 1;
+        margin-top: 1;
     }
-    
-    #status-panel {
-        height: 8;
+
+    #command-log-widget {
+        height: 10;
+        border: round white;
+        padding: 1;
+        overflow-y: auto; /* Make it scrollable */
+        margin-top: 1;
     }
     
     DataTable {
@@ -199,30 +289,86 @@ class TextualDashboard(App):
         ("r", "refresh", "Refresh"),
         ("p", "toggle_pause", "Pause/Resume"),
         ("escape", "quit", "Quit"),
+        ("up", "select_previous_motor", "Prev Mtr"),
+        ("down", "select_next_motor", "Next Mtr"),
     ]
     
     def __init__(self, virtual_can_bus: "VirtualCANBus" = None, enable_auto_refresh: bool = True, refresh_interval: float = 2.0):
         super().__init__()
         self.virtual_can_bus = virtual_can_bus
+        self.debug_interface = virtual_can_bus.debug_interface if virtual_can_bus else None
         self.enable_auto_refresh = enable_auto_refresh
         self.refresh_interval = refresh_interval
         self.refresh_timer: Timer = None
         self.start_time = time.time()
         self.is_paused = False
+        self.selected_motor_id: Optional[int] = None
     
     def compose(self) -> ComposeResult:
         """Create the dashboard layout"""
         yield Header(show_clock=True)
-        with Horizontal():
-            yield MotorStatusWidget(self.virtual_can_bus)
-            yield SystemInfoWidget(self.virtual_can_bus)
+        yield MotorStatusWidget(self.virtual_can_bus, id="motor-status-widget")
+        yield DetailedMotorViewWidget(id="detailed-motor-view")
+        yield CommandLogWidget(self.debug_interface, id="command-log-widget") # Add this
         yield Footer()
     
     def on_mount(self) -> None:
         """Called when the app starts"""
         if self.enable_auto_refresh:
             self.start_auto_refresh()
+        self.action_refresh() # Initial refresh to populate detailed view if a motor is pre-selected
     
+    def action_select_previous_motor(self) -> None:
+        """Selects the previous motor in the list."""
+        if not self.virtual_can_bus or not self.virtual_can_bus.simulated_motors:
+            self.notify("No motors available.", severity="warning")
+            return
+
+        motor_ids = sorted(self.virtual_can_bus.simulated_motors.keys())
+        if not motor_ids:
+            self.notify("No motors available.", severity="warning")
+            return
+
+        if self.selected_motor_id is None:
+            self.selected_motor_id = motor_ids[-1]
+        else:
+            try:
+                current_index = motor_ids.index(self.selected_motor_id)
+                self.selected_motor_id = motor_ids[current_index - 1] # Wraps around due to negative index
+            except ValueError:
+                self.selected_motor_id = motor_ids[-1]
+
+        selected_motor = self.virtual_can_bus.simulated_motors.get(self.selected_motor_id)
+        self.query_one(DetailedMotorViewWidget).update_details(selected_motor)
+        self.notify(f"Selected Motor ID: {self.selected_motor_id}")
+
+    def action_select_next_motor(self) -> None:
+        """Selects the next motor in the list."""
+        if not self.virtual_can_bus or not self.virtual_can_bus.simulated_motors:
+            self.notify("No motors available.", severity="warning")
+            return
+
+        motor_ids = sorted(self.virtual_can_bus.simulated_motors.keys())
+        if not motor_ids:
+            self.notify("No motors available.", severity="warning")
+            return
+
+        if self.selected_motor_id is None:
+            self.selected_motor_id = motor_ids[0]
+        else:
+            try:
+                current_index = motor_ids.index(self.selected_motor_id)
+                if current_index + 1 < len(motor_ids):
+                    self.selected_motor_id = motor_ids[current_index + 1]
+                else:
+                    self.selected_motor_id = motor_ids[0] # Wrap around
+            except ValueError:
+                self.selected_motor_id = motor_ids[0]
+
+        selected_motor = self.virtual_can_bus.simulated_motors.get(self.selected_motor_id)
+        self.query_one(DetailedMotorViewWidget).update_details(selected_motor)
+        self.notify(f"Selected Motor ID: {self.selected_motor_id}")
+
     def start_auto_refresh(self) -> None:
         """Start the auto-refresh timer"""
         if self.refresh_timer:
@@ -238,16 +384,20 @@ class TextualDashboard(App):
     def action_refresh(self) -> None:
         """Manual refresh action - updates all widgets with real data"""
         try:
-            # Refresh motor status
-            motor_widget = self.query_one(MotorStatusWidget)
-            motor_widget.refresh_data()
+            # Refresh motor status table
+            motor_status_widget = self.query_one(MotorStatusWidget)
+            motor_status_widget.refresh_data()
             
-            # Refresh system info  
-            system_widget = self.query_one(SystemInfoWidget)
-            system_widget.refresh_data()
-            
-            # Update status panel
-            self.update_status_panel()
+            # Refresh detailed motor view
+            detailed_view_widget = self.query_one(DetailedMotorViewWidget)
+            selected_motor_object = None
+            if self.virtual_can_bus and self.selected_motor_id is not None:
+                selected_motor_object = self.virtual_can_bus.simulated_motors.get(self.selected_motor_id)
+            detailed_view_widget.update_details(selected_motor_object)
+
+            # Refresh command log
+            command_log_widget = self.query_one(CommandLogWidget)
+            command_log_widget.update_log()
             
         except Exception as e:
             self.notify(f"Refresh error: {e}", severity="error")
@@ -261,22 +411,14 @@ class TextualDashboard(App):
         else:
             self.start_auto_refresh()
             self.notify("Auto-refresh resumed")
-        self.update_status_panel()
+        # self.update_status_panel() # Status panel display might be removed or changed
     
+    # update_status_panel might be removed or simplified if SystemInfoWidget is removed from layout
     def update_status_panel(self) -> None:
-        """Update the status panel with current information"""
-        try:
-            status_widget = self.query_one(Static)
-            uptime = time.time() - self.start_time
-            status_text = f"Uptime: {int(uptime//60)}:{int(uptime%60):02d}\n"
-            if self.is_paused:
-                status_text += "Auto-refresh: PAUSED\n"
-            else:
-                status_text += f"Auto-refresh: {self.refresh_interval}s\n"
-            status_text += "Press 'q' to quit, 'r' to refresh, 'p' to pause"
-            status_widget.update(status_text)
-        except Exception:
-            pass  # Graceful fallback
+        """Update the status panel with current information (simplified for now)."""
+        # This method might need significant rework if SystemInfoWidget is not present
+        # or if its display logic changes. For now, it's a placeholder.
+        pass # Placeholder
     
     def action_quit(self) -> None:
         """Quit the application"""

@@ -1111,4 +1111,36 @@ class SimulatedMotor:
                 logger.error(f"SimulatedMotor {self.original_can_id} update task error during stop: {e}")
         self.is_running_task = None
         logger.info(f"SimulatedMotor {self.original_can_id} update task stopped.")
+
+    @property
+    def kinematics_units(self) -> str:
+        # Simplified: Assumes rotary kinematics for dashboard display
+        return "deg"
+
+    @property
+    def current_speed_user_units_per_sec(self) -> float:
+        # Simplified: Assumes rotary kinematics with 360 deg/rev for dashboard display
+        # This mimics a basic conversion from RPM to deg/sec.
+        # (RPM / 60) gives RPS. RPS * 360 gives deg/sec.
+        return (self.current_rpm / 60.0) * 360.0
+
+    @property
+    def work_mode_str(self) -> str:
+        # Assuming 'const' is available (imported from mks_servo_can or fallback)
+        # If not, this map would need to be defined locally in SimulatedMotor or this module.
+        _work_modes_map = {
+            getattr(const, 'MODE_CR_OPEN', 0): "CR_OPEN",
+            getattr(const, 'MODE_CR_CLOSE', 1): "CR_CLOSE", # Placeholder if const not fully loaded
+            getattr(const, 'MODE_SR_OPEN', 2): "SR_OPEN",   # Placeholder
+            getattr(const, 'MODE_SR_CLOSE', 3): "SR_CLOSE",  # Placeholder
+            getattr(const, 'MODE_PL_VFOC', 4): "PL_VFOC",   # Placeholder
+            getattr(const, 'MODE_SR_VFOC', 5): "SR_VFOC",
+        }
+        # Ensure const.WORK_MODES is preferred if available from full library
+        if hasattr(const, 'WORK_MODES') and isinstance(const.WORK_MODES, dict):
+            # Invert the WORK_MODES map from the library for easier lookup: {value: key_name_str}
+            inverted_work_modes_map = {v: k_str for k_str, v in const.WORK_MODES.items()}
+            return inverted_work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
+
+        return _work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
         
