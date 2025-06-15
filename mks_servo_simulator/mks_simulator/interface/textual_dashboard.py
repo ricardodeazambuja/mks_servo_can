@@ -6,6 +6,7 @@ Enhanced version with auto-refresh and improved layout.
 import asyncio
 import threading
 import time
+import datetime # Make sure this import is at the top of the file
 from typing import TYPE_CHECKING, Optional
 
 from textual.app import App, ComposeResult
@@ -274,11 +275,24 @@ class CommandLogWidget(Static):
                 problematic_record_details += f"success={getattr(record, 'success', 'ErrorAccessing')}, "
                 problematic_record_details += f"resp_time_ms={getattr(record, 'response_time_ms', 'ErrorAccessing')}"
 
-                # Add to formatted_log_lines so it's visible in the UI for debugging
-                error_line = f"[CmdLog TypeError: {te}. Details: {problematic_record_details}]"
-                formatted_log_lines.append(error_line)
+                error_line_for_ui = f"[CmdLog TypeError: {te}. Details: {problematic_record_details}]"
+                formatted_log_lines.append(error_line_for_ui)
+
+                # --- BEGIN MANUAL LOGGING MODIFICATION ---
                 # Also, print to console/log file for more permanent debugging
-                self.app.log.error(f"CommandLogWidget TypeError: {te} on record: {record!r}")
+                # self.app.log.error(f"CommandLogWidget TypeError: {te} on record: {record!r}") # Keep this if Textual logging works eventually
+
+                import datetime # Make sure this import is at the top of the file, or remove if already there
+                log_file_path = "manual_dashboard_debug.log"
+                timestamp_str = datetime.datetime.now().isoformat()
+                try:
+                    with open(log_file_path, "a") as f_log:
+                        f_log.write(f"{timestamp_str} [CommandLogWidget TypeError] Exception: {te}\n")
+                        f_log.write(f"{timestamp_str} [CommandLogWidget TypeError] Record causing error: {record!r}\n")
+                        f_log.write(f"{timestamp_str} [CommandLogWidget TypeError] Parsed details: {problematic_record_details}\n")
+                except Exception as e_log:
+                    print(f"Failed to write TypeError details to manual_dashboard_debug.log: {e_log}") # Fallback
+                # --- END MANUAL LOGGING MODIFICATION ---
 
 
             except Exception as e_format:
@@ -441,7 +455,16 @@ class TextualDashboard(App):
     
     def action_refresh(self) -> None:
         """Manual refresh action - updates all widgets with real data"""
-        self.app.log.info(f"[ACTION_REFRESH] Start. selected_motor_id: {self.selected_motor_id}")
+        # --- BEGIN MANUAL LOGGING MODIFICATION ---
+        import datetime # Make sure this import is at the top of the file
+        log_file_path = "manual_dashboard_debug.log"
+        timestamp_str = datetime.datetime.now().isoformat()
+        try:
+            with open(log_file_path, "a") as f_log:
+                f_log.write(f"{timestamp_str} [ACTION_REFRESH] Start. selected_motor_id: {self.selected_motor_id}\n")
+        except Exception as e_log:
+            print(f"Failed to write to manual_dashboard_debug.log: {e_log}") # Fallback to print
+        # --- END MANUAL LOGGING MODIFICATION ---
 
         # Try to refresh MotorStatusWidget
         try:
@@ -449,9 +472,22 @@ class TextualDashboard(App):
             motor_status_widget.refresh_data()
         except Exception as e:
             self.notify(f'Refresh error (MotorStatus): {type(e).__name__}', severity='error', timeout=10)
-            self.app.log.error(f"[ACTION_REFRESH] Error refreshing MotorStatusWidget: {e}")
+            # self.app.log.error still good for Textual's own system if it works, but also manual:
+            try:
+                with open(log_file_path, "a") as f_log:
+                    f_log.write(f"{timestamp_str} [ACTION_REFRESH] Error refreshing MotorStatusWidget: {type(e).__name__} - {e}\n")
+            except Exception as e_log:
+                print(f"Failed to write error to manual_dashboard_debug.log: {e_log}")
 
-        self.app.log.info(f"[ACTION_REFRESH] Before DetailedMotorViewWidget update. selected_motor_id: {self.selected_motor_id}")
+
+        # --- BEGIN MANUAL LOGGING MODIFICATION ---
+        try:
+            with open(log_file_path, "a") as f_log:
+                f_log.write(f"{timestamp_str} [ACTION_REFRESH] Before DetailedMotorViewWidget update. selected_motor_id: {self.selected_motor_id}\n")
+        except Exception as e_log:
+            print(f"Failed to write to manual_dashboard_debug.log: {e_log}")
+        # --- END MANUAL LOGGING MODIFICATION ---
+
         # Try to refresh DetailedMotorViewWidget
         try:
             detailed_view_widget = self.query_one(DetailedMotorViewWidget)
@@ -461,21 +497,39 @@ class TextualDashboard(App):
             detailed_view_widget.update_details(selected_motor_object)
         except Exception as e:
             self.notify(f'Refresh error (DetailView): {type(e).__name__}', severity='error', timeout=10)
-            self.app.log.error(f"[ACTION_REFRESH] Error refreshing DetailedMotorViewWidget: {e}")
+            try:
+                with open(log_file_path, "a") as f_log:
+                    f_log.write(f"{timestamp_str} [ACTION_REFRESH] Error refreshing DetailedMotorViewWidget: {type(e).__name__} - {e}\n")
+            except Exception as e_log:
+                print(f"Failed to write error to manual_dashboard_debug.log: {e_log}")
 
-        self.app.log.info(f"[ACTION_REFRESH] After DetailedMotorViewWidget update. selected_motor_id: {self.selected_motor_id}")
+        # --- BEGIN MANUAL LOGGING MODIFICATION ---
+        try:
+            with open(log_file_path, "a") as f_log:
+                f_log.write(f"{timestamp_str} [ACTION_REFRESH] After DetailedMotorViewWidget update. selected_motor_id: {self.selected_motor_id}\n")
+        except Exception as e_log:
+            print(f"Failed to write to manual_dashboard_debug.log: {e_log}")
+        # --- END MANUAL LOGGING MODIFICATION ---
 
         # Try to refresh CommandLogWidget
         try:
             command_log_widget = self.query_one(CommandLogWidget)
-            command_log_widget.update_log()
+            command_log_widget.update_log() # This method will now also do manual logging for TypeErrors
         except Exception as e:
-            # The notify for CmdLog TypeError is already present from the issue description.
-            # The more detailed logging for TypeError is now inside update_log itself.
             self.notify(f'Refresh error (CmdLog): {type(e).__name__}', severity='error', timeout=10)
-            self.app.log.error(f"[ACTION_REFRESH] Error refreshing CommandLogWidget: {e}")
+            try:
+                with open(log_file_path, "a") as f_log:
+                    f_log.write(f"{timestamp_str} [ACTION_REFRESH] Error refreshing CommandLogWidget: {type(e).__name__} - {e}\n")
+            except Exception as e_log:
+                print(f"Failed to write error to manual_dashboard_debug.log: {e_log}")
 
-        self.app.log.info(f"[ACTION_REFRESH] End. selected_motor_id: {self.selected_motor_id}")
+        # --- BEGIN MANUAL LOGGING MODIFICATION ---
+        try:
+            with open(log_file_path, "a") as f_log:
+                f_log.write(f"{timestamp_str} [ACTION_REFRESH] End. selected_motor_id: {self.selected_motor_id}\n")
+        except Exception as e_log:
+            print(f"Failed to write to manual_dashboard_debug.log: {e_log}")
+        # --- END MANUAL LOGGING MODIFICATION ---
     
     def action_toggle_pause(self) -> None:
         """Toggle pause/resume of auto-refresh"""
