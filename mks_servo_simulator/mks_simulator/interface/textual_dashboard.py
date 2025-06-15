@@ -230,23 +230,29 @@ class CommandLogWidget(Static):
         formatted_log_lines = []
         for record in log_entries_to_display:
             try:
-                ts_val = record.timestamp
-                ts_str = f"[{ts_val:.2f}]"
+                ts_val = getattr(record, 'timestamp', None) # Use getattr for safety
+                ts_str = f"[{ts_val:.2f}]" if ts_val is not None else "[N/A]"
 
-                motor_id_val = record.motor_id
+                motor_id_val = getattr(record, 'motor_id', None)
                 motor_id_display_str = f"M{motor_id_val}" if motor_id_val is not None else "SYS"
 
-                cmd_code_val = record.command_code
-                cmd_name_val = record.command_name
-                cmd_display_str = str(cmd_name_val) if cmd_name_val else f"0x{cmd_code_val:02X}"
+                cmd_code_val = getattr(record, 'command_code', None)
+                cmd_name_val = getattr(record, 'command_name', None)
 
-                success_val = record.success
-                success_display_str = "Ok" if success_val else "Fail"
+                if cmd_name_val:
+                    cmd_display_str = str(cmd_name_val)
+                elif cmd_code_val is not None:
+                    cmd_display_str = f"0x{cmd_code_val:02X}"
+                else:
+                    cmd_display_str = "CMD_N/A"
 
-                resp_time_ms_val = record.response_time_ms
+                success_val = getattr(record, 'success', None) # Check for None if it can happen
+                success_display_str = "Ok" if success_val is True else ("Fail" if success_val is False else "N/A")
+
+
+                resp_time_ms_val = getattr(record, 'response_time_ms', None)
                 resp_time_display_str = f"{resp_time_ms_val:.1f}ms" if resp_time_ms_val is not None else "-"
 
-                # Combine parts ensuring they are strings
                 line_parts = [
                     str(ts_str),
                     " ",
@@ -261,11 +267,10 @@ class CommandLogWidget(Static):
                 ]
                 line = "".join(line_parts)
 
-                max_line_len = 80
+                max_line_len = 80 # Assuming this is defined or reasonable
                 formatted_log_lines.append(line[:max_line_len] + "..." if len(line) > max_line_len else line)
             except Exception as e_format:
-                # If formatting a specific record fails, log that and continue
-                formatted_log_lines.append(f"[Error formatting record: {type(e_format).__name__}]")
+                formatted_log_lines.append(f"[Error formatting record: {type(e_format).__name__} - {e_format}]")
 
         self.update("\n".join(formatted_log_lines))
 
@@ -340,9 +345,15 @@ class TextualDashboard(App):
     
     def on_mount(self) -> None:
         """Called when the app starts"""
+        if self.virtual_can_bus and self.virtual_can_bus.simulated_motors:
+            motor_ids = sorted(self.virtual_can_bus.simulated_motors.keys())
+            if motor_ids:
+                self.selected_motor_id = motor_ids[0]
+                # self.notify(f"Default motor selected: ID {self.selected_motor_id}") # Optional: for debugging
+
         if self.enable_auto_refresh:
             self.start_auto_refresh()
-        self.action_refresh() # Initial refresh to populate detailed view if a motor is pre-selected
+        self.action_refresh() # Initial refresh
     
     def action_select_previous_motor(self) -> None:
         """Selects the previous motor in the list."""
