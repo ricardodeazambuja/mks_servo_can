@@ -312,7 +312,13 @@ class CommandLogWidget(Static):
                 # Catch other general exceptions during formatting
                 formatted_log_lines.append(f"[Error formatting record: {type(e_format).__name__} - {e_format}. Record: {record!r}]")
 
-        self.update("\n".join(formatted_log_lines))
+        # --- BEGINNING OF CHANGE ---
+        # Ensure 'escape' is available (import should be at top of file)
+        # from rich.markup import escape
+
+        escaped_formatted_log_lines = [escape(line) for line in formatted_log_lines]
+        self.update("\n".join(escaped_formatted_log_lines))
+        # --- END OF CHANGE ---
 
 
 class TextualDashboard(App):
