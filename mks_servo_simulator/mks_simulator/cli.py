@@ -13,9 +13,7 @@ from .motor_model import SimulatedMotor
 from .virtual_can_bus import VirtualCANBus
 from .interface.llm_debug_interface import LLMDebugInterface
 from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
-from .interface.rich_dashboard import RichDashboard
 from .interface.textual_dashboard import TextualDashboard
-from .interface.interactive_controls import InteractiveController
 from .interface.config_manager import ConfigurationManager, LiveConfigurationInterface
 
 # Basic logging setup for the simulator
@@ -39,7 +37,7 @@ except ImportError as exc:
         MOTOR_TYPE_SERVO57D = "SERVO57D"
 
 
-async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, dashboard_task=None, interactive_task=None, textual_dashboard_task=None, performance_monitor=None):
+async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, textual_dashboard_task=None, performance_monitor=None):
     """Graceful shutdown for the simulator."""
     logger.info(f"Received exit signal {sig.name}...")
     logger.info("Shutting down simulated motors...")
@@ -66,26 +64,6 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
         except Exception as e:
             logger.error(f"Error during debug server shutdown: {e}")
     
-    if dashboard_task and not dashboard_task.done():
-        logger.info("Cancelling dashboard task...")
-        dashboard_task.cancel()
-        try:
-            await dashboard_task
-        except asyncio.CancelledError:
-            logger.info("Dashboard task cancelled successfully.")
-        except Exception as e:
-            logger.error(f"Error during dashboard shutdown: {e}")
-    
-    if interactive_task and not interactive_task.done():
-        logger.info("Cancelling interactive controller task...")
-        interactive_task.cancel()
-        try:
-            await interactive_task
-        except asyncio.CancelledError:
-            logger.info("Interactive controller task cancelled successfully.")
-        except Exception as e:
-            logger.error(f"Error during interactive controller shutdown: {e}")
-
     if textual_dashboard_task and not textual_dashboard_task.done():
         logger.info("Cancelling Textual dashboard task...")
         textual_dashboard_task.cancel()
@@ -202,7 +180,7 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
 @click.option(
     "--dashboard",
     is_flag=True,
-    help="Enable Rich console dashboard for real-time monitoring.",
+    help="Enable Textual TUI dashboard (experimental).",
 )
 @click.option(
     "--textual-dashboard",
@@ -248,7 +226,6 @@ def main(
     json_output: bool,
     debug_api: bool,
     debug_api_port: int,
-    dashboard: bool,
     textual_dashboard: bool,
     refresh_rate: int,
     no_color: bool,
@@ -374,11 +351,7 @@ def main(
     debug_server: Optional[DebugHTTPServer] = None
     debug_server_task: Optional[asyncio.Task] = None
     json_handler: Optional[JSONOutputHandler] = None
-    dashboard_instance: Optional[RichDashboard] = None
-    dashboard_task: Optional[asyncio.Task] = None
     textual_dashboard_task: Optional[asyncio.Task] = None # Initialize textual_dashboard_task
-    interactive_controller: Optional[InteractiveController] = None
-    interactive_task: Optional[asyncio.Task] = None
 
     # Create motors based on configuration
     if config_profile and config_manager.current_config:
@@ -438,7 +411,7 @@ def main(
     server_task = loop.create_task(bus.start_server(host, port))
     
     # Initialize LLM debug interface if needed
-    if json_output or debug_api or dashboard or textual_dashboard:
+    if json_output or debug_api or textual_dashboard:
         debug_interface = LLMDebugInterface(bus.simulated_motors, bus)
         
         # Set up debug interface in the bus for command tracking
@@ -483,34 +456,6 @@ def main(
                 logger.error(f"Failed to start debug API server: {e}")
                 logger.error("Install FastAPI and uvicorn: pip install fastapi uvicorn")
         
-        if dashboard:
-            try:
-                dashboard_instance = RichDashboard(
-                    virtual_can_bus=bus,
-                    debug_interface=debug_interface,
-                    refresh_rate_ms=refresh_rate,
-                    no_color=no_color
-                )
-                
-                # Create interactive controller for keyboard input
-                interactive_controller = InteractiveController(
-                    dashboard=dashboard_instance,
-                    virtual_can_bus=bus,
-                    config_manager=config_manager,
-                    live_config=live_config_interface
-                )
-                dashboard_instance.set_interactive_controller(interactive_controller)
-                
-                # Start both dashboard and interactive controller
-                dashboard_task = loop.create_task(dashboard_instance.run())
-                interactive_task = loop.create_task(interactive_controller.start())
-                
-                logger.info(f"Rich dashboard started with {refresh_rate}ms refresh rate")
-                logger.info("Interactive controls enabled - press 'h' for help")
-            except ImportError as e:
-                logger.error(f"Failed to start dashboard: {e}")
-                logger.error("Install Rich library: pip install rich")
-        
         # Textual Dashboard (Phase 2 test)  
         if textual_dashboard:
             try:
@@ -536,14 +481,12 @@ def main(
         loop.add_signal_handler(
             s,
             lambda s=s: asyncio.create_task(
-                shutdown(s, loop, server_task, bus, debug_server_task, json_handler, dashboard_task, interactive_task, textual_dashboard_task if 'textual_dashboard_task' in locals() else None, performance_monitor if 'performance_monitor' in locals() else None)
+                shutdown(s, loop, server_task, bus, debug_server_task, json_handler, textual_dashboard_task if 'textual_dashboard_task' in locals() else None, performance_monitor if 'performance_monitor' in locals() else None)
             ),
         )
 
     try:
-        if dashboard:
-            logger.info("Simulator running with Rich dashboard. Press Ctrl+C to stop.")
-        elif json_output:
+        if json_output:
             logger.info("Simulator running in JSON output mode. Press Ctrl+C to stop.")
         elif debug_api:
             logger.info(f"Simulator running with debug API on port {debug_api_port}. Press Ctrl+C to stop.")
@@ -574,24 +517,6 @@ def main(
                 except asyncio.CancelledError:
                     pass  # Expected
         
-        # Clean up dashboard if running
-        if dashboard_task and not dashboard_task.done():
-            dashboard_task.cancel()
-            if loop.is_running():
-                try:
-                    loop.run_until_complete(dashboard_task)
-                except asyncio.CancelledError:
-                    pass  # Expected
-        
-        # Clean up interactive controller if running
-        if interactive_task and not interactive_task.done():
-            interactive_task.cancel()
-            if loop.is_running():
-                try:
-                    loop.run_until_complete(interactive_task)
-                except asyncio.CancelledError:
-                    pass  # Expected
-
         # Clean up textual dashboard if running
         if 'textual_dashboard_task' in locals() and textual_dashboard_task and not textual_dashboard_task.done():
             textual_dashboard_task.cancel()

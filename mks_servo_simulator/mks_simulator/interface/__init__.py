@@ -10,6 +10,5 @@ This package provides various interfaces for the MKS servo simulator:
 
 from .llm_debug_interface import LLMDebugInterface
 from .http_debug_server import DebugHTTPServer
-from .rich_dashboard import RichDashboard
 
-__all__ = ["LLMDebugInterface", "DebugHTTPServer", "RichDashboard"]
+__all__ = ["LLMDebugInterface", "DebugHTTPServer"]
