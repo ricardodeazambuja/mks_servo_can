@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
+from typing import Optional, List # Added to resolve NameError
 
 # Assuming FASTAPI_AVAILABLE is True for these tests
 # If it were False, these tests would likely need to be skipped or handled differently.
