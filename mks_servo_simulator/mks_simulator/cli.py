@@ -453,8 +453,28 @@ def main(
         if textual_dashboard:
             try:
                 logger.info("Starting Textual dashboard...")
-                textual_app = TextualDashboard(bus)
+                textual_app = TextualDashboard(bus) # App is created here
                 
+                # --- BEGINNING OF CHANGE ---
+                # Attempt to add the root file handler to the Textual app's logger
+                root_logger = logging.getLogger()
+                simulator_log_handler = None
+                for handler in root_logger.handlers:
+                    if isinstance(handler, logging.FileHandler) and "simulator.log" in getattr(handler, 'baseFilename', ''):
+                        simulator_log_handler = handler
+                        break
+
+                if simulator_log_handler:
+                    textual_app.log.addHandler(simulator_log_handler)
+                    # Ensure the Textual app's logger level is appropriate
+                    # The handler itself has a level, but the logger also does.
+                    # Match the root logger's level or set to DEBUG for verbose dashboard logs.
+                    textual_app.log.setLevel(root_logger.level if root_logger.level != 0 else logging.DEBUG)
+                    logger.info("Configured Textual app logger to use simulator.log handler.")
+                else:
+                    logger.warning("Could not find simulator.log handler to attach to Textual app logger.")
+                # --- END OF CHANGE ---
+
                 # Run textual asynchronously
                 textual_dashboard_task = loop.create_task(textual_app.run_async())
                 
