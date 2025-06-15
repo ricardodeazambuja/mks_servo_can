@@ -15,6 +15,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, DataTable, Static, Label
 from textual.timer import Timer
 from rich.markup import escape
+from rich.text import Text
 
 from mks_servo_can import constants as const
 
@@ -313,11 +314,14 @@ class CommandLogWidget(Static):
                 formatted_log_lines.append(f"[Error formatting record: {type(e_format).__name__} - {e_format}. Record: {record!r}]")
 
         # --- BEGINNING OF CHANGE ---
-        # Ensure 'escape' is available (import should be at top of file)
-        # from rich.markup import escape
+        # --- BEGINNING OF CHANGE ---
+        # The list comprehension [escape(line) for line in formatted_log_lines] should be removed.
+        # formatted_log_lines should be the list of raw strings as they were before escaping.
 
-        escaped_formatted_log_lines = [escape(line) for line in formatted_log_lines]
-        self.update("\n".join(escaped_formatted_log_lines))
+        plain_log_content = "\n".join(formatted_log_lines)
+        # Ensure Text is imported: from rich.text import Text (should be at top of file)
+        text_object = Text(plain_log_content)
+        self.update(text_object)
         # --- END OF CHANGE ---
 
 
