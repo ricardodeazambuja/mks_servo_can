@@ -1141,12 +1141,12 @@ class SimulatedMotor:
         logger.info(f"Motor {self.can_id}: _work_modes_map constructed: {_work_modes_map}")
 
         # Ensure const.WORK_MODES is preferred if available from full library
-        if hasattr(const, 'WORK_MODES') and isinstance(const.WORK_MODES, dict) and const.WORK_MODES: # Added check for non-empty
+        if hasattr(const, 'WORK_MODES') and isinstance(const.WORK_MODES, dict) and const.WORK_MODES:
             logger.info(f"Motor {self.can_id}: Using const.WORK_MODES from library: {const.WORK_MODES}")
-            inverted_work_modes_map = {v: k_str for k_str, v in const.WORK_MODES.items()}
-            logger.info(f"Motor {self.can_id}: inverted_work_modes_map: {inverted_work_modes_map}")
-            result = inverted_work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
-            logger.info(f"Motor {self.can_id}: Result from inverted_work_modes_map.get({self.work_mode}): {result}")
+            # Assuming const.WORK_MODES is already in {integer_key: "String Value"} format based on previous logs.
+            # Therefore, do not invert it. Use it directly.
+            result = const.WORK_MODES.get(self.work_mode, f"Unknown ({self.work_mode})")
+            logger.info(f"Motor {self.can_id}: Result from const.WORK_MODES.get({self.work_mode}): {result}")
             return result
 
         logger.info(f"Motor {self.can_id}: Falling back to local _work_modes_map.")
