@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 # in the unit test environment.
 
 # Import actual classes for spec
-from mks_servo_simulator.mks_simulator.motor_model import MotorModel
+from mks_servo_simulator.mks_simulator.motor_model import SimulatedMotor # Corrected class name
 from mks_servo_simulator.mks_simulator.virtual_can_bus import VirtualCANBus
 # sys.modules['mks_servo_simulator.mks_simulator.helpers'] = MagicMock() # If helpers is also an issue - keeping for now if it was needed
 
@@ -21,7 +21,7 @@ from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import LLMD
 class TestLLMDebugInterface(unittest.TestCase):
     def setUp(self):
         # Create mock motor instances using actual classes for spec
-        self.mock_motor_1 = MagicMock(spec=MotorModel)
+        self.mock_motor_1 = MagicMock(spec=SimulatedMotor) # Corrected spec
         self.mock_motor_1.can_id = 1
         self.mock_motor_1.name = "Motor1"
         self.mock_motor_1.enabled = True
@@ -39,7 +39,7 @@ class TestLLMDebugInterface(unittest.TestCase):
         })
 
 
-        self.mock_motor_2 = MagicMock(spec=MotorModel)
+        self.mock_motor_2 = MagicMock(spec=SimulatedMotor) # Corrected spec
         self.mock_motor_2.can_id = 2
         self.mock_motor_2.name = "Motor2"
         self.mock_motor_2.enabled = False
