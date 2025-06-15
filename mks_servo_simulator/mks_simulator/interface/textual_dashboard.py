@@ -315,7 +315,6 @@ class TextualDashboard(App):
         layout: vertical;
         overflow-y: auto; /* Allow screen to scroll if content is too tall */
         padding: 1;
-        focusable: true; /* Added this line */
     }
     
     #motor-status-widget { /* Ensure ID matches compose */
