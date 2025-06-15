@@ -37,6 +37,11 @@ class MotorStatusWidget(Static):
         """Initialize the motor status table"""
         table = self.query_one(DataTable)
         table.add_columns("ID", "Status", "Position (units)", "Speed", "Target (units)", "Velocity (u/s)", "WorkMode", "MStep", "Enabled")
+
+        # --- BEGINNING OF CHANGE ---
+        table.cursor_type = "none"  # Disable cursor navigation for the table
+        # --- END OF CHANGE ---
+
         self.refresh_data()
     
     def refresh_data(self) -> None:
