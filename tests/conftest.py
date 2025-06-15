@@ -72,6 +72,7 @@ import pytest_asyncio
 import subprocess
 import time
 import asyncio
+import sys # Added import
 from typing import Optional, Dict, Any
 
 from mks_servo_can import CANInterface, LowLevelAPI, exceptions
@@ -100,19 +101,19 @@ class SimulatorManager:
         
     def start(self) -> None:
         """Start the simulator subprocess"""
-        # Check if simulator command exists
-        try:
-            subprocess.check_output(
-                f"command -v {SIMULATOR_CMD}", shell=True, text=True
-            ).strip()
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pytest.skip(
-                f"'{SIMULATOR_CMD}' not found in PATH. Skipping simulator-dependent tests."
-            )
-            return
+        # Check if simulator command exists - Commented out
+        # try:
+        #     subprocess.check_output(
+        #         f"command -v {SIMULATOR_CMD}", shell=True, text=True
+        #     ).strip()
+        # except (subprocess.CalledProcessError, FileNotFoundError):
+        #     pytest.skip(
+        #         f"'{SIMULATOR_CMD}' not found in PATH. Skipping simulator-dependent tests."
+        #     )
+        #     return
         
         cmd = [
-            SIMULATOR_CMD,
+            sys.executable, "-m", "mks_simulator.main", # Changed invocation
             "--port", str(self.port),
             "--num-motors", str(self.num_motors),
             "--start-can-id", str(self.start_can_id),

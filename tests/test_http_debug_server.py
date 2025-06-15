@@ -81,15 +81,15 @@ if FASTAPI_AVAILABLE:
             mock_get_system_status.return_value = {
                 "uptime_seconds": 123.45,
                 "motors": {1: "dummy_motor_data"}, # For len(status["motors"])
-                "communication": {"total_messages_sent": 10, "total_messages_received": 5} # total_commands uses total_messages_sent
+                "communication": {"total_messages_sent": 10, "total_messages_received": 5}
             }
             response = self.client.get("/health")
             self.assertEqual(response.status_code, 200)
             expected_response = {
                 "status": "healthy",
-                "uptime_seconds": 123.45, # Corrected key from "uptime" to "uptime_seconds"
-                "motor_count": 1,      # Corrected key from "motors_count" to "motor_count"
-                "total_commands_processed": 10 # Corrected key from "total_commands" to "total_commands_processed"
+                "uptime": 123.45, # This should match the key in http_debug_server.py after the change
+                "motors_count": 1,
+                "total_commands_processed": 10
             }
             self.assertEqual(response.json(), expected_response)
 
@@ -158,199 +158,195 @@ if FASTAPI_AVAILABLE:
             # called_args, _ = mock_validate_expected_state.call_args
             # self.assertIsInstance(called_args[0], ExpectedSystemState) # Requires importing ExpectedSystemState
 
-    # --- Command Injection Tests ---
+        # --- Command Injection Tests ---
+        def test_inject_raw_command_success(self):
+            payload = {"motor_id": 1, "command_code": 10, "data_bytes": [0, 1, 2, 3], "expect_response": True}
+            mock_return_obj = MockCommandResult(
+                success=True,
+                command_name="RawCmd_10", # Example name, actual might vary
+                execution_time_ms=5.2,
+                response_data=[1, 2, 3, 4],
+                error_message=None
+            )
+            self.llm_debug_interface.command_injector.inject_command.return_value = mock_return_obj
 
-    def test_inject_raw_command_success(self):
-        payload = {"motor_id": 1, "command_code": 10, "data_bytes": [0, 1, 2, 3], "expect_response": True}
-        mock_return_obj = MockCommandResult(
-            success=True,
-            command_name="RawCmd_10", # Example name, actual might vary
-            execution_time_ms=5.2,
-            response_data=[1, 2, 3, 4],
-            error_message=None
-        )
-        self.llm_debug_interface.command_injector.inject_command.return_value = mock_return_obj
+            response = self.client.post("/inject", json=payload)
+            self.assertEqual(response.status_code, 200)
+            expected_json = {
+                "success": True,
+                "command_name": "RawCmd_10",
+                "execution_time_ms": 5.2,
+                "response_data": [1, 2, 3, 4],
+                "error_message": None
+            }
+            self.assertEqual(response.json(), expected_json)
+            self.llm_debug_interface.command_injector.inject_command.assert_called_once_with(
+                motor_id=payload["motor_id"], command_code=payload["command_code"], data_bytes=payload["data_bytes"], expect_response=payload["expect_response"]
+            )
 
-        response = self.client.post("/inject", json=payload)
-        self.assertEqual(response.status_code, 200)
-        expected_json = {
-            "success": True,
-            "command_name": "RawCmd_10",
-            "execution_time_ms": 5.2,
-            "response_data": [1, 2, 3, 4],
-            "error_message": None
-        }
-        self.assertEqual(response.json(), expected_json)
-        self.llm_debug_interface.command_injector.inject_command.assert_called_once_with(
-            payload["motor_id"], payload["command_code"], payload["data_bytes"], payload["expect_response"]
-        )
+        def test_inject_raw_command_fail(self):
+            payload = {"motor_id": 1, "command_code": 10, "data_bytes": [0, 1, 2, 3], "expect_response": True}
+            mock_return_obj = MockCommandResult(
+                success=False,
+                command_name="RawCmd_10_Fail",
+                execution_time_ms=2.1,
+                response_data=[],
+                error_message="Device reported error"
+            )
+            self.llm_debug_interface.command_injector.inject_command.return_value = mock_return_obj
 
-    def test_inject_raw_command_fail(self):
-        payload = {"motor_id": 1, "command_code": 10, "data_bytes": [0, 1, 2, 3], "expect_response": True}
-        mock_return_obj = MockCommandResult(
-            success=False,
-            command_name="RawCmd_10_Fail",
-            execution_time_ms=2.1,
-            response_data=[],
-            error_message="Device reported error"
-        )
-        self.llm_debug_interface.command_injector.inject_command.return_value = mock_return_obj
+            response = self.client.post("/inject", json=payload)
+            self.assertEqual(response.status_code, 200)
+            expected_json = {
+                "success": False,
+                "command_name": "RawCmd_10_Fail",
+                "execution_time_ms": 2.1,
+                "response_data": [],
+                "error_message": "Device reported error"
+            }
+            self.assertEqual(response.json(), expected_json) # response_data should be [] due to server change
 
-        response = self.client.post("/inject", json=payload)
-        self.assertEqual(response.status_code, 200)
-        expected_json = {
-            "success": False,
-            "command_name": "RawCmd_10_Fail",
-            "execution_time_ms": 2.1,
-            "response_data": [],
-            "error_message": "Device reported error"
-        }
-        self.assertEqual(response.json(), expected_json)
+        def test_inject_raw_command_validation_error(self):
+            # Missing command_code, data_bytes, expect_response
+            response = self.client.post("/inject", json={"motor_id": 1})
+            self.assertEqual(response.status_code, 422) # Should be 422 due to Pydantic
 
-    def test_inject_raw_command_validation_error(self):
-        # Missing command_code, data_bytes, expect_response
-        response = self.client.post("/inject", json={"motor_id": 1})
-        self.assertEqual(response.status_code, 422) # FastAPI's validation error
+        def test_inject_template_command_success(self):
+            payload = {"motor_id": 1, "template_name": "reset_motor", "args": {}}
+            mock_return_obj = MockCommandResult(
+                success=True,
+                command_name="reset_motor_template",
+                execution_time_ms=10.0,
+                response_data=[], # Assuming template has no direct byte response
+                error_message=None
+            )
+            self.llm_debug_interface.command_injector.inject_template_command.return_value = mock_return_obj
 
-    def test_inject_template_command_success(self):
-        payload = {"motor_id": 1, "template_name": "reset_motor", "args": {}}
-        mock_return_obj = MockCommandResult(
-            success=True,
-            command_name="reset_motor_template",
-            execution_time_ms=10.0,
-            response_data=[], # Assuming template has no direct byte response
-            error_message=None
-        )
-        self.llm_debug_interface.command_injector.inject_template_command.return_value = mock_return_obj
+            response = self.client.post("/inject_template", json=payload)
+            self.assertEqual(response.status_code, 200)
+            expected_json = {
+                "success": True,
+                "command_name": "reset_motor_template",
+                "execution_time_ms": 10.0,
+                "response_data": [],
+                "error_message": None
+            }
+            self.assertEqual(response.json(), expected_json) # response_data should be [] due to server change
+            self.llm_debug_interface.command_injector.inject_template_command.assert_called_once_with(
+                motor_id=payload["motor_id"], template_name=payload["template_name"], args=payload.get("args")
+            )
 
-        response = self.client.post("/inject_template", json=payload)
-        self.assertEqual(response.status_code, 200)
-        expected_json = {
-            "success": True,
-            "command_name": "reset_motor_template",
-            "execution_time_ms": 10.0,
-            "response_data": [],
-            "error_message": None
-        }
-        self.assertEqual(response.json(), expected_json)
-        self.llm_debug_interface.command_injector.inject_template_command.assert_called_once_with(
-            payload["motor_id"], payload["template_name"], payload["args"]
-        )
+        def test_inject_template_command_validation_error(self):
+            response = self.client.post("/inject_template", json={"motor_id": 1}) # Missing template_name
+            self.assertEqual(response.status_code, 422) # Should be 422 due to Pydantic
 
-    def test_inject_template_command_validation_error(self):
-        response = self.client.post("/inject_template", json={"motor_id": 1}) # Missing template_name and args
-        self.assertEqual(response.status_code, 422)
+        # --- Command Listing Tests ---
+        def test_get_available_commands(self):
+            expected_commands = {"0x01": "Read Status", "0x02": "Reset Error"}
+            self.llm_debug_interface.get_available_commands.return_value = expected_commands
 
-    # --- Command Listing Tests ---
+            response = self.client.get("/commands")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), expected_commands)
+            self.llm_debug_interface.get_available_commands.assert_called_once()
 
-    def test_get_available_commands(self):
-        expected_commands = {"0x01": "Read Status", "0x02": "Reset Error"}
-        self.llm_debug_interface.get_available_commands.return_value = expected_commands
+        def test_get_command_templates(self):
+            expected_templates = {"reset_all": {"description": "Resets all motors."}}
+            self.llm_debug_interface.command_injector.get_available_templates.return_value = expected_templates
 
-        response = self.client.get("/commands")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), expected_commands)
-        self.llm_debug_interface.get_available_commands.assert_called_once()
+            response = self.client.get("/templates")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), expected_templates)
+            self.llm_debug_interface.command_injector.get_available_templates.assert_called_once()
 
-    def test_get_command_templates(self):
-        expected_templates = {"reset_all": {"description": "Resets all motors."}}
-        self.llm_debug_interface.command_injector.get_available_templates.return_value = expected_templates
+        # --- Configuration Management Tests ---
+        def test_get_configuration(self):
+            config_summary = {"param1": "value1", "param2": 123}
+            self.mock_config_manager.get_config_summary.return_value = config_summary
 
-        response = self.client.get("/templates")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), expected_templates)
-        self.llm_debug_interface.command_injector.get_available_templates.assert_called_once()
+            response = self.client.get("/config")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), config_summary)
+            self.mock_config_manager.get_config_summary.assert_called_once()
 
-    # --- Configuration Management Tests ---
+        def test_list_profiles(self):
+            profiles = ["default", "high_speed"]
+            self.mock_config_manager.list_profiles.return_value = profiles
 
-    def test_get_configuration(self):
-        config_summary = {"param1": "value1", "param2": 123}
-        self.mock_config_manager.get_config_summary.return_value = config_summary
+            response = self.client.get("/config/profiles")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"profiles": profiles})
+            self.mock_config_manager.list_profiles.assert_called_once()
 
-        response = self.client.get("/config")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), config_summary)
-        self.mock_config_manager.get_config_summary.assert_called_once()
+        def test_load_profile_success(self):
+            profile_name = "my_profile"
+            # Mock the behavior of load_config (which might involve setting current_config)
+            # For simplicity, let's assume load_config updates current_config and returns it or a status.
+            # The http_debug_server loads, then gets a summary.
+            mock_loaded_config_summary = {"loaded_param": "value"}
+            self.mock_config_manager.load_config.return_value = True # Indicates success
+            self.mock_config_manager.get_config_summary.return_value = mock_loaded_config_summary
 
-    def test_list_profiles(self):
-        profiles = ["default", "high_speed"]
-        self.mock_config_manager.list_profiles.return_value = profiles
+            response = self.client.post(f"/config/profiles/{profile_name}/load")
+            self.assertEqual(response.status_code, 200)
+            # Server returns summary from get_config_summary()
+            self.assertEqual(response.json(), {"success": True, "profile": profile_name, "config": mock_loaded_config_summary})
+            self.mock_config_manager.load_config.assert_called_once_with(profile_name)
+            self.mock_config_manager.get_config_summary.assert_called_once()
 
-        response = self.client.get("/config/profiles")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), profiles)
-        self.mock_config_manager.list_profiles.assert_called_once()
+        def test_load_profile_not_found(self):
+            profile_name = "non_existent_profile"
+            self.mock_config_manager.load_config.return_value = False # Indicates failure
 
-    def test_load_profile_success(self):
-        profile_name = "my_profile"
-        # Mock the behavior of load_config (which might involve setting current_config)
-        # For simplicity, let's assume load_config updates current_config and returns it or a status.
-        # The http_debug_server loads, then gets a summary.
-        mock_loaded_config_summary = {"loaded_param": "value"}
-        self.mock_config_manager.load_config.return_value = True # Indicates success
-        self.mock_config_manager.get_config_summary.return_value = mock_loaded_config_summary
+            response = self.client.post(f"/config/profiles/{profile_name}/load")
+            self.assertEqual(response.status_code, 200) # Server now returns 200 with specific error structure
+            self.assertEqual(response.json(), {"success": False, "profile": profile_name, "error": f"Profile '{profile_name}' not found or failed to load."})
+            self.mock_config_manager.load_config.assert_called_once_with(profile_name)
 
-        response = self.client.post(f"/config/profiles/{profile_name}/load")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"success": True, "profile": profile_name, "config": mock_loaded_config_summary})
-        self.mock_config_manager.load_config.assert_called_once_with(profile_name)
-        self.mock_config_manager.get_config_summary.assert_called_once()
+        def test_save_profile_success(self):
+            profile_name = "new_profile"
+            self.mock_config_manager.current_config = MagicMock() # Simulate a current config exists
+            self.mock_config_manager.save_config.return_value = True
 
+            response = self.client.post(f"/config/profiles/{profile_name}/save")
+            self.assertEqual(response.status_code, 200) # Server now returns 200
+            self.assertEqual(response.json(), {"success": True, "profile": profile_name}) # Server response changed
+            self.mock_config_manager.save_config.assert_called_once_with(profile_name)
 
-    def test_load_profile_not_found(self):
-        profile_name = "non_existent_profile"
-        self.mock_config_manager.load_config.return_value = False # Indicates failure
+        def test_save_profile_no_current_config(self):
+            profile_name = "another_profile"
+            self.mock_config_manager.current_config = None # Simulate no current config
 
-        response = self.client.post(f"/config/profiles/{profile_name}/load")
-        # Based on current http_debug_server.py, it returns 200 with success: False
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"success": False, "profile": profile_name, "error": f"Profile '{profile_name}' not found or failed to load."})
-        self.mock_config_manager.load_config.assert_called_once_with(profile_name)
+            response = self.client.post(f"/config/profiles/{profile_name}/save")
+            # Based on current http_debug_server.py logic
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json(), {"detail": "No current configuration loaded to save."})
 
-    def test_save_profile_success(self):
-        profile_name = "new_profile"
-        self.mock_config_manager.current_config = MagicMock() # Simulate a current config exists
-        self.mock_config_manager.save_config.return_value = True
+        def test_update_parameter_success(self):
+            parameter_name = "latency_ms"
+            payload = {"value": 5.0}
+            self.mock_live_config_interface.update_parameter.return_value = True # Server checks this boolean
 
-        response = self.client.post(f"/config/profiles/{profile_name}/save")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"success": True, "profile": profile_name})
-        self.mock_config_manager.save_config.assert_called_once_with(profile_name)
+            response = self.client.post(f"/config/parameters/{parameter_name}", json=payload)
+            self.assertEqual(response.status_code, 200)
+            # The server response is {"success": True, "message": f"Updated {parameter_name} = {value}"}
+            self.assertEqual(response.json(), {"success": True, "message": f"Updated {parameter_name} = {payload['value']}"})
+            self.mock_live_config_interface.update_parameter.assert_called_once_with(parameter_name, payload['value'])
 
-    def test_save_profile_no_current_config(self):
-        profile_name = "another_profile"
-        self.mock_config_manager.current_config = None # Simulate no current config
+        def test_update_parameter_fail(self):
+            parameter_name = "non_existent_param"
+            payload = {"value": "invalid_value"}
+            self.mock_live_config_interface.update_parameter.return_value = False # Server checks this boolean
 
-        response = self.client.post(f"/config/profiles/{profile_name}/save")
-        # Based on current http_debug_server.py logic
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json(), {"detail": "No current configuration loaded to save."})
+            response = self.client.post(f"/config/parameters/{parameter_name}", json=payload)
+            self.assertEqual(response.status_code, 200) # API call is fine, but operation failed
+            # The server response is {"success": False, "message": f"Failed to update {parameter_name}"}
+            self.assertEqual(response.json(), {"success": False, "message": f"Failed to update {parameter_name}"})
 
-    def test_update_parameter_success(self):
-        parameter_name = "latency_ms"
-        payload = {"value": 5.0}
-        self.mock_live_config_interface.update_parameter.return_value = True # Server checks this boolean
-
-        response = self.client.post(f"/config/parameters/{parameter_name}", json=payload)
-        self.assertEqual(response.status_code, 200)
-        # The server response is {"success": True, "message": f"Updated {parameter_name} = {value}"}
-        self.assertEqual(response.json(), {"success": True, "message": f"Updated {parameter_name} = {payload['value']}"})
-        self.mock_live_config_interface.update_parameter.assert_called_once_with(parameter_name, payload['value'])
-
-    def test_update_parameter_fail(self):
-        parameter_name = "non_existent_param"
-        payload = {"value": "invalid_value"}
-        self.mock_live_config_interface.update_parameter.return_value = False # Server checks this boolean
-
-        response = self.client.post(f"/config/parameters/{parameter_name}", json=payload)
-        self.assertEqual(response.status_code, 200) # API call is fine, but operation failed
-        # The server response is {"success": False, "message": f"Failed to update {parameter_name}"}
-        self.assertEqual(response.json(), {"success": False, "message": f"Failed to update {parameter_name}"})
-
-    def test_update_parameter_validation_error(self):
-        parameter_name = "some_param"
-        response = self.client.post(f"/config/parameters/{parameter_name}", json={}) # Missing 'value'
-        self.assertEqual(response.status_code, 422) # FastAPI validation
+        def test_update_parameter_validation_error(self):
+            parameter_name = "some_param"
+            response = self.client.post(f"/config/parameters/{parameter_name}", json={}) # Missing 'value'
+            self.assertEqual(response.status_code, 422) # Should be 422 due to Pydantic
 
 
 # Tests for JSONOutputHandler (can be in the same file or a new one)

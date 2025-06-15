@@ -29,20 +29,19 @@ def mock_can_interface() -> CANInterface:
     return AsyncMock(spec=CANInterface)
 
 @pytest.fixture
-def empty_controller(mock_can_interface: CANInterface, event_loop: asyncio.AbstractEventLoop) -> MultiAxisController:
+def empty_controller(mock_can_interface: CANInterface) -> MultiAxisController:
     """Provides an empty MultiAxisController instance for setup tests."""
-    # Pass the event_loop from the test function to ensure the controller
-    # uses the correct, active loop for creating tasks.
-    return MultiAxisController(can_interface_manager=mock_can_interface, loop=event_loop)
+    # The controller will get the loop from asyncio.get_event_loop() if needed.
+    return MultiAxisController(can_interface_manager=mock_can_interface)
 
 @pytest.fixture
-def populated_controller(mock_can_interface: CANInterface, event_loop: asyncio.AbstractEventLoop) -> MultiAxisController:
+def populated_controller(mock_can_interface: CANInterface) -> MultiAxisController:
     """
     Provides a MultiAxisController pre-populated with two mock Axis objects
     for testing group operations.
     """
     # Pass the event_loop from the test function to the controller.
-    controller = MultiAxisController(can_interface_manager=mock_can_interface, loop=event_loop)
+    controller = MultiAxisController(can_interface_manager=mock_can_interface)
     kin = LinearKinematics(pitch=1.0, steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION)
 
     # Create mock Axis objects. Using spec ensures they have the correct methods.

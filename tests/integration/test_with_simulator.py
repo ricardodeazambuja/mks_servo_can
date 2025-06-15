@@ -13,6 +13,7 @@ import os  # For checking if simulator executable exists
 # In this script, it's mentioned as potentially being used for checking if the simulator executable exists,
 # though the actual check uses 'subprocess.check_output("command -v ...")' which is more common on Unix-like systems.
 
+import sys # Ensure sys is imported at the top
 import pytest
 # Imports the 'pytest' framework, which is used for writing and running tests.
 # Pytest offers a powerful and flexible way to define test functions, fixtures, and run test suites.
@@ -95,22 +96,23 @@ def running_simulator():
     # This section attempts to verify if the simulator command is available in the system's PATH.
     # 'command -v' is a Unix-like command to find the path of an executable.
     # If not found, it skips the integration tests in this module.
-    if not subprocess.check_output(
-        f"command -v {SIMULATOR_CMD}", shell=True, text=True
-    ).strip():
-        # If 'command -v' fails or returns an empty string, the simulator is not found.
-        pytest.skip(
-            f"'{SIMULATOR_CMD}' not found in PATH. Skipping integration tests."
-        )
-        # 'pytest.skip' causes pytest to skip all tests that depend on this fixture within the current module.
-        return  # Must return for pytest.skip to work correctly in a fixture
-        # Exiting the fixture function is important after calling pytest.skip.
+    # Commenting out the command -v check
+    # if not subprocess.check_output(
+    #     f"command -v {SIMULATOR_CMD}", shell=True, text=True
+    # ).strip():
+    #     # If 'command -v' fails or returns an empty string, the simulator is not found.
+    #     pytest.skip(
+    #         f"'{SIMULATOR_CMD}' not found in PATH. Skipping integration tests."
+    #     )
+    #     # 'pytest.skip' causes pytest to skip all tests that depend on this fixture within the current module.
+    #     return  # Must return for pytest.skip to work correctly in a fixture
+    #     # Exiting the fixture function is important after calling pytest.skip.
 
     simulator_process = None
     # Initializes 'simulator_process' to None. This variable will hold the subprocess object for the simulator.
 
     cmd = [
-        SIMULATOR_CMD,
+        sys.executable, "-m", "mks_simulator.main", # Changed to invoke as module
         "--port",
         str(SIMULATOR_PORT),
         "--num-motors",
@@ -226,6 +228,7 @@ async def can_interface_sim(
         # current_test_name = request.node.name if hasattr(request, 'node') else 'unknown_test'
         # print(f"can_interface_sim: Attempting to connect for test: {current_test_name}")
         # This commented-out section was likely for debugging, showing which test is trying to connect.
+# import sys # Add sys import # This was moved to the top
 
         await iface.connect()
         # Asynchronously connects the 'CANInterface' instance to the simulator.

@@ -37,8 +37,7 @@ class MultiAxisController:
 
     def __init__(
         self,
-        can_interface_manager: CANInterface,
-        loop: Optional[asyncio.AbstractEventLoop] = None,
+        can_interface_manager: CANInterface
     ):
         """
         Initialize the MultiAxisController.
@@ -46,12 +45,10 @@ class MultiAxisController:
         Args:
             can_interface_manager: The shared `CANInterface` instance that all axes
                                    managed by this controller will use for communication.
-            loop: The asyncio event loop to use. If None, `asyncio.get_event_loop()`
-                  will be used.
         """
         self.can_if = can_interface_manager
         self.axes: Dict[str, Axis] = {}  # Store axes by name
-        self._loop = loop if loop else asyncio.get_event_loop()
+        # self._loop = loop if loop else asyncio.get_event_loop() # Removed, rely on asyncio.get_event_loop() where needed or create_task
 
     def add_axis(self, axis: Axis) -> None:
         """
@@ -224,7 +221,7 @@ class MultiAxisController:
 
             if concurrent:
                 tasks.append(
-                    self._loop.create_task(
+                    asyncio.create_task( # Changed from self._loop.create_task
                         method_to_call(*args, **kwargs),
                         name=f"{axis_name}_{method_name}",
                     )
@@ -565,7 +562,7 @@ class MultiAxisController:
                     active_futures_map[ax.name] = None
 
             tasks.append(
-                self._loop.create_task(
+                asyncio.create_task( # Changed from self._loop.create_task
                     _initiate_move(axis, rel_dist, axis_speed_user),
                     name=f"{axis_name}_move_rel_init",
                 )

@@ -101,6 +101,7 @@ class LLMDebugInterface:
             "timestamp": current_time,
             "uptime_seconds": current_time - self.start_time,
             "simulator_status": "running",
+            "motor_count": len(self.motors), # Added line
             "motors": {
                 str(motor_id): self._get_motor_status(motor)
                 for motor_id, motor in self.motors.items()
@@ -131,6 +132,7 @@ class LLMDebugInterface:
         """Get detailed status for a specific motor"""
         return {
             "can_id": motor.can_id,
+            "name": motor.name, # Added line
             "enabled": getattr(motor, 'enabled', True),
             "current_position": getattr(motor, 'encoder_position', 0),
             "current_angle_degrees": getattr(motor, 'current_angle', 0.0),
@@ -218,41 +220,75 @@ class LLMDebugInterface:
             "timestamp": time.time()
         }
         
-        tolerance = expected_state.get("tolerance", 0.1)
+        tolerance = expected_state.get("tolerance", 0.1) # Global tolerance
         
         # Compare expected vs actual motor states
-        for motor_id, expected_motor in expected_state.get("motors", {}).items():
-            motor_id_str = str(motor_id)
-            
-            if motor_id_str not in current["motors"]:
-                validation_results["failures"].append(f"Motor {motor_id} not found in simulator")
+        for expected_motor_state in expected_state.get("motors", []): # Iterate list
+            motor_id = expected_motor_state.get("id")
+            if motor_id is None:
+                validation_results["warnings"].append(f"Motor entry found without an 'id': {expected_motor_state}")
                 continue
-                
+
+            motor_id_str = str(motor_id) # Use string for dict keys
+
+            if motor_id_str not in current["motors"]:
+                validation_results["failures"].append(f"Motor {motor_id} not found in simulator's current state")
+                validation_results["passed"] = False # Ensure overall failure
+                continue
+
             actual_motor = current["motors"][motor_id_str]
             
-            for field, expected_value in expected_motor.items():
-                if field not in actual_motor:
-                    validation_results["warnings"].append(f"Motor {motor_id} field '{field}' not found")
+            # Iterate through the expected parameters for the current motor
+            for field, expected_value in expected_motor_state.items():
+                if field == "id": # Already used
                     continue
                 
-                actual_value = actual_motor[field]
+                # Handle per-motor tolerance if present, otherwise use global
+                # Also, if 'tolerance' is the field itself, don't treat it as a parameter to check
+                if field == "tolerance":
+                    continue
+                motor_specific_tolerance = expected_motor_state.get("tolerance", tolerance)
+
+                actual_value_container = actual_motor
+                param_found = True
+                if '.' in field: # Handle nested fields like "status_flags.moving"
+                    parts = field.split('.')
+                    for i, part in enumerate(parts):
+                        if isinstance(actual_value_container, dict) and part in actual_value_container:
+                            actual_value_container = actual_value_container[part]
+                        else:
+                            param_found = False
+                            break
+                    if not param_found:
+                        validation_results["warnings"].append(f"Motor {motor_id} nested field '{field}' not found in actual state.")
+                        continue
+                    actual_value = actual_value_container
+                elif field not in actual_motor:
+                    validation_results["warnings"].append(f"Motor {motor_id} field '{field}' not found in actual state.")
+                    continue
+                else:
+                    actual_value = actual_motor[field]
                 
-                # Handle different value types
-                if isinstance(expected_value, (int, float)):
-                    if abs(actual_value - expected_value) > tolerance:
+                # Comparison logic
+                if isinstance(expected_value, (int, float)) and isinstance(actual_value, (int, float)):
+                    if abs(actual_value - expected_value) > motor_specific_tolerance:
                         validation_results["failures"].append(
-                            f"Motor {motor_id} {field}: expected {expected_value}, got {actual_value} (tolerance: {tolerance})"
+                            f"Motor {motor_id} {field}: expected {expected_value}, got {actual_value} (tolerance: {motor_specific_tolerance})"
                         )
+                        validation_results["passed"] = False
                 elif isinstance(expected_value, bool):
                     if actual_value != expected_value:
                         validation_results["failures"].append(
                             f"Motor {motor_id} {field}: expected {expected_value}, got {actual_value}"
                         )
+                        validation_results["passed"] = False
                 elif isinstance(expected_value, str):
                     if actual_value != expected_value:
                         validation_results["failures"].append(
                             f"Motor {motor_id} {field}: expected '{expected_value}', got '{actual_value}'"
                         )
+                        validation_results["passed"] = False
+                # Add other type comparisons if necessary
         
         # Validate communication expectations
         if "communication" in expected_state:
