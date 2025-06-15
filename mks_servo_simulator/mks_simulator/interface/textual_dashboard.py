@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 class MotorStatusWidget(Static):
     """Widget displaying motor status in a table"""
     
-    def __init__(self, virtual_can_bus=None):
-        super().__init__()
+    def __init__(self, virtual_can_bus=None, id: Optional[str] = None):
+        super().__init__(id=id)
         self.virtual_can_bus = virtual_can_bus
     
     def compose(self) -> ComposeResult:
@@ -174,8 +174,8 @@ class SystemInfoWidget(Static):
 class DetailedMotorViewWidget(Static):
     """Widget to display detailed information for a selected motor."""
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, id: Optional[str] = None): # Removed *args, **kwargs for specific signature
+        super().__init__(id=id)
         self.selected_motor: Optional['SimulatedMotor'] = None
 
     def on_mount(self) -> None:
@@ -208,8 +208,8 @@ class DetailedMotorViewWidget(Static):
 class CommandLogWidget(Static):
     """Widget to display a log of the most recent commands."""
 
-    def __init__(self, debug_interface: Optional['LLMDebugInterface'] = None, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, debug_interface: Optional['LLMDebugInterface'] = None, id: Optional[str] = None): # Removed *args, **kwargs
+        super().__init__(id=id)
         self.debug_interface = debug_interface
         self.max_log_entries = 10
 
