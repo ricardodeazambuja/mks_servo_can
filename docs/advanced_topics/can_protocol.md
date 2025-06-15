@@ -104,7 +104,7 @@ The interpretation of data bytes (e.g., how pulses, speed, or current are encode
 
 ## Data Interpretation
 
-- **Multi-byte values**: Parameters like position, speed, or current are often sent or received as multi-byte values. These are typically encoded in little-endian format. The `struct` module in Python is used within `low_level_api.py` to pack and unpack these values.
+- **Multi-byte values**: Parameters like position, speed, or current are often sent or received as multi-byte values. These are typically encoded in big-endian format, as handled by the `struct` module in `low_level_api.py`. The `struct` module in Python is used within `low_level_api.py` to pack and unpack these values.
 - **Signed vs. Unsigned**: Care must be taken to interpret whether a value is signed (e.g., motor speed RPM can be negative for reverse direction) or unsigned (e.g., pulse counts for relative moves are magnitudes, direction is a separate bit). The `low_level_api.py` handles these interpretations based on the MKS manual. For instance, `read_encoder_value_addition` explicitly handles sign extension for its 6-byte value.
 
 ## Active Response Mode (CanRSP Active)

@@ -185,7 +185,15 @@ class PerformanceMonitor:
                     self._deferred_start = True
     
     def start_deferred_monitoring_if_needed(self, loop):
-        """Start monitoring if it was deferred due to no event loop"""
+        """Starts monitoring if it was deferred due to no event loop at init.
+
+        This method is called typically after the main event loop has been
+        definitively set up and started, allowing the monitoring task to be
+        correctly scheduled if its initial start was deferred.
+
+        Args:
+            loop: The asyncio event loop to use for the monitoring task.
+        """
         if hasattr(self, '_deferred_start') and self._deferred_start and self.running:
             self.monitor_task = loop.create_task(self._monitoring_loop())
             self._deferred_start = False

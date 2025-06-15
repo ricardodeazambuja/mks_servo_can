@@ -1,3 +1,10 @@
+"""Unit tests for the kinematics classes.
+
+These tests verify the conversion logic and initialization of various
+kinematics models like LinearKinematics, RotaryKinematics, and
+EccentricKinematics, ensuring they correctly translate between user units
+and motor steps/pulses.
+"""
 # Kinematics classes are responsible for converting between user-defined physical units
 # (like mm or degrees) and the motor's native units (encoder steps or pulses).
 # These unit tests verify the correctness of these conversions and the initialization logic

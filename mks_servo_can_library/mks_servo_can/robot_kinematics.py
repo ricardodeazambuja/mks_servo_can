@@ -530,6 +530,24 @@ class RRRArm(RobotModelBase):
         link2_length: float, # Length from elbow (J3) to end-effector (EE)
         origin_offset: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     ):
+        """Initializes the RRRArm robot model.
+
+        Args:
+            multi_axis_controller: The controller for the arm's motors.
+            axis_names: A list of three axis names (str) corresponding to
+                        the base joint (J1), shoulder joint (J2), and elbow
+                        joint (J3), in that order.
+            link1_length: Length of the link between the shoulder joint (J2)
+                          and elbow joint (J3). Units should be consistent.
+            link2_length: Length of the link between the elbow joint (J3)
+                          and the end-effector (EE). Units should be consistent.
+            origin_offset: (x, y, z) offset of the robot's base (J1 axis origin)
+                           from the world origin. Defaults to (0.0, 0.0, 0.0).
+
+        Raises:
+            ConfigurationError: If `axis_names` does not contain exactly three names,
+                                or if link lengths are not positive.
+        """
         if len(axis_names) != 3:
             raise ConfigurationError(
                 "RRRArm requires exactly three axis names (for base, shoulder, and elbow joints)."

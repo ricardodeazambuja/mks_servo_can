@@ -157,6 +157,3 @@ For detailed usage, refer to the example scripts:
 * `examples/two_link_planar_arm.py`
 * `examples/cartesian_3dof_robot.py`
 * `examples/three_link_arm.py`
-
-And the user guide:
-* [Controlling Robot Models](user_guides/library/robot_control.md) (once created)

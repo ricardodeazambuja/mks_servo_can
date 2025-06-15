@@ -1,3 +1,10 @@
+"""Unit tests for the `LowLevelAPI` class.
+
+These tests focus on ensuring that each method in the LowLevelAPI correctly
+constructs CAN messages for sending, and correctly parses responses from
+the (mocked) CAN interface, including error handling for CRC, DLC,
+and communication issues.
+"""
 # These tests are designed to verify the functionality of individual methods within the LowLevelAPI,
 # focusing on how it constructs CAN messages, processes responses, and handles errors,
 # typically by mocking the CANInterface.
@@ -127,7 +134,17 @@ def _assert_message_properties(sent_msg_arg, expected_can_id, expected_data_byte
     assert not sent_msg_arg.is_extended_id
 
 def _pack_int24_be(value: int) -> bytes:
-    """Packs a signed 24-bit integer into 3 bytes, big-endian."""
+    """Packs a signed 24-bit integer into 3 bytes, big-endian.
+
+    Args:
+        value: The integer to pack. Should be within signed 24-bit range.
+
+    Returns:
+        A bytes object of length 3 representing the packed integer.
+
+    Raises:
+        ValueError: If the value is out of the signed 24-bit range.
+    """
     # Ensure the value is within the 24-bit signed range for consistency
     if not (-8388608 <= value <= 8388607):
         raise ValueError(f"Value {value} out of signed 24-bit range.")

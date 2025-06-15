@@ -1,3 +1,9 @@
+"""Unit tests for the CRC (Cyclic Redundancy Check) utility functions.
+
+These tests verify the correctness of `calculate_crc` and `verify_crc`
+functions in `mks_servo_can.crc` module, including checks against
+examples from the MKS servo motor user manual.
+"""
 # Unit tests are designed to test individual components or functions in isolation.
 
 import pytest

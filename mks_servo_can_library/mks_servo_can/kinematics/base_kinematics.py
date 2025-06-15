@@ -105,6 +105,7 @@ class Kinematics(ABC):
         }
 
     def __repr__(self) -> str:
+        """Returns a string representation of the Kinematics object."""
         params = self.get_parameters()
         param_str = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"{self.__class__.__name__}({param_str})"

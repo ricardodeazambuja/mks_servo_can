@@ -19,17 +19,17 @@ To connect to the mks-servo-simulator, you can either let the library auto-detec
 mks-servo-simulator --num-motors 4 --start-can-id 1 --latency-ms 5
 ```
 
-### Auto-detection (Recommended)
-The simplest approach - the library will automatically detect and connect to a running simulator:
+### Connecting Directly to the Simulator
+The most direct way to connect to the simulator is by using the `use_simulator=True` flag. This explicitly tells the library to connect to the MKS Servo Simulator, which should be running on your machine.
 ```python
-async def connect_to_simulator_auto():
-    # CANInterface will auto-detect the simulator if running
-    can_interface = CANInterface()
+async def connect_to_simulator_direct():
+    # Explicitly use the simulator
+    can_interface = CANInterface(use_simulator=True)
     
     try:
-        print("Attempting to connect to CAN interface...")
+        print("Attempting to connect to CAN interface (simulator mode)...")
         await can_interface.connect()
-        print("Successfully connected! Using simulator mode.")
+        print("Successfully connected to the simulator!")
         
         # Verify connection
         if can_interface.is_connected:
@@ -38,24 +38,28 @@ async def connect_to_simulator_auto():
             
     except exceptions.CANError as e:
         print(f"Error connecting: {e}")
-        print("Please ensure the simulator is running with: mks-servo-simulator --num-motors 4")
+        print("Please ensure the MKS Servo Simulator is running (e.g., 'mks-servo-simulator --num-motors 4').")
         return None
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return None
 
 # To run this example:
-# can_if = asyncio.run(connect_to_simulator_auto())
+# can_if = asyncio.run(connect_to_simulator_direct())
 ```
 
-### Explicit Simulator Configuration
-For more control over simulator connection:
+### Explicit Simulator Configuration (Advanced)
+While `use_simulator=True` is the primary way to enable simulator mode, you can also specify simulator host and port if it's running on a non-default location. The `interface_type` parameter is generally more relevant for hardware configurations but can be set to `"simulator"` as well.
 ```python
 async def connect_to_simulator_explicit():
+    # use_simulator=True is still key.
+    # interface_type="simulator" can be set but is less critical than use_simulator=True for simulator mode.
+    # It's more for specifying hardware types like 'socketcan', 'canable', etc.
     can_interface = CANInterface(
-        interface_type="simulator",
-        simulator_host="localhost",  # Default host
-        simulator_port=6789         # Default port
+        use_simulator=True, # This is the main flag for simulator mode
+        interface_type="simulator", # Can be included, but use_simulator is dominant
+        simulator_host="localhost",  # Default host, specify if different
+        simulator_port=6789         # Default port, specify if different
     )
     
     try:
@@ -83,9 +87,10 @@ async def connect_to_simulator_explicit():
 ```
 
 ## Key Parameters for Simulator Connection:
-* `interface_type="simulator"`: Explicitly tells CANInterface to use simulator mode.
-* `simulator_host`: The hostname or IP address where the simulator is running. Defaults to "localhost".
-* `simulator_port`: The TCP port the simulator is listening on. Defaults to 6789.
+* `use_simulator=True`: This is the primary flag to enable simulator mode. If `True`, the library will attempt to connect to the MKS Servo Simulator.
+* `simulator_host`: The hostname or IP address where the simulator is running. Defaults to "localhost". Only relevant if `use_simulator=True`.
+* `simulator_port`: The TCP port the simulator is listening on. Defaults to 6789. Only relevant if `use_simulator=True`.
+* `interface_type`: While this can be set to `"simulator"`, the `use_simulator` flag takes precedence for enabling simulator mode. This parameter is primarily used for specifying the type of hardware CAN adapter (e.g., "socketcan", "canable").
 
 ## Connecting to Real Hardware
 To connect to physical MKS servo motors:
@@ -145,7 +150,7 @@ async def cleanup_connection(can_interface):
 
 # In your main function:
 # try:
-#     can_if = await connect_to_simulator_auto()  # or connect_to_hardware_example()
+#     can_if = await connect_to_simulator_direct()  # or connect_to_hardware_example()
 #     # ... use can_if ...
 # finally:
 #     await cleanup_connection(can_if)

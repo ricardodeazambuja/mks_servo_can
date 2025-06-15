@@ -147,6 +147,13 @@ class HeightMap:
     """Height map for surface-following drawing"""
     
     def __init__(self, data: Dict[str, Any]):
+        """Initializes the HeightMap instance.
+
+        Args:
+            data: A dictionary containing height map data, typically loaded
+                  from a JSON file. Expected keys include "grid_spacing",
+                  "bounds", and "probe_points".
+        """
         self.grid_spacing = data["grid_spacing"]
         self.bounds = data["bounds"]
         self.interpolation_method = data.get("interpolation_method", "bicubic")

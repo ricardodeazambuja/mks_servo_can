@@ -112,7 +112,7 @@ After initialization, you need to enable the motor before it will accept movemen
 async def motor_enable_disable_example(axis: Axis):
     try:
         # Check current status
-        current_status = await axis.get_current_status()
+        current_status = await axis.get_status_dict()
         print(f"{axis.name} enabled status: {current_status.get('enabled', 'unknown')}")
         
         # Enable the motor
@@ -161,7 +161,7 @@ async def check_motor_status(axis: Axis):
         print(f"{axis.name} enabled: {enabled}")
         
         # Get comprehensive status
-        status = await axis.get_current_status()
+        status = await axis.get_status_dict()
         print(f"{axis.name} status: {status}")
         
     except exceptions.CommunicationError as e:
@@ -177,7 +177,7 @@ Here's a complete example demonstrating the typical sequence:
 ```python
 async def complete_basic_control_example():
     # 1. Connect to CAN interface (simulator or hardware)
-    can_interface = CANInterface()  # Auto-detect simulator or use hardware
+    can_interface = CANInterface(use_simulator=True) # Assuming simulator for example
     
     try:
         await can_interface.connect()
@@ -227,7 +227,7 @@ Once you have basic motor control working:
 ```python
 # Quick setup for testing with simulator
 async def quick_axis_setup(motor_id=1):
-    can_if = CANInterface()
+    can_if = CANInterface(use_simulator=True) # Assuming simulator for example
     await can_if.connect()
     
     axis = Axis(can_if, motor_id, kinematics=RotaryKinematics())

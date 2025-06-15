@@ -1,3 +1,8 @@
+"""Unit tests for the `Axis` class in the `mks_servo_can` library.
+
+These tests focus on isolating the logic within the Axis class by mocking
+its dependencies, such as `CANInterface` and `LowLevelAPI`.
+"""
 # mks_servo_can_project/tests/unit/test_axis.py
 # This line indicates the path to the unit test file for the Axis class.
 # These unit tests are designed to verify the functionality of the high-level 'Axis' class,

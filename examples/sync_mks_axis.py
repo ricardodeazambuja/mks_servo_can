@@ -1,3 +1,11 @@
+"""
+Example script demonstrating a synchronous wrapper for the mks-servo-can library.
+
+This script provides a `SyncMKSAxis` class that allows controlling an MKS servo motor
+using blocking (synchronous) calls, which can be easier to integrate into
+traditional synchronous Python applications. It manages an asyncio event loop
+in a separate thread to interact with the underlying asynchronous library.
+"""
 import asyncio
 # Imports the asyncio library, which is the foundation for the mks_servo_can library's asynchronous operations.
 # Even though this example creates a synchronous wrapper, asyncio is still needed to run the underlying async library.
@@ -49,6 +57,13 @@ logger = logging.getLogger("SyncMKSAxisWrapper")
 # Creates a logger instance specific to this wrapper class.
 
 class SyncMKSAxis:
+    """
+    Synchronous wrapper for an MKS Servo Axis.
+
+    This class provides a blocking interface to control an MKS servo motor,
+    managing an internal asyncio event loop in a separate thread to interact
+    with the asynchronous `mks_servo_can.Axis` object.
+    """
     # Defines a class 'SyncMKSAxis' which acts as a synchronous wrapper around an asynchronous 'Axis' object.
     # This allows users to call methods in a blocking, synchronous way.
     def __init__(self, motor_can_id: int,
@@ -215,9 +230,9 @@ class SyncMKSAxis:
     # They internally call their asynchronous counterparts using '_submit_coro'.
 
     async def _async_connect(self):
+        """Internal async method to connect CAN and initialize Axis."""
         # An internal asynchronous method to handle the connection logic.
         # This will be run in the asyncio thread via _submit_coro.
-        """Internal async method to connect CAN and initialize Axis."""
         if not self._can_if:
             # Should not happen if _thread_target initialized correctly.
             raise exceptions.ConfigurationError(f"CANInterface not initialized in async thread for {self.axis_name}")
@@ -236,6 +251,9 @@ class SyncMKSAxis:
         """
         Starts the asyncio thread, connects the CAN interface, and initializes the axis.
         This is a blocking call.
+
+        Args:
+            timeout_sec: Maximum time to wait for connection and initialization.
         """
         # If already connected, do nothing.
         if self._is_connected_flag:
@@ -298,6 +316,9 @@ class SyncMKSAxis:
         """
         Disconnects the CAN interface, stops the asyncio loop, and joins the thread.
         This is a blocking call.
+
+        Args:
+            timeout_sec: Maximum time to wait for disconnection.
         """
         # If the thread isn't running, there's nothing to disconnect in terms of thread/loop.
         if not self._thread or not self._thread.is_alive():
@@ -336,32 +357,38 @@ class SyncMKSAxis:
         logger.info(f"{self.axis_name} disconnected sequence complete.")
 
     def enable_motor(self, timeout_sec: float = 2.0):
+        """Enables the motor. Blocks until the command is acknowledged or timeout."""
         # Synchronous wrapper for Axis.enable_motor().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.enable_motor(), timeout_sec=timeout_sec)
 
     def disable_motor(self, timeout_sec: float = 2.0):
+        """Disables the motor. Blocks until the command is acknowledged or timeout."""
         # Synchronous wrapper for Axis.disable_motor().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.disable_motor(), timeout_sec=timeout_sec)
 
     def is_enabled(self, timeout_sec: float = 1.0) -> bool:
+        """Checks if the motor is enabled by querying its status. Blocks until response or timeout."""
         # Synchronous wrapper for Axis.read_en_status() (as Axis.is_enabled() is usually cached).
         # This actively queries the motor for its enable status.
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.read_en_status(), timeout_sec=timeout_sec)
 
     def get_current_position_user(self, timeout_sec: float = 1.0) -> float:
+        """Gets the current motor position in user units. Blocks until response or timeout."""
         # Synchronous wrapper for Axis.get_current_position_user().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.get_current_position_user(), timeout_sec=timeout_sec)
 
     def get_current_position_steps(self, timeout_sec: float = 1.0) -> int:
+        """Gets the current motor position in raw encoder steps. Blocks until response or timeout."""
         # Synchronous wrapper for Axis.get_current_position_steps().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.get_current_position_steps(), timeout_sec=timeout_sec)
 
     def move_absolute_user(self, target_pos_user: float, speed_user: Optional[float] = None, wait_for_completion: bool = True, move_timeout_sec: float = 30.0):
+        """Moves the motor to an absolute position in user units."""
         # Synchronous wrapper for Axis.move_to_position_abs_user().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         coro = self._axis.move_to_position_abs_user(
@@ -373,6 +400,7 @@ class SyncMKSAxis:
         return self._submit_coro(coro, timeout_sec=move_timeout_sec)
 
     def move_relative_user(self, relative_dist_user: float, speed_user: Optional[float] = None, wait_for_completion: bool = True, move_timeout_sec: float = 30.0):
+        """Moves the motor by a relative distance in user units."""
         # Synchronous wrapper for Axis.move_relative_user().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         coro = self._axis.move_relative_user(
@@ -383,6 +411,7 @@ class SyncMKSAxis:
         return self._submit_coro(coro, timeout_sec=move_timeout_sec)
 
     def move_absolute_pulses(self, target_pulses: int, speed_param: Optional[int] = None, accel_param: Optional[int] = None, wait: bool = True, move_timeout_sec: float = 30.0):
+        """Moves the motor to an absolute position in raw command pulses."""
         # Synchronous wrapper for Axis.move_to_position_abs_pulses().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         coro = self._axis.move_to_position_abs_pulses(
@@ -394,6 +423,7 @@ class SyncMKSAxis:
         return self._submit_coro(coro, timeout_sec=move_timeout_sec)
 
     def move_relative_pulses(self, relative_pulses: int, speed_param: Optional[int] = None, accel_param: Optional[int] = None, wait: bool = True, move_timeout_sec: float = 30.0):
+        """Moves the motor by a relative distance in raw command pulses."""
         # Synchronous wrapper for Axis.move_relative_pulses().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         coro = self._axis.move_relative_pulses(
@@ -405,11 +435,13 @@ class SyncMKSAxis:
         return self._submit_coro(coro, timeout_sec=move_timeout_sec)
 
     def set_current_position_as_zero(self, timeout_sec: float = 2.0):
+        """Sets the motor's current position as the zero reference. Blocks until acknowledged."""
         # Synchronous wrapper for Axis.set_current_position_as_zero().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.set_current_position_as_zero(), timeout_sec=timeout_sec)
 
     def home_axis(self, wait_for_completion: bool = True, home_timeout_sec: float = 60.0):
+        """Commands the motor to perform its homing sequence."""
         # Synchronous wrapper for Axis.home_axis().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         # The axis.home_axis itself has a timeout parameter for its internal async waiting logic.
@@ -420,71 +452,79 @@ class SyncMKSAxis:
         return self._submit_coro(coro, timeout_sec=home_timeout_sec)
 
     def set_speed_user(self, speed_user: float, accel_user: Optional[float] = None, timeout_sec: float = 2.0):
+        """Sets the motor to run continuously at a specified speed in user units."""
         # Synchronous wrapper for Axis.set_speed_user().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         coro = self._axis.set_speed_user(speed_user=speed_user, accel_user=accel_user)
         return self._submit_coro(coro, timeout_sec=timeout_sec)
 
     def stop_motor(self, deceleration_param: Optional[int] = None, timeout_sec: float = 2.0):
+        """Commands the motor to stop its current movement with controlled deceleration."""
         # Synchronous wrapper for Axis.stop_motor().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         coro = self._axis.stop_motor(deceleration_param=deceleration_param)
         return self._submit_coro(coro, timeout_sec=timeout_sec)
 
     def emergency_stop(self, timeout_sec: float = 2.0):
+        """Commands an immediate emergency stop of the motor."""
         # Synchronous wrapper for Axis.emergency_stop().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.emergency_stop(), timeout_sec=timeout_sec)
 
     def get_current_speed_rpm(self, timeout_sec: float = 1.0) -> int:
+        """Gets the current motor speed in RPM. Blocks until response or timeout."""
         # Synchronous wrapper for Axis.get_current_speed_rpm().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.get_current_speed_rpm(), timeout_sec=timeout_sec)
 
     def get_current_speed_user(self, timeout_sec: float = 1.0) -> float:
+        """Gets the current motor speed in user units. Blocks until response or timeout."""
         # Synchronous wrapper for Axis.get_current_speed_user().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.get_current_speed_user(), timeout_sec=timeout_sec)
 
     def get_motor_status_code(self, timeout_sec: float = 1.0) -> int:
+        """Queries and returns the raw motor status code. Blocks until response or timeout."""
         # Synchronous wrapper for Axis.get_motor_status_code().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.get_motor_status_code(), timeout_sec=timeout_sec)
 
     def get_status_dict(self, timeout_sec: float = 1.5) -> Dict[str, Any]:
+        """Retrieves a comprehensive status dictionary for the axis. Blocks until response or timeout."""
         # Synchronous wrapper for Axis.get_status_dict().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         # This involves multiple reads if not cached, so a slightly longer timeout might be good.
         return self._submit_coro(self._axis.get_status_dict(), timeout_sec=timeout_sec)
 
     def set_work_mode(self, mode_const: int, timeout_sec: float = 2.0):
+        """Sets the working mode of the MKS servo motor. Blocks until acknowledged."""
         # Synchronous wrapper for Axis.set_work_mode().
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._submit_coro(self._axis.set_work_mode(mode_const), timeout_sec=timeout_sec)
 
     def is_homed(self) -> bool:
+        """Returns the cached homed status."""
         # Returns the cached homed status from the underlying Axis object.
         # This does not involve a new CAN call unless the underlying Axis.is_homed() itself triggers one.
-        """Returns the cached homed status."""
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         # This directly returns the flag set by async operations, no CAN call here by default
         return self._axis.is_homed()
 
     def is_calibrated(self) -> bool:
-        # Returns the cached calibrated status.
         """Returns the cached calibrated status."""
+        # Returns the cached calibrated status.
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._axis.is_calibrated()
 
     def is_move_complete(self) -> bool:
-        # Checks if the last commanded move on the underlying Axis object is complete.
         """Checks if the last commanded move is complete (based on cached future)."""
+        # Checks if the last commanded move on the underlying Axis object is complete.
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         return self._axis.is_move_complete()
 
     def wait_for_move_completion(self, timeout_sec: Optional[float] = None):
-        # Synchronously waits for the current move on the underlying Axis object to complete.
         """Blocks until the current move is complete or timeout occurs."""
+        # Synchronously waits for the current move on the underlying Axis object to complete.
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         # The timeout_sec for _submit_coro should be slightly larger than the
         # internal timeout for self._axis.wait_for_move_completion if that one also has a timeout.
@@ -496,8 +536,8 @@ class SyncMKSAxis:
         return self._submit_coro(coro, timeout_sec=timeout_sec)
 
     def ping(self, timeout_sec: float = 1.0) -> Optional[float]:
-        # Synchronously pings the motor.
         """Pings the motor and returns response time in ms, or None on failure."""
+        # Synchronously pings the motor.
         if not self._axis: raise RuntimeError(f"Axis not initialized for {self.axis_name}")
         # The Axis.ping() method in the library already returns response_time_ms or raises an error.
         # So, we expect a float if successful.

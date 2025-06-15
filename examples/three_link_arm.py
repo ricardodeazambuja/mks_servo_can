@@ -1,3 +1,10 @@
+"""
+Example script demonstrating control of a 3-DOF RRR (Revolute-Revolute-Revolute) arm.
+
+This script showcases how to use the `RRRArm` class from the `robot_kinematics`
+module, along with `MultiAxisController` and `Axis` objects, to command
+the arm to a specific Cartesian pose.
+"""
 # In examples/rrr_arm_example.py
 
 import asyncio
@@ -49,6 +56,7 @@ logging.basicConfig(
 logger = logging.getLogger("RRRArmExample")
 
 async def main():
+    """Main execution function for the RRR arm example."""
     can_if = None
     multi_controller = None
     logger.info("Starting RRR Arm example...")
