@@ -14,33 +14,38 @@ if FASTAPI_AVAILABLE:
     # as they are not defined in http_debug_server.py and not directly used by tests.
     from mks_servo_simulator.mks_simulator.interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
     from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import LLMDebugInterface
-    from mks_servo_simulator.mks_simulator.interface.config_manager import ConfigurationManager
-    from mks_servo_simulator.mks_simulator.interface.debug_tools import LiveConfigurationInterface, CommandInjector
+    from mks_servo_simulator.mks_simulator.interface.config_manager import ConfigurationManager, LiveConfigurationInterface # Corrected import
+    from mks_servo_simulator.mks_simulator.interface.debug_tools import CommandInjector # LiveConfigurationInterface removed from here
 
     # Mock dependencies
     MotorModel = MagicMock()
     VirtualCANBus = MagicMock()
 
     # Simple mock for CommandResult if the actual is complex or not easily available
-    # For the purpose of these tests, we only care about its attributes like success/message
+    # For the purpose of these tests, this mock should align with InjectedCommand from debug_tools.py
     class MockCommandResult:
-        def __init__(self, success: bool, message: str = "", data: dict = None):
+        def __init__(self, success: bool, command_name: str = "mock_command",
+                     execution_time_ms: float = 1.0,
+                     response_data: Optional[list] = None,
+                     error_message: Optional[str] = None):
             self.success = success
-            self.message = message
-            self.data = data if data is not None else {}
-
-        def to_dict(self):
-            return {"success": self.success, "message": self.message, "data": self.data}
+            self.command_name = command_name
+            self.execution_time_ms = execution_time_ms
+            self.response_data = response_data if response_data is not None else []
+            self.error_message = error_message
 
 
     class TestDebugHTTPServer(unittest.TestCase):
         def setUp(self):
-            self.mock_motor_model = MotorModel()
+            self.mock_motor_model_instance = MotorModel() # Renamed for clarity
             self.mock_can_bus = VirtualCANBus()
+
+            # LLMDebugInterface expects a dictionary of motors
+            self.mock_motors = {1: self.mock_motor_model_instance}
 
             # Mock LLMDebugInterface and its command_injector
             self.llm_debug_interface = LLMDebugInterface(
-                motor_model=self.mock_motor_model,
+                motors=self.mock_motors, # Corrected: pass a dictionary of motors
                 can_bus=self.mock_can_bus
             )
             # Mock the command_injector attribute directly on the instance for LLMDebugInterface
@@ -141,45 +146,84 @@ if FASTAPI_AVAILABLE:
     # --- Command Injection Tests ---
 
     def test_inject_raw_command_success(self):
-        payload = {"motor_id": 1, "command_code": 10, "data_bytes": [0, 1, 2, 3]}
-        mock_result = MockCommandResult(success=True, message="Command injected successfully.")
-        self.llm_debug_interface.command_injector.inject_command.return_value = mock_result
+        payload = {"motor_id": 1, "command_code": 10, "data_bytes": [0, 1, 2, 3], "expect_response": True}
+        mock_return_obj = MockCommandResult(
+            success=True,
+            command_name="RawCmd_10", # Example name, actual might vary
+            execution_time_ms=5.2,
+            response_data=[1, 2, 3, 4],
+            error_message=None
+        )
+        self.llm_debug_interface.command_injector.inject_command.return_value = mock_return_obj
 
         response = self.client.post("/inject", json=payload)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), mock_result.to_dict())
+        expected_json = {
+            "success": True,
+            "command_name": "RawCmd_10",
+            "execution_time_ms": 5.2,
+            "response_data": [1, 2, 3, 4],
+            "error_message": None
+        }
+        self.assertEqual(response.json(), expected_json)
         self.llm_debug_interface.command_injector.inject_command.assert_called_once_with(
-            payload["motor_id"], payload["command_code"], payload["data_bytes"]
+            payload["motor_id"], payload["command_code"], payload["data_bytes"], payload["expect_response"]
         )
 
     def test_inject_raw_command_fail(self):
-        payload = {"motor_id": 1, "command_code": 10, "data_bytes": [0, 1, 2, 3]}
-        mock_result = MockCommandResult(success=False, message="Injection failed.")
-        self.llm_debug_interface.command_injector.inject_command.return_value = mock_result
+        payload = {"motor_id": 1, "command_code": 10, "data_bytes": [0, 1, 2, 3], "expect_response": True}
+        mock_return_obj = MockCommandResult(
+            success=False,
+            command_name="RawCmd_10_Fail",
+            execution_time_ms=2.1,
+            response_data=[],
+            error_message="Device reported error"
+        )
+        self.llm_debug_interface.command_injector.inject_command.return_value = mock_return_obj
 
         response = self.client.post("/inject", json=payload)
-        # The API call itself succeeds (200), but the operation it triggered failed.
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), mock_result.to_dict())
+        expected_json = {
+            "success": False,
+            "command_name": "RawCmd_10_Fail",
+            "execution_time_ms": 2.1,
+            "response_data": [],
+            "error_message": "Device reported error"
+        }
+        self.assertEqual(response.json(), expected_json)
 
     def test_inject_raw_command_validation_error(self):
-        response = self.client.post("/inject", json={"motor_id": 1}) # Missing command_code and data_bytes
+        # Missing command_code, data_bytes, expect_response
+        response = self.client.post("/inject", json={"motor_id": 1})
         self.assertEqual(response.status_code, 422) # FastAPI's validation error
 
     def test_inject_template_command_success(self):
-        payload = {"motor_id": 1, "template_name": "reset_motor"}
-        mock_result = MockCommandResult(success=True, message="Template command injected.")
-        self.llm_debug_interface.command_injector.inject_template_command.return_value = mock_result
+        payload = {"motor_id": 1, "template_name": "reset_motor", "args": {}}
+        mock_return_obj = MockCommandResult(
+            success=True,
+            command_name="reset_motor_template",
+            execution_time_ms=10.0,
+            response_data=[], # Assuming template has no direct byte response
+            error_message=None
+        )
+        self.llm_debug_interface.command_injector.inject_template_command.return_value = mock_return_obj
 
         response = self.client.post("/inject_template", json=payload)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), mock_result.to_dict())
+        expected_json = {
+            "success": True,
+            "command_name": "reset_motor_template",
+            "execution_time_ms": 10.0,
+            "response_data": [],
+            "error_message": None
+        }
+        self.assertEqual(response.json(), expected_json)
         self.llm_debug_interface.command_injector.inject_template_command.assert_called_once_with(
-            payload["motor_id"], payload["template_name"], {} # Assuming no args for this test
+            payload["motor_id"], payload["template_name"], payload["args"]
         )
 
     def test_inject_template_command_validation_error(self):
-        response = self.client.post("/inject_template", json={"motor_id": 1}) # Missing template_name
+        response = self.client.post("/inject_template", json={"motor_id": 1}) # Missing template_name and args
         self.assertEqual(response.status_code, 422)
 
     # --- Command Listing Tests ---
@@ -270,21 +314,23 @@ if FASTAPI_AVAILABLE:
     def test_update_parameter_success(self):
         parameter_name = "latency_ms"
         payload = {"value": 5.0}
-        self.mock_live_config_interface.update_parameter.return_value = (True, f"Parameter {parameter_name} updated to {payload['value']}.")
+        self.mock_live_config_interface.update_parameter.return_value = True # Server checks this boolean
 
         response = self.client.post(f"/config/parameters/{parameter_name}", json=payload)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"success": True, "parameter": parameter_name, "value": payload['value'], "message": f"Parameter {parameter_name} updated to {payload['value']}."})
+        # The server response is {"success": True, "message": f"Updated {parameter_name} = {value}"}
+        self.assertEqual(response.json(), {"success": True, "message": f"Updated {parameter_name} = {payload['value']}"})
         self.mock_live_config_interface.update_parameter.assert_called_once_with(parameter_name, payload['value'])
 
     def test_update_parameter_fail(self):
         parameter_name = "non_existent_param"
         payload = {"value": "invalid_value"}
-        self.mock_live_config_interface.update_parameter.return_value = (False, f"Failed to update parameter {parameter_name}.")
+        self.mock_live_config_interface.update_parameter.return_value = False # Server checks this boolean
 
         response = self.client.post(f"/config/parameters/{parameter_name}", json=payload)
-        self.assertEqual(response.status_code, 200) # API call is fine
-        self.assertEqual(response.json(), {"success": False, "parameter": parameter_name, "value": payload['value'], "message": f"Failed to update parameter {parameter_name}."})
+        self.assertEqual(response.status_code, 200) # API call is fine, but operation failed
+        # The server response is {"success": False, "message": f"Failed to update {parameter_name}"}
+        self.assertEqual(response.json(), {"success": False, "message": f"Failed to update {parameter_name}"})
 
     def test_update_parameter_validation_error(self):
         parameter_name = "some_param"
