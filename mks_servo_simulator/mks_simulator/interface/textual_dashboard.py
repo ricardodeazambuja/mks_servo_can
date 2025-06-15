@@ -230,7 +230,7 @@ class CommandLogWidget(Static):
         formatted_log_lines = []
         for record in log_entries_to_display:
             try:
-                ts_val = getattr(record, 'timestamp', None) # Use getattr for safety
+                ts_val = getattr(record, 'timestamp', None)
                 ts_str = f"[{ts_val:.2f}]" if ts_val is not None else "[N/A]"
 
                 motor_id_val = getattr(record, 'motor_id', None)
@@ -246,31 +246,44 @@ class CommandLogWidget(Static):
                 else:
                     cmd_display_str = "CMD_N/A"
 
-                success_val = getattr(record, 'success', None) # Check for None if it can happen
+                success_val = getattr(record, 'success', None)
                 success_display_str = "Ok" if success_val is True else ("Fail" if success_val is False else "N/A")
-
 
                 resp_time_ms_val = getattr(record, 'response_time_ms', None)
                 resp_time_display_str = f"{resp_time_ms_val:.1f}ms" if resp_time_ms_val is not None else "-"
 
+                # Ensure all parts are strings before joining, to be extra safe
                 line_parts = [
-                    str(ts_str),
-                    " ",
-                    str(motor_id_display_str),
-                    ": ",
-                    str(cmd_display_str),
-                    " - ",
-                    str(success_display_str),
-                    " (",
-                    str(resp_time_display_str),
-                    ")"
+                    str(ts_str), " ",
+                    str(motor_id_display_str), ": ",
+                    str(cmd_display_str), " - ",
+                    str(success_display_str), " (",
+                    str(resp_time_display_str), ")"
                 ]
                 line = "".join(line_parts)
 
                 max_line_len = 80 # Assuming this is defined or reasonable
                 formatted_log_lines.append(line[:max_line_len] + "..." if len(line) > max_line_len else line)
+
+            except TypeError as te:
+                # Log the specific TypeError and the problematic record's attributes
+                problematic_record_details = f"Problematic record: timestamp={getattr(record, 'timestamp', 'ErrorAccessing')}, "
+                problematic_record_details += f"motor_id={getattr(record, 'motor_id', 'ErrorAccessing')}, "
+                problematic_record_details += f"cmd_code={getattr(record, 'command_code', 'ErrorAccessing')}, "
+                problematic_record_details += f"cmd_name={getattr(record, 'command_name', 'ErrorAccessing')}, "
+                problematic_record_details += f"success={getattr(record, 'success', 'ErrorAccessing')}, "
+                problematic_record_details += f"resp_time_ms={getattr(record, 'response_time_ms', 'ErrorAccessing')}"
+
+                # Add to formatted_log_lines so it's visible in the UI for debugging
+                error_line = f"[CmdLog TypeError: {te}. Details: {problematic_record_details}]"
+                formatted_log_lines.append(error_line)
+                # Also, print to console/log file for more permanent debugging
+                self.app.log.error(f"CommandLogWidget TypeError: {te} on record: {record!r}")
+
+
             except Exception as e_format:
-                formatted_log_lines.append(f"[Error formatting record: {type(e_format).__name__} - {e_format}]")
+                # Catch other general exceptions during formatting
+                formatted_log_lines.append(f"[Error formatting record: {type(e_format).__name__} - {e_format}. Record: {record!r}]")
 
         self.update("\n".join(formatted_log_lines))
 
@@ -345,11 +358,13 @@ class TextualDashboard(App):
     
     def on_mount(self) -> None:
         """Called when the app starts"""
-        if self.virtual_can_bus and self.virtual_can_bus.simulated_motors:
-            motor_ids = sorted(self.virtual_can_bus.simulated_motors.keys())
-            if motor_ids:
-                self.selected_motor_id = motor_ids[0]
-                # self.notify(f"Default motor selected: ID {self.selected_motor_id}") # Optional: for debugging
+        # Only set default if no motor is selected yet
+        if self.selected_motor_id is None:
+            if self.virtual_can_bus and self.virtual_can_bus.simulated_motors:
+                motor_ids = sorted(self.virtual_can_bus.simulated_motors.keys())
+                if motor_ids:
+                    self.selected_motor_id = motor_ids[0]
+                    # self.notify(f"Default motor selected: ID {self.selected_motor_id}") # Optional for debugging
 
         if self.enable_auto_refresh:
             self.start_auto_refresh()
@@ -420,13 +435,17 @@ class TextualDashboard(App):
     
     def action_refresh(self) -> None:
         """Manual refresh action - updates all widgets with real data"""
+        self.app.log.info(f"[ACTION_REFRESH] Start. selected_motor_id: {self.selected_motor_id}")
+
         # Try to refresh MotorStatusWidget
         try:
             motor_status_widget = self.query_one(MotorStatusWidget)
             motor_status_widget.refresh_data()
         except Exception as e:
             self.notify(f'Refresh error (MotorStatus): {type(e).__name__}', severity='error', timeout=10)
+            self.app.log.error(f"[ACTION_REFRESH] Error refreshing MotorStatusWidget: {e}")
 
+        self.app.log.info(f"[ACTION_REFRESH] Before DetailedMotorViewWidget update. selected_motor_id: {self.selected_motor_id}")
         # Try to refresh DetailedMotorViewWidget
         try:
             detailed_view_widget = self.query_one(DetailedMotorViewWidget)
@@ -436,13 +455,21 @@ class TextualDashboard(App):
             detailed_view_widget.update_details(selected_motor_object)
         except Exception as e:
             self.notify(f'Refresh error (DetailView): {type(e).__name__}', severity='error', timeout=10)
+            self.app.log.error(f"[ACTION_REFRESH] Error refreshing DetailedMotorViewWidget: {e}")
+
+        self.app.log.info(f"[ACTION_REFRESH] After DetailedMotorViewWidget update. selected_motor_id: {self.selected_motor_id}")
 
         # Try to refresh CommandLogWidget
         try:
             command_log_widget = self.query_one(CommandLogWidget)
             command_log_widget.update_log()
         except Exception as e:
+            # The notify for CmdLog TypeError is already present from the issue description.
+            # The more detailed logging for TypeError is now inside update_log itself.
             self.notify(f'Refresh error (CmdLog): {type(e).__name__}', severity='error', timeout=10)
+            self.app.log.error(f"[ACTION_REFRESH] Error refreshing CommandLogWidget: {e}")
+
+        self.app.log.info(f"[ACTION_REFRESH] End. selected_motor_id: {self.selected_motor_id}")
     
     def action_toggle_pause(self) -> None:
         """Toggle pause/resume of auto-refresh"""
