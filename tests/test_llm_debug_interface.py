@@ -9,15 +9,10 @@ from unittest.mock import MagicMock, patch, PropertyMock
 # not directly under test or are part of a larger system not fully available
 # in the unit test environment.
 
-# Mock MotorModel and VirtualCANBus to prevent actual import issues if they have deep dependencies
-MockMotorModel = MagicMock()
-MockVirtualCANBus = MagicMock()
-
-# It's generally better to mock the specific classes/objects LLMDebugInterface needs,
-# rather than the entire module, if possible. However, the prompt suggests this way.
-sys.modules['mks_servo_simulator.mks_simulator.motor_model'] = MockMotorModel
-sys.modules['mks_servo_simulator.mks_simulator.virtual_can_bus'] = MockVirtualCANBus
-sys.modules['mks_servo_simulator.mks_simulator.helpers'] = MagicMock() # If helpers is also an issue
+# Import actual classes for spec
+from mks_servo_simulator.mks_simulator.motor_model import MotorModel
+from mks_servo_simulator.mks_simulator.virtual_can_bus import VirtualCANBus
+# sys.modules['mks_servo_simulator.mks_simulator.helpers'] = MagicMock() # If helpers is also an issue - keeping for now if it was needed
 
 # Now, import the class to be tested
 from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import LLMDebugInterface, CommandRecord, ErrorRecord, MANUAL_COMMANDS
@@ -25,8 +20,8 @@ from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import LLMD
 
 class TestLLMDebugInterface(unittest.TestCase):
     def setUp(self):
-        # Create mock motor instances
-        self.mock_motor_1 = MagicMock(spec=MockMotorModel)
+        # Create mock motor instances using actual classes for spec
+        self.mock_motor_1 = MagicMock(spec=MotorModel)
         self.mock_motor_1.can_id = 1
         self.mock_motor_1.name = "Motor1"
         self.mock_motor_1.enabled = True
@@ -44,7 +39,7 @@ class TestLLMDebugInterface(unittest.TestCase):
         })
 
 
-        self.mock_motor_2 = MagicMock(spec=MockMotorModel)
+        self.mock_motor_2 = MagicMock(spec=MotorModel)
         self.mock_motor_2.can_id = 2
         self.mock_motor_2.name = "Motor2"
         self.mock_motor_2.enabled = False
@@ -63,7 +58,7 @@ class TestLLMDebugInterface(unittest.TestCase):
 
         self.mock_motors = {1: self.mock_motor_1, 2: self.mock_motor_2}
 
-        self.mock_can_bus = MagicMock(spec=MockVirtualCANBus)
+        self.mock_can_bus = MagicMock(spec=VirtualCANBus)
         self.mock_can_bus.get_bus_load_percentage = MagicMock(return_value=15.5)
         self.mock_can_bus.get_total_messages_sent = MagicMock(return_value=1234)
         self.mock_can_bus.get_total_messages_received = MagicMock(return_value=5678)

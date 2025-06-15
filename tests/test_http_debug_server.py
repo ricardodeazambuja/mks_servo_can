@@ -61,7 +61,7 @@ if FASTAPI_AVAILABLE:
             self.debug_server = DebugHTTPServer(
                 debug_interface=self.llm_debug_interface,
                 config_manager=self.mock_config_manager,
-                live_config_interface=self.mock_live_config_interface
+                live_config=self.mock_live_config_interface # Corrected keyword
             )
             self.client = TestClient(self.debug_server.app)
 
@@ -345,6 +345,8 @@ class TestJSONOutputHandler(unittest.TestCase):
         self.mock_debug_interface = MagicMock(spec=LLMDebugInterface)
         # JSONOutputHandler calls get_system_status to fetch a timestamp
         self.mock_debug_interface.get_system_status.return_value = {"timestamp": 12345.6789}
+        # Add .motors attribute as it's accessed by JSONOutputHandler.emit_startup
+        self.mock_debug_interface.motors = {1: MagicMock(), 2: MagicMock()}
         self.json_handler = JSONOutputHandler(debug_interface=self.mock_debug_interface)
 
     @patch('builtins.print')
@@ -359,7 +361,9 @@ class TestJSONOutputHandler(unittest.TestCase):
         parsed_output = json.loads(printed_json_str)
 
         self.assertEqual(parsed_output["event"], event_name)
-        self.assertEqual(parsed_output["data"], event_data)
+        # Assert each key-value pair from event_data exists at the top level of parsed_output
+        for key, value in event_data.items():
+            self.assertEqual(parsed_output[key], value)
         self.assertEqual(parsed_output["timestamp"], self.mock_debug_interface.get_system_status()["timestamp"])
 
     @patch('builtins.print')
@@ -397,27 +401,29 @@ class TestJSONOutputHandler(unittest.TestCase):
         parsed_output = json.loads(printed_json_str)
 
         self.assertEqual(parsed_output["event"], "status_update")
-        # The data field should be the full system status including the timestamp from the mock
-        expected_data = {**current_status, "timestamp": 12345.7890}
-        self.assertEqual(parsed_output["data"], expected_data)
-        self.assertEqual(parsed_output["timestamp"], expected_data["timestamp"]) # Ensure top-level timestamp is also there
+        expected_data = {**current_status, "timestamp": 12345.7890} # This is what get_system_status returns
+
+        # Check specific keys that were part of current_status
+        self.assertEqual(parsed_output["motors"], current_status["motors"])
+        self.assertEqual(parsed_output["can_bus_load"], current_status["can_bus_load"])
+
+        # The 'timestamp' in the final event will be the one from the data itself,
+        # because the data dictionary (status) is spread (**) into the event payload,
+        # and it contains a 'timestamp' key from the mock setup.
+        self.assertEqual(parsed_output["timestamp"], expected_data["timestamp"])
 
     @patch('builtins.print')
     def test_emit_command_executed(self, mock_print):
         motor_id = 1
         command_code = 0xF6
         success_status = True
-        command_name = "SET_POSITION"
-        args = {"target_position": 1000}
-        result_data = {"actual_position": 1000}
+        # Removed command_name, args, result_data as they are not params of emit_command_executed
 
         self.json_handler.emit_command_executed(
             motor_id=motor_id,
             command_code=command_code,
-            success=success_status,
-            command_name=command_name,
-            args=args,
-            result_data=result_data
+            success=success_status
+            # Removed extraneous arguments: command_name, args, result_data
         )
 
         mock_print.assert_called_once()
@@ -425,13 +431,14 @@ class TestJSONOutputHandler(unittest.TestCase):
         parsed_output = json.loads(printed_json_str)
 
         self.assertEqual(parsed_output["event"], "command_executed")
-        self.assertEqual(parsed_output["data"]["motor_id"], motor_id)
-        self.assertEqual(parsed_output["data"]["command_code"], f"0x{command_code:02X}") # As per implementation
-        self.assertEqual(parsed_output["data"]["success"], success_status)
-        self.assertEqual(parsed_output["data"]["command_name"], command_name)
-        self.assertEqual(parsed_output["data"]["args"], args)
-        self.assertEqual(parsed_output["data"]["result_data"], result_data)
+        # Based on emit_event structure, these keys will be at the top level of parsed_output,
+        # because emit_command_executed passes its data dict directly to emit_event,
+        # which then unpacks it into the main JSON body.
+        self.assertEqual(parsed_output["motor_id"], motor_id)
+        self.assertEqual(parsed_output["command_code"], f"0x{command_code:02X}")
+        self.assertEqual(parsed_output["success"], success_status)
         self.assertEqual(parsed_output["timestamp"], self.mock_debug_interface.get_system_status()["timestamp"])
+        # Removed assertions for command_name, args, result_data in the output
 
     @patch('builtins.print')
     def test_emit_error(self, mock_print):
@@ -446,9 +453,10 @@ class TestJSONOutputHandler(unittest.TestCase):
         parsed_output = json.loads(printed_json_str)
 
         self.assertEqual(parsed_output["event"], "error")
-        self.assertEqual(parsed_output["data"]["motor_id"], motor_id)
-        self.assertEqual(parsed_output["data"]["error_type"], error_type)
-        self.assertEqual(parsed_output["data"]["description"], description)
+        # Assert data keys at the top level of parsed_output
+        self.assertEqual(parsed_output["motor_id"], motor_id)
+        self.assertEqual(parsed_output["error_type"], error_type)
+        self.assertEqual(parsed_output["description"], description)
         self.assertEqual(parsed_output["timestamp"], self.mock_debug_interface.get_system_status()["timestamp"])
 
 
