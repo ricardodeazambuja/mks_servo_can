@@ -13,6 +13,8 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, DataTable, Static, Label
 from textual.timer import Timer
 
+from mks_servo_can import constants as const
+
 if TYPE_CHECKING:
     from ..virtual_can_bus import VirtualCANBus
 
@@ -45,10 +47,15 @@ class MotorStatusWidget(Static):
                     try:
                         # Get motor status text
                         status_map = {
-                            0: "Stopped", 1: "Running", 2: "Stopping", 
-                            3: "Homing", 4: "Error"
+                            const.MOTOR_STATUS_QUERY_FAIL: "Error/Query Fail",
+                            const.MOTOR_STATUS_STOPPED: "Stopped",
+                            const.MOTOR_STATUS_SPEED_UP: "Accelerating",
+                            const.MOTOR_STATUS_SPEED_DOWN: "Decelerating", # Could also be "Stopping"
+                            const.MOTOR_STATUS_FULL_SPEED: "Running",      # Was "Full Speed"
+                            const.MOTOR_STATUS_HOMING: "Homing",
+                            const.MOTOR_STATUS_CALIBRATING: "Calibrating"
                         }
-                        status = status_map.get(getattr(motor, 'motor_status_code', 0), "Unknown")
+                        status = status_map.get(getattr(motor, 'motor_status_code', const.MOTOR_STATUS_QUERY_FAIL), "Unknown Status")
                         
                         # Position in degrees with safe defaults
                         position_steps = getattr(motor, 'position_steps', 0)
