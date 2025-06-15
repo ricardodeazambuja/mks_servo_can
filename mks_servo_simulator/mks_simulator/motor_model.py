@@ -1126,31 +1126,22 @@ class SimulatedMotor:
 
     @property
     def work_mode_str(self) -> str:
-        logger.info(f"Motor {self.can_id}: work_mode_str requested. self.work_mode = {self.work_mode} (type: {type(self.work_mode)})")
-        logger.info(f"Motor {self.can_id}: const object type: {type(const)}")
-        logger.info(f"Motor {self.can_id}: const.MODE_SR_VFOC is {getattr(const, 'MODE_SR_VFOC', 'Not Found')}")
-
+        # Local fallback map, primarily for when mks_servo_can library might not be fully available
+        # or if its const.WORK_MODES is missing/malformed.
         _work_modes_map = {
             getattr(const, 'MODE_CR_OPEN', 0): "CR_OPEN",
             getattr(const, 'MODE_CR_CLOSE', 1): "CR_CLOSE",
             getattr(const, 'MODE_SR_OPEN', 2): "SR_OPEN",
             getattr(const, 'MODE_SR_CLOSE', 3): "SR_CLOSE",
             getattr(const, 'MODE_PL_VFOC', 4): "PL_VFOC",
-            getattr(const, 'MODE_SR_VFOC', 5): "SR_VFOC", # This should make key 5 if const.MODE_SR_VFOC is 5
+            getattr(const, 'MODE_SR_VFOC', 5): "SR_VFOC",
         }
-        logger.info(f"Motor {self.can_id}: _work_modes_map constructed: {_work_modes_map}")
 
-        # Ensure const.WORK_MODES is preferred if available from full library
+        # Prefer const.WORK_MODES from the library if available and correctly formatted
         if hasattr(const, 'WORK_MODES') and isinstance(const.WORK_MODES, dict) and const.WORK_MODES:
-            logger.info(f"Motor {self.can_id}: Using const.WORK_MODES from library: {const.WORK_MODES}")
-            # Assuming const.WORK_MODES is already in {integer_key: "String Value"} format based on previous logs.
-            # Therefore, do not invert it. Use it directly.
-            result = const.WORK_MODES.get(self.work_mode, f"Unknown ({self.work_mode})")
-            logger.info(f"Motor {self.can_id}: Result from const.WORK_MODES.get({self.work_mode}): {result}")
-            return result
+            # Assumes const.WORK_MODES is {integer_key: "String Value"}
+            return const.WORK_MODES.get(self.work_mode, f"Unknown ({self.work_mode})")
 
-        logger.info(f"Motor {self.can_id}: Falling back to local _work_modes_map.")
-        result = _work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
-        logger.info(f"Motor {self.can_id}: Result from _work_modes_map.get({self.work_mode}): {result}")
-        return result
+        # Fallback to the locally defined map
+        return _work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
         
