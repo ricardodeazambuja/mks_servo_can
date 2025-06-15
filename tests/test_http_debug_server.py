@@ -10,7 +10,9 @@ if FASTAPI_AVAILABLE:
     from fastapi import FastAPI, HTTPException
     from fastapi.testclient import TestClient
     # Assuming these are the correct paths. Adjust if necessary.
-    from mks_servo_simulator.mks_simulator.interface.http_debug_server import DebugHTTPServer, CommandResult, CommandInjectorPayload, TemplateCommandPayload, ParameterUpdatePayload, JSONOutputHandler
+    # Removed CommandResult, CommandInjectorPayload, TemplateCommandPayload, ParameterUpdatePayload
+    # as they are not defined in http_debug_server.py and not directly used by tests.
+    from mks_servo_simulator.mks_simulator.interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
     from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import LLMDebugInterface
     from mks_servo_simulator.mks_simulator.interface.config_manager import ConfigurationManager
     from mks_servo_simulator.mks_simulator.interface.debug_tools import LiveConfigurationInterface, CommandInjector
