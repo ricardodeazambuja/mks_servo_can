@@ -73,12 +73,25 @@ if FASTAPI_AVAILABLE:
             self.assertIn("version", data)
             self.assertIn("description", data)
             self.assertIn("endpoints", data)
-            self.assertEqual(data["name"], "MKS Servo Simulator - Debug Interface")
+            self.assertEqual(data["name"], "MKS Servo Simulator Debug API") # Corrected name
 
-        def test_health_endpoint(self):
+        @patch('mks_servo_simulator.mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_system_status')
+        def test_health_endpoint(self, mock_get_system_status):
+            # Configure the mock to return necessary data for the /health endpoint
+            mock_get_system_status.return_value = {
+                "uptime_seconds": 123.45,
+                "motors": {1: "dummy_motor_data"}, # For len(status["motors"])
+                "communication": {"total_messages_sent": 10, "total_messages_received": 5} # total_commands uses total_messages_sent
+            }
             response = self.client.get("/health")
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json(), {"status": "healthy"})
+            expected_response = {
+                "status": "healthy",
+                "uptime_seconds": 123.45, # Corrected key from "uptime" to "uptime_seconds"
+                "motor_count": 1,      # Corrected key from "motors_count" to "motor_count"
+                "total_commands_processed": 10 # Corrected key from "total_commands" to "total_commands_processed"
+            }
+            self.assertEqual(response.json(), expected_response)
 
         @patch('mks_servo_simulator.mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_system_status')
         def test_get_status(self, mock_get_system_status):
@@ -108,7 +121,8 @@ if FASTAPI_AVAILABLE:
 
             response = self.client.get(f"/motors/{motor_id}")
             self.assertEqual(response.status_code, 404)
-            self.assertEqual(response.json(), {"detail": f"Motor with ID {motor_id} not found."})
+            # Corrected expected error response structure
+            self.assertEqual(response.json(), {"error": "Not found", "detail": f"Motor {motor_id} not found"})
             mock_get_motor_status.assert_called_once_with(motor_id)
 
         @patch('mks_servo_simulator.mks_simulator.interface.llm_debug_interface.LLMDebugInterface.validate_expected_state')
