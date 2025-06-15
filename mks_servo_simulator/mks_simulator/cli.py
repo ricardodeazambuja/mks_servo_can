@@ -178,11 +178,6 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
     show_default=True,
 )
 @click.option(
-    "--dashboard",
-    is_flag=True,
-    help="Enable Textual TUI dashboard (experimental).",
-)
-@click.option(
     "--textual-dashboard",
     is_flag=True,
     help="Enable Textual TUI dashboard (experimental).",
@@ -279,7 +274,6 @@ def main(
             no_color = loaded_config.no_color
             json_output = loaded_config.json_output
             debug_api = loaded_config.debug_api
-            dashboard = loaded_config.dashboard
             textual_dashboard = getattr(loaded_config, 'textual_dashboard', False)
             
             # Use motors from profile
@@ -298,7 +292,6 @@ def main(
         current_config.no_color = no_color
         current_config.json_output = json_output
         current_config.debug_api = debug_api
-        current_config.dashboard = dashboard
         current_config.textual_dashboard = textual_dashboard
         config_manager.current_config = current_config
 
