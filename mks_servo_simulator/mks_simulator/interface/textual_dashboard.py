@@ -7,6 +7,7 @@ import asyncio
 import threading
 import time
 import datetime # Make sure this import is at the top of the file
+import itertools
 from typing import TYPE_CHECKING, Optional
 
 from textual.app import App, ComposeResult
@@ -226,7 +227,8 @@ class CommandLogWidget(Static):
 
         history = self.debug_interface.command_history
         # Get the last N entries, most recent first for display usually, but log is chronological
-        log_entries_to_display = list(history[-self.max_log_entries:])
+        # --- MODIFIED LINE BELOW ---
+        log_entries_to_display = list(itertools.islice(history, max(0, len(history) - self.max_log_entries), len(history)))
 
         formatted_log_lines = []
         for record in log_entries_to_display:
@@ -313,6 +315,7 @@ class TextualDashboard(App):
         layout: vertical;
         overflow-y: auto; /* Allow screen to scroll if content is too tall */
         padding: 1;
+        focusable: true; /* Added this line */
     }
     
     #motor-status-widget { /* Ensure ID matches compose */
@@ -389,6 +392,7 @@ class TextualDashboard(App):
         if self.enable_auto_refresh:
             self.start_auto_refresh()
         self.action_refresh() # Initial refresh
+        self.screen.focus() # Added this line
     
     def action_select_previous_motor(self) -> None:
         """Selects the previous motor in the list."""
