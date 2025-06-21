@@ -48,7 +48,7 @@ import numpy as np
 # This script requires the 'svgelements' library for SVG parsing.
 # Install it using: pip install svgelements
 try:
-    from svgelements import SVG, Path, Shape
+    from svgelements import SVG, Path, Shape, Text, Circle
 except ImportError:
     print("This script requires the 'svgelements' library.")
     print("Please install it using: pip install svgelements")
@@ -124,6 +124,30 @@ PEN_AXIS_NAME = "PenAxis"
 # --- Logging Setup ---
 
 logger = logging.getLogger("SVGPlotter")
+
+
+def create_smooth_circle_points(cx: float, cy: float, radius: float, num_points: int = 32) -> List[Tuple[float, float]]:
+    """
+    Create a smooth circle by generating points around the circumference.
+    
+    Args:
+        cx: Center X coordinate
+        cy: Center Y coordinate  
+        radius: Circle radius
+        num_points: Number of points to generate around the circumference
+        
+    Returns:
+        List of (x, y) coordinate tuples forming a smooth circle
+    """
+    import math
+    points = []
+    for i in range(num_points + 1):  # +1 to close the circle
+        angle = 2 * math.pi * i / num_points
+        x = cx + radius * math.cos(angle)
+        y = cy + radius * math.sin(angle)
+        points.append((x, y))
+    return points
+
 
 @dataclass
 class PenGeometry:
@@ -252,22 +276,52 @@ def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scal
         logger.warning("SVG file contains no drawable elements.")
         return []
 
-    # Convert all shapes to Path objects
+    # Convert all shapes to Path objects, including Text elements
     all_paths = []
+    circle_paths = []  # Store circle coordinate lists separately
+    
     for elem in elements:
-        if isinstance(elem, Shape):
+        if isinstance(elem, Circle):
+            # Handle circles specially to avoid triangulation
+            try:
+                cx, cy = elem.cx, elem.cy
+                # Try different attributes for radius
+                radius = getattr(elem, 'rx', None) or getattr(elem, 'r', None) or getattr(elem, 'implicit_r', None)
+                if radius is not None and radius > 0:
+                    circle_points = create_smooth_circle_points(cx, cy, radius)
+                    circle_paths.append(circle_points)
+                    logger.info(f"Circle at ({cx}, {cy}) with radius {radius} converted to {len(circle_points)} smooth points")
+                else:
+                    logger.warning(f"Circle element has invalid radius: {radius}")
+            except Exception as e:
+                logger.warning(f"Could not process circle element: {e}")
+                continue
+        elif isinstance(elem, Shape):
             try:
                 if isinstance(elem, Path):
                     all_paths.append(elem)
                 else:
-                    # Convert shape to path
+                    # Convert other shapes to path normally
                     path = Path(elem)
                     all_paths.append(path)
             except Exception as e:
                 logger.warning(f"Could not convert element to path: {e}")
                 continue
+        elif isinstance(elem, Text):
+            # Handle Text elements - they cannot be converted to drawable paths
+            logger.warning(f"Text element '{elem.text}' skipped - text elements cannot be plotted. Convert text to paths in your SVG editor first.")
+            continue
+        else:
+            # Try direct Path conversion for other non-shape elements
+            try:
+                path = Path(elem)
+                if path and len(list(path.segments())) > 0:  # Only add non-empty paths
+                    all_paths.append(path)
+            except Exception as e:
+                logger.debug(f"Could not convert element {type(elem).__name__} to path: {e}")
+                continue
     
-    if not all_paths:
+    if not all_paths and not circle_paths:
         logger.warning("Could not extract any valid paths from the SVG elements.")
         return []
 
@@ -394,6 +448,24 @@ def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scal
             
         except Exception as e:
             logger.warning(f"Error processing path {i}: {e}")
+            continue
+    
+    # Process circle paths with the same transformations
+    for i, circle_points in enumerate(circle_paths):
+        try:
+            transformed_path = []
+            for x, y in circle_points:
+                # Scale relative to the SVG's own origin (xmin, ymin)
+                plot_x = (x - xmin) * scale
+                # Scale and invert the Y-axis
+                plot_y = max_plot_y - ((y - ymin) * scale)
+                transformed_path.append((plot_x, plot_y))
+            
+            if transformed_path:
+                paths.append(transformed_path)
+                logger.info(f"Circle {i+1}: {len(transformed_path)} points")
+        except Exception as e:
+            logger.warning(f"Error processing circle {i}: {e}")
             continue
         
     logger.info(f"Successfully processed SVG into {len(paths)} drawable paths.")
