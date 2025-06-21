@@ -289,6 +289,9 @@ Refer to the scripts in the `examples/` directory for complete, runnable code:
 * `examples/height_map_generator_v2.py`: Enhanced surface mapping with digitizer integration.
 * `examples/enhanced_svg_plotter.py`: Advanced SVG plotting with path optimization.
 * `examples/calligraphy_plotter.py`: Artistic text rendering and calligraphy.
+* `examples/svg_plotter.py`: Basic SVG plotting.
+
+https://github.com/user-attachments/assets/b7e87119-080f-4230-921d-b1fbb9b76aef
 
 **Performance & Analysis:**
 * `examples/benchmark_command_latency.py`: Command latency measurement and analysis.
