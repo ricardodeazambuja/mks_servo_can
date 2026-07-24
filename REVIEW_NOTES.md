@@ -1,296 +1,74 @@
 # mks_servo_can — Review Notes & Camera Gimbal Design
 
-Review date: 2026-07-24. Based on commit `e4f11df`, Python 3.11.6, full test suite run,
-and live benchmarking against the bundled simulator.
+Review dated 2026-07-24, against commit `e4f11df`. **Most of Part 1 has since
+been acted on** — see `CHANGELOG.md` for what changed and why. This file is kept
+for the design reasoning in Part 2, and for the outstanding items below.
 
 ---
 
-# Part 1 — Repository Review
-
-## 1.0 Summary judgement
-
-The **structure** is good: the layering (`crc` → `low_level_api` → `axis` → `multi_axis_controller`,
-with kinematics injected) is the right decomposition, the CAN command coverage is genuinely
-comprehensive, and having a simulator at all puts this ahead of most hobby motor libraries.
-
-The **execution** has the signature of unsupervised AI generation: 223 tests pass but they mostly
-assert that the code does what the code does; docstrings describe behaviour the code does not have;
-and the two most load-bearing behaviours in the whole library — non-blocking moves and
-request/response correlation — are broken in ways no test catches.
-
-Test suite: **223 passed, 53% line coverage.** Coverage is concentrated in the pure functions
-(crc 100%, constants 100%, robot_kinematics 84%) and absent where the risk is
-(`base_digitizer.py` 11%, `surface_mapping.py` 17%, `multi_axis_controller.py` 44%,
-`can_interface.py` 47%).
-
----
-
-## 1.1 Critical bugs
-
-### C1. `wait=False` does not return early — it blocks for the entire move
-
-**Severity: critical.** This is the single worst defect.
-
-`Axis._execute_move()` contains an unconditional `await asyncio.wait_for(completion_future, ...)`
-(`axis.py:573`). The `wait` parameter is checked only *afterwards*, in
-`_move_relative_handler` / `_move_absolute_handler`, to decide whether to additionally await
-`self._active_move_future`. By that point the move has already physically finished.
-
-Measured against the simulator:
-
-```
-move_to_position_abs_user(90 deg @ 60 deg/s, wait=False) returned after 1535.3 ms
-                                    (should return in < 1 ms; move takes ~1500 ms)
-```
-
-Consequences:
-- `wait=False` is a no-op across the entire public API.
-- `MultiAxisController.move_all_to_positions_abs_user()` is built on a two-phase
-  "dispatch all with `wait=False`, then gather completions" design (`multi_axis_controller.py:476`).
-  Phase 1 already blocks, so Phase 2 is dead code and the `asyncio.gather` only accidentally
-  preserves concurrency.
-- Any streaming, jogging or servo-loop use is impossible.
-
-**Fix:** `_execute_move` must split into *dispatch* (send command, create the completion future,
-return) and *await* (consume the future). Only the latter is conditional on `wait`.
-
-### C2. Responses are correlated only by `(can_id, command_code)` — asynchronous completion
-messages are mistaken for command acks
-
-**Severity: critical for any repeated-command use.**
-
-`CANInterface._process_received_message()` (`can_interface.py:615`) matches an incoming frame to
-the first pending future registered for `(arbitration_id, data[0])`. The MKS protocol reuses the
-same command byte for the *synchronous ack* (`0x01 STARTING`) and the *asynchronous completion
-notification* (`0x02 COMPLETE` / `0x00 FAIL`) of a move. There is nothing to tell them apart.
-
-When a new `0xF5` supersedes a move in flight, the motor emits a `FAIL` for the old move. That
-`FAIL` is delivered to the *new* command's future, and `_run_motor_command` raises `MotorError`.
-
-Measured against the simulator, streaming absolute-position targets:
-
-```
-streaming 0xF5 at 500/200/100/50 Hz  :  0/60 spurious FAIL acks
-streaming 0xF5 with NO pacing        : 29/60 spurious FAIL acks  (48%)
-```
-
-The bug is latent at fixed rates against the simulator (whose timing is regular), but a real motor
-with real acceleration ramps and `CanRSP` active will hit this. It is a design flaw, not a race
-that tuning can fix.
-
-**Fix:** either (a) disable active responses (`0x8C`) on the streaming path and use fire-and-forget,
-or (b) tag futures with a monotonically increasing sequence and match on arrival order per command
-class, or (c) route `STARTING` and `COMPLETE/FAIL` through separate registries. (a) is what the
-gimbal wants — see Part 2.
-
-### C3. `_move_absolute_handler` inserts a hidden extra round-trip on every absolute move
-
-`axis.py:729` calls `await self.get_current_position_steps()` before every absolute move, purely to
-decide "is a move necessary". That is a full CAN request/response round trip added to the
-latency of every commanded move, and it makes an absolute-position command depend on stale
-feedback. On a real bus at 500 kbit/s this is ~0.5–1 ms plus adapter jitter, doubled.
-
-**Fix:** use the cached `_current_position_steps` for the "already there" check, or drop the check
-entirely — the motor already no-ops a zero-distance absolute move.
-
-### C4. `multi_axis_controller.py:508` — statement at class-body scope
-
-```python
-    logger.info("Multi-axis absolute move command sequence finished.")
-```
-
-This is indented at class level, not inside `move_all_to_positions_abs_user`. It executes once at
-**import time** and never at the end of the method. Harmless in effect, but it is proof that
-nothing in the test suite exercises the end of that method, and it is exactly the kind of artefact
-that indicates the file was edited by a model without being read.
-
-### C5. `crc.py` uses PEP 585 annotations but the package claims Python 3.8 support
-
-`calculate_crc(can_id: int, data_bytes: list[int])` and `verify_crc` (`crc.py:7`, `crc.py:41`).
-Bare `list[int]` in a signature is evaluated at def time and raises `TypeError` on 3.8.
-`setup.py` declares `python_requires=">=3.8"` and ships a `Programming Language :: Python :: 3.8`
-classifier. The library cannot import on 3.8.
-
-**Fix:** either `typing.List[int]` / `from __future__ import annotations`, or drop the 3.8 claim.
-(Only these 2 sites are affected.)
-
----
-
-## 1.2 Correctness and design issues (high, not critical)
-
-### H1. Docstrings routinely describe behaviour the code does not have
-
-These are worse than missing docstrings, because they are confidently wrong:
-
-| Location | Docstring claims | Code actually does |
-|---|---|---|
-| `axis.py:750` `move_to_position_abs_pulses` | "emulates absolute positioning by leveraging the relative pulse command (0xFD) as a workaround" | routes to `_move_absolute_handler`, which uses `0xF5` absolute-axis |
-| `axis.py:1147` `get_current_position_steps` | "inverts the value read from `read_encoder_value_addition`" | returns it unmodified |
-| `robot_kinematics.py:615` `RRRArm.inverse_kinematics` | "This is a placeholder and requires specific implementation" | fully implemented |
-| `axis.py:808` `move_relative_user` | "uses the MKS relative motion by pulses (0xFD)" | uses `0xF4` relative-axis |
-
-Every one of these would mislead someone choosing a command for timing-sensitive work.
-
-### H2. Speed conversion ignores microstepping, and the physics model lives in the wrong package
-
-`RotaryKinematics.user_speed_to_motor_speed()` maps deg/s → RPM → speed parameter as an identity.
-The manual (§6.1) states the speed parameter is *calibrated for 16/32/64 subdivisions only*:
-at 8 subdivisions `speed=1200` yields 2400 RPM; at 128 it yields 150 RPM. The library never
-consults `mstep_value` when converting speed, so a user who sets MSTEP=8 silently gets 2× the
-commanded speed.
-
-Meanwhile the **simulator** has the correct helpers — `mks_speed_param_to_rpm()` and
-`mks_accel_param_to_rpm_per_sec_sq()` (`motor_model.py:178`, `:204`) — including the
-`t = (256-acc) × 50 µs per RPM` acceleration law. The physical model of the motor lives in the test
-double instead of in the library, so the library and simulator can drift apart silently.
-
-**Fix:** move both conversions into `mks_servo_can` (e.g. `motor_profile.py`), have the simulator
-import them, and make them mstep-aware. There is currently **no way at all** to convert an MKS
-`acc` parameter into deg/s² from the library — which is required to plan any motion.
-
-### H3. Per-frame logging at INFO with eager f-string formatting
-
-`low_level_api.py:130`, `can_interface.py:494`, `can_interface.py:628`, `axis.py:501/551/557` all
-emit `logger.info(f"...{msg.data.hex()}...")` for **every frame**. Two problems:
-
-1. Semantically wrong: a library must not log every I/O operation at INFO. Any application that
-   calls `logging.basicConfig(level=logging.INFO)` gets thousands of lines per second.
-2. The f-strings are formatted eagerly, so the `.hex()` calls and string building happen even when
-   the record is discarded. Measured cost on the position-read path: 0.257 ms → 0.293 ms median
-   (~14%) with the output going to `/dev/null`; far worse with a real handler.
-
-**Fix:** demote to `DEBUG` and use lazy `%s` interpolation, or guard with
-`if logger.isEnabledFor(logging.DEBUG)`.
-
-### H4. No fire-and-forget send path
-
-Every `LowLevelAPI` method awaits a response. There is no way to send a command without a round
-trip, even though `0x8C` (`set_slave_respond_active`) exists to turn responses off. This caps the
-achievable command rate at half of what the bus can carry and forces the correlation problem of C2.
-
-### H5. `asyncio.get_event_loop()` in constructors
-
-`Axis.__init__` (`axis.py:136`) and `CANInterface.__init__` (`can_interface.py:234`) call
-`asyncio.get_event_loop()`. Fine on 3.11, deprecated with a warning on 3.12/3.13, and removed in
-3.14 when no loop is running. Constructing an `Axis` outside a coroutine will eventually be a hard
-error. Capture the loop lazily at first use (`asyncio.get_running_loop()`), not in `__init__`.
-
-### H6. `_execute_move`'s dynamic timeout hardcodes VFOC
-
-`axis.py:511`: `max_rpm_reference = const.MAX_RPM_VFOC_MODE  # TODO: Make this mode-dependent`.
-In `CR_OPEN`/`SR_OPEN` (400 RPM max) this underestimates move duration by 7.5×, so long moves in
-open-loop mode will spuriously time out. The axis never reads back the work mode it is in.
-
----
-
-## 1.3 What to remove
-
-**Delete outright:**
-
-- `tests/**/*.py.bak` (5 files, ~2900 lines) — near-duplicates of the live tests. `test_axis.py.bak`
-  is 788 lines vs 813 live. These are checked into git and will rot.
-- `simulator.log`, `manual_dashboard_debug.log`, `examples/simulator.log` — runtime artefacts,
-  committed. `.gitignore` already has `*.log`; they were force-added or added before the rule.
-- `docs/CODE_REVIEW.md`, `docs/CODE_REVIEW_DOCSTRINGS.md`, `docs/UNUSED_CODE_REPORT.md` — these are
-  AI review transcripts, not documentation. They are stale (`CODE_REVIEW.md` claims
-  `MOTOR_STATUS_MAP` is undefined; it is defined at `constants.py:168`) and they tell readers
-  about the *process* rather than the *product*. Anything still true belongs in the issue tracker.
-- `docs/manual_extracted.txt` (3994 lines) — raw `pdftotext` dump of a copyrighted manual. Keep the
-  handful of tables you actually depend on as structured data (you already have
-  `tests/fixtures/manual_commands_v106.json` — use that), and drop the dump. Note `.gitignore`
-  already excludes `docs/*.pdf`, so the PDF itself is correctly untracked.
-- `examples/motor_digitizer_compat.py` (746 bytes) — a `sys.path` shim.
-
-**Consolidate:**
-
-- `examples/` is 23 files / ~5000 lines and is now the largest surface in the repo. There are two
-  height-map generators (`height_map_generator.py`, `..._v2.py`), two SVG plotters
-  (`svg_plotter.py`, `enhanced_svg_plotter.py`), and two calligraphy plotters. Keep one of each
-  and delete the superseded version — a new user cannot tell which one to read.
-- The plotter/calligraphy/height-map/digitizer cluster is a *pen-plotter application*, not a motor
-  library. It is ~60% of the example code and it is what a first-time visitor sees. Consider
-  splitting it into a separate `mks-servo-plotter` repo (or an `applications/` subtree) so the
-  core library reads as a motor library.
-
-**Fix the packaging:**
-
-- `pyproject.toml` contains only tool config (black/isort/pylint/flake8) — no `[project]` table.
-  Packaging is done by two legacy `setup.py` files in subdirectories. Move to a real PEP 621
-  `[project]` table.
-- `.pylintrc`, `[tool.flake8]` in `pyproject.toml` (which flake8 does not read anyway), `black`,
-  and `isort` are all configured and, judging by the code, none of them are run. Pick one —
-  `ruff` replaces all four — and enforce it in CI.
-- `check_docstrings.py` at the repo root is a one-off script; fold it into the linter config.
-
----
-
-## 1.4 What is missing
-
-Ordered by how much each blocks the library being adopted by someone other than you.
-
-1. **CI.** There is no `.github/` directory at all. 223 tests exist and nothing runs them.
-   A GitHub Actions matrix (3.9–3.13) running pytest + ruff + the simulator integration tests is
-   perhaps two hours of work and is the highest-value single addition to the repo.
-
-2. **Not on PyPI.** `pip install mks-servo-can` fails. Installation currently requires cloning and
-   two editable installs from subdirectories. This is the largest single barrier to adoption.
-
-3. **Hardware-in-the-loop tests that exist.** `tests/hil/` and `tests/determinism/` contain only
-   `__init__.py`. The README advertises both. Everything is validated against a simulator that was
-   written from the same manual reading as the library — so a shared misreading of the protocol is
-   invisible. At minimum: one HIL smoke test you run manually before tagging a release, and a
-   recorded `candump` trace from a real motor checked in as a fixture so the simulator can be
-   validated against ground truth.
-
-4. **A real-time / streaming API.** See Part 2. This is what the library needs to be good at
-   something other than "run a job and wait".
-
-5. **Motion profile primitives.** No jerk-limited or S-curve planning, no way to convert the
-   `acc` parameter to engineering units (H2), no synchronised multi-axis interpolation beyond
-   `move_linearly_to()`'s constant-velocity scaling — which computes per-axis speeds but cannot
-   compensate for the axes' independent acceleration ramps, so the path bows at every corner.
-
-6. **A changelog and versioning discipline.** `__version__ = "0.2.0"` with the comment
-   "Minor version bump for new digitizer feature". No `CHANGELOG.md`, no tags, no deprecation
-   policy. 115 commits, 38 of them from `google-labs-jules[bot]`.
-
-7. **Docs that build.** `docs/` has 30 markdown files in a sensible tree, `setup.py` declares a
-   `[docs]` extra with sphinx + myst-parser, and there is no `conf.py`, no `index.rst`, and nothing
-   published. The README says documentation "is planned for the `docs/` directory" while 30 files
-   sit there. Point Sphinx or MkDocs at it and publish to Read the Docs / GitHub Pages.
-
-8. **README accuracy.** The project-structure block lists `rich_dashboard.py` and
-   `interactive_controls.py`; the actual files are `textual_dashboard.py`, `sdk_client.py`,
-   `config_manager.py`, `debug_tools.py`, `performance_monitor.py`, `llm_debug_interface.py`,
-   `http_debug_server.py`. The "✅ NEW" markers are scattered through a document with no dates.
-   The README is also very long and is mostly feature-listing; it needs a 10-line "here is a motor
-   moving" opening.
-
-9. **Type checking.** `mypy` is in the dev extras. The code is littered with `# type: ignore` on
-   lines that would not need it if the `python-can` fallback shims were replaced by a proper
-   `TYPE_CHECKING` guard + Protocol. Nothing appears to run mypy.
-
-10. **Safety primitives.** For a library that drives motors: no soft position limits enforced in
-    `Axis`, no watchdog/heartbeat (if the Python process dies mid-move, the motor keeps its last
-    speed command in speed mode), no `async with` context manager on `CANInterface` to guarantee
-    disconnect. `LimitError` exists but nothing raises it except a motor-reported end-limit.
-
----
-
-## 1.5 Suggested order of work
-
-**Now (correctness):** C1, C2, C3 → these three are what make the library unusable for real-time
-work. C4, C5 are one-liners. Add a regression test per bug *first* — each of the four is easy to
-pin against the simulator, and the fact that none of the 223 existing tests caught them is the
-real finding.
-
-**Next (credibility):** CI, PyPI, delete the `.bak`/log/review-report files, fix the README
-structure block, publish the docs.
-
-**Then (capability):** the streaming API (Part 2), motion profile primitives in engineering units,
-HIL tests with a recorded real-motor trace.
-
-**Ongoing:** demote the logging, adopt ruff, split the plotter application out of `examples/`.
+# Part 1 — Repository Review: what remains
+
+## Done
+
+The five critical defects (non-blocking dispatch, response correlation, the
+hidden pre-read round trip, the class-scope statement, and the Python 3.8
+breakage), the per-frame INFO logging, the cached event loop, the mode-blind
+move timeout, the duplicated motion model, the stale files, the missing CI, the
+never-run linters, and the empty `tests/hil/` are all addressed. The suite went
+from 223 tests at 53% coverage to 478 at 58%.
+
+## Outstanding, in priority order
+
+1. **Record a hardware trace.** This is the single highest-value thing left. The
+   simulator is validated against the *manual*, and the library was written from
+   the same reading, so a shared misreading is invisible to every test in the
+   repo. One capture closes the loop and then runs in CI forever with no
+   hardware attached:
+
+   ```
+   export MKS_HIL_CHANNEL=can0
+   pytest tests/hil --hil-record=tests/fixtures/hardware_trace.json
+   ```
+
+   Two specific questions only hardware can settle, both already written as
+   tests in `tests/hil/test_hardware_conformance.py`:
+   - **Sign convention.** Manual V1.0.6 contradicts itself; the fixture now
+     follows the worked examples (CCW positive) but that is an inference.
+   - **Does 0xF5 really accept a retarget mid-move**, and does the motor emit an
+     abort frame for the superseded one? The whole streaming design and the
+     gimbal example rest on this.
+
+2. **Publish to PyPI.** `pip install mks-servo-can` still fails; installation
+   means cloning and two editable installs from subdirectories. This is the
+   largest remaining barrier to anyone else using the library.
+
+3. **Test the digitizer.** `base_digitizer.py` is at 11% coverage and
+   `surface_mapping.py` at 17% — by far the weakest area, and the one most
+   likely to harbour the same class of defect that Part 1 found elsewhere.
+   `can_interface.py` (47%) and `multi_axis_controller.py` (44%) are next.
+
+4. **Split the plotter application out.** The SVG/calligraphy/height-map/
+   digitizer cluster is a pen-plotter application, not a motor library. It is
+   the majority of `examples/` and it is what a first-time visitor sees. A
+   separate repo, or an `applications/` subtree, would let the core read as what
+   it is.
+
+5. **Publish the docs.** `docs/` has 27 markdown files in a sensible tree and
+   `setup.py` declares a `[docs]` extra with Sphinx, but there is no `conf.py`
+   and nothing is built. Point Sphinx or MkDocs at it and ship to Read the Docs.
+
+6. **Motion profile primitives.** No jerk-limited or S-curve planning.
+   `move_linearly_to()` scales per-axis speeds but cannot compensate for the
+   axes' independent acceleration ramps, so the path bows at every corner.
+   `motor_profile` now provides the units needed to do this properly.
+
+7. **Enable the cosmetic lint rules** with a single `ruff format` pass, at a
+   moment when nothing is in flight. The rules and the reasoning are recorded in
+   the ignore block in `pyproject.toml`.
+
+8. **Remaining safety gaps.** `Axis` still has no soft position limits (only
+   `ServoStream` does), and `CANInterface` has no `async with` support to
+   guarantee disconnect.
 
 ---
 ---
