@@ -14,6 +14,7 @@ from . import constants as const
 from .axis import Axis
 from .can_interface import CANInterface
 from .low_level_api import LowLevelAPI
+from . import motor_profile
 from .multi_axis_controller import MultiAxisController
 
 # Import kinematics classes
@@ -72,7 +73,7 @@ from .exceptions import (
 # This allows users to do 'from mks_servo_can import CAN_DEFAULT_BITRATE'
 from .constants import *
 
-__version__ = "0.2.0"  # Minor version bump for new digitizer feature
+__version__ = "0.3.0"
 
 __all__ = [
     # Export the 'const' alias for the constants module
@@ -83,6 +84,9 @@ __all__ = [
     "LowLevelAPI",
     "Axis",
     "MultiAxisController",
+
+    # Motion parameter model (speed/accel parameters <-> engineering units)
+    "motor_profile",
 
     # Kinematics classes
     "Kinematics",

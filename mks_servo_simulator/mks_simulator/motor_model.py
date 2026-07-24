@@ -11,164 +11,21 @@ import time
 
 logger = logging.getLogger("SimulatedMotor") # Changed from __name__ for clarity if file is moved/copied
 
-# Attempt to import from the main library
+# The simulator emulates the very protocol this library speaks, and shares its
+# constants, CRC and motion model so the two cannot diverge. A stubbed fallback
+# here would let the simulator validate the library against a second, silently
+# different implementation - which is exactly the failure mode a simulator is
+# supposed to prevent. So this import is deliberately hard.
 try:
-    from mks_servo_can import constants as const_module
+    from mks_servo_can import constants as const
+    from mks_servo_can import motor_profile as _profile
     from mks_servo_can.crc import calculate_crc
-    # Assuming exceptions are not directly raised by the simulator to the lib,
-    # but used for internal logic if needed.
     from mks_servo_can.exceptions import ConfigurationError
-
-    const = const_module
-except ImportError:
-    logger.warning(
-        "SIMULATOR WARNING: Could not import from mks_servo_can. Using placeholder constants/crc. Ensure library is installed or in PYTHONPATH."
-    )
-
-    class _ConstPlaceholder:
-        """
-        A placeholder class for MKS servo constants.
-        This class is used as a fallback when the main `mks_servo_can.constants`
-        module cannot be imported, ensuring the simulator can still run with
-        a basic set of predefined command codes and values.
-        """
-        # Part 5.1 - Read Status
-        CMD_READ_ENCODER_CARRY = 0x30
-        CMD_READ_ENCODER_ADDITION = 0x31
-        CMD_READ_MOTOR_SPEED_RPM = 0x32
-        CMD_READ_PULSES_RECEIVED = 0x33
-        CMD_READ_IO_STATUS = 0x34
-        CMD_READ_RAW_ENCODER_ADDITION = 0x35
-        CMD_READ_SHAFT_ANGLE_ERROR = 0x39
-        CMD_READ_EN_PIN_STATUS = 0x3A
-        CMD_READ_POWER_ON_ZERO_STATUS = 0x3B
-        CMD_RELEASE_STALL_PROTECTION = 0x3D
-        CMD_READ_MOTOR_PROTECTION_STATE = 0x3E
-
-        # Part 5.2 - Set System Parameters
-        CMD_CALIBRATE_ENCODER = 0x80
-        CMD_SET_WORK_MODE = 0x82
-        CMD_SET_WORKING_CURRENT = 0x83
-        CMD_SET_SUBDIVISION = 0x84
-        CMD_SET_EN_PIN_ACTIVE_LEVEL = 0x85
-        CMD_SET_MOTOR_DIRECTION = 0x86
-        CMD_SET_AUTO_SCREEN_OFF = 0x87
-        CMD_SET_STALL_PROTECTION = 0x88
-        CMD_SET_SUBDIVISION_INTERPOLATION = 0x89
-        CMD_SET_CAN_BITRATE = 0x8A
-        CMD_SET_CAN_ID = 0x8B
-        CMD_SET_SLAVE_RESPOND_ACTIVE = 0x8C
-        CMD_SET_GROUP_ID = 0x8D
-        CMD_SET_KEY_LOCK = 0x8F
-        CMD_SET_HOLDING_CURRENT_PERCENTAGE = 0x9B
-
-        # Part 5.3 - Write IO Port
-        CMD_WRITE_IO_PORT = 0x36
-
-        # Part 5.4 - Set Home Command
-        CMD_SET_HOME_PARAMETERS = 0x90
-        CMD_GO_HOME = 0x91
-        CMD_SET_CURRENT_AXIS_TO_ZERO = 0x92
-        CMD_SET_NOLIMIT_HOME_PARAMS = 0x94
-        CMD_SET_LIMIT_PORT_REMAP = 0x9E
-
-        # Part 5.5 - Set 0_Mode Command
-        CMD_SET_ZERO_MODE_PARAMETERS = 0x9A
-
-        # Part 5.6 - Restore Default Parameters
-        CMD_RESTORE_DEFAULT_PARAMETERS = 0x3F
-
-        # Part 5.7 - Restart Motor
-        CMD_RESTART_MOTOR = 0x41
-        
-        # Part 5.8 - En Triggers and Position Error Protection
-        CMD_SET_EN_TRIGGER_POS_ERROR_PROTECTION = 0x9D
-
-        # Part 5.9 - Read System Parameter
-        CMD_READ_SYSTEM_PARAMETER_PREFIX = 0x00
-
-        # Part 6 - Run Motor Commands
-        CMD_QUERY_MOTOR_STATUS = 0xF1
-        CMD_ENABLE_MOTOR = 0xF3
-        CMD_EMERGENCY_STOP = 0xF7
-        CMD_RUN_SPEED_MODE = 0xF6
-        CMD_SAVE_CLEAN_SPEED_MODE_PARAMS = 0xFF
-        SPEED_MODE_PARAM_SAVE = 0xC8
-        SPEED_MODE_PARAM_CLEAN = 0xCA
-        CMD_RUN_POSITION_MODE_RELATIVE_PULSES = 0xFD
-        CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES = 0xFE
-        CMD_RUN_POSITION_MODE_RELATIVE_AXIS = 0xF4
-        CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS = 0xF5
-
-        # Statuses
-        STATUS_SUCCESS = 0x01
-        STATUS_FAILURE = 0x00
-        STATUS_CALIBRATING = 0x00
-        STATUS_CALIBRATED_SUCCESS = 0x01
-        STATUS_CALIBRATING_FAIL = 0x02
-        
-        MOTOR_STATUS_QUERY_FAIL = 0x00
-        MOTOR_STATUS_STOPPED = 0x01
-        MOTOR_STATUS_SPEED_UP = 0x02
-        MOTOR_STATUS_SPEED_DOWN = 0x03
-        MOTOR_STATUS_FULL_SPEED = 0x04
-        MOTOR_STATUS_HOMING = 0x05
-        MOTOR_STATUS_CALIBRATING = 0x06 # Matches STATUS_CALIBRATING
-
-        POS_RUN_FAIL = 0x00
-        POS_RUN_STARTING = 0x01
-        POS_RUN_COMPLETE = 0x02
-        POS_RUN_END_LIMIT_STOPPED = 0x03
-
-        HOME_FAIL = 0x00
-        HOME_START = 0x01
-        HOME_SUCCESS = 0x02
-        
-        MODE_CR_OPEN = 0
-        MODE_SR_VFOC = 5
-        MAX_RPM_OPEN_MODE = 400
-        MAX_RPM_CLOSE_MODE = 1500
-        MAX_RPM_VFOC_MODE = 3000
-        ENCODER_PULSES_PER_REVOLUTION = 16384
-        EN_ACTIVE_LOW = 0x00
-        EN_ACTIVE_HIGH = 0x01
-        EN_ACTIVE_ALWAYS = 0x02
-        DIR_CW = 0x00
-        DIR_CCW = 0x01
-        CAN_BITRATE_500K = 0x02
-
-
-    const = _ConstPlaceholder()
-
-    def calculate_crc(can_id: int, data_bytes: list[int]) -> int:
-        """
-        Fallback CRC calculation used if the main library's CRC function is unavailable.
-        Calculates an 8-bit checksum: (CAN_ID + sum_of_data_bytes) & 0xFF.
-
-        Args:
-            can_id: The CAN ID.
-            data_bytes: A list of data bytes (command code + data).
-
-        Returns:
-            The calculated 8-bit CRC.
-        """
-        checksum = can_id
-        for byte_val in data_bytes:
-            checksum += byte_val
-        return checksum & 0xFF
-
-    class ParameterError(Exception): # Basic fallback
-        """Fallback exception for invalid parameters, used if main library exceptions are unavailable."""
-        pass
-    class LimitError(Exception): # Basic fallback
-        """Fallback exception for limit errors, used if main library exceptions are unavailable."""
-        pass
-    class MKSServoError(Exception): # Basic fallback
-        """Fallback base exception for MKS Servo errors, used if main library exceptions are unavailable."""
-        pass
-    class ConfigurationError(Exception): # Basic fallback
-        """Fallback exception for configuration errors."""
-        pass
+except ImportError as exc:  # pragma: no cover - install-time failure
+    raise ImportError(
+        "mks-servo-simulator requires the mks-servo-can library. Install it "
+        "with 'pip install -e ./mks_servo_can_library' from the project root."
+    ) from exc
 
 SIM_TIME_STEP_MS = 10
 SIM_MAX_SPEED_PARAM = 3000 # Used for RPM conversion, matches VFOC for SR_VFOC
@@ -177,60 +34,47 @@ SIM_MAX_ACCEL_PARAM = 255
 
 def mks_speed_param_to_rpm(param: int, mode: int = const.MODE_SR_VFOC) -> float:
     """
-    Converts an MKS speed parameter (0-3000) to an approximate RPM value for simulation.
+    Converts an MKS speed parameter (0-3000) to motor RPM.
 
-    The conversion depends on the motor's work mode, as different modes have
-    different maximum RPMs associated with the 0-3000 parameter range.
+    Thin delegate to `mks_servo_can.motor_profile.speed_param_to_rpm` so that the
+    simulator cannot develop its own idea of what a speed parameter means. If the
+    library's model is wrong, the simulator is wrong in the same way and the
+    discrepancy shows up against real hardware rather than hiding here.
 
     Args:
         param: The MKS speed parameter (0-3000).
-        mode: The current work mode of the motor (e.g., `const.MODE_SR_VFOC`).
+        mode: The motor's work mode, which sets the RPM ceiling.
 
     Returns:
-        The approximate motor speed in RPM.
+        The motor speed in RPM.
     """
-    max_rpm_for_mode = const.MAX_RPM_VFOC_MODE # Default
-    if mode in [const.MODE_CR_OPEN, getattr(const, 'MODE_SR_OPEN', -1)]: # Check if SR_OPEN exists
-        max_rpm_for_mode = const.MAX_RPM_OPEN_MODE
-    elif mode in [getattr(const, 'MODE_CR_CLOSE', -1), getattr(const, 'MODE_SR_CLOSE', -1)]:
-        max_rpm_for_mode = const.MAX_RPM_CLOSE_MODE
-    
-    if SIM_MAX_SPEED_PARAM == 0: # Avoid division by zero
-        return 0.0
-    # The speed parameter (0-3000) maps to the max RPM of the current mode
-    return (param / SIM_MAX_SPEED_PARAM) * max_rpm_for_mode
+    # The simulator models the calibrated 16-microstep case; per-motor
+    # subdivision is applied by the caller where it matters.
+    return _profile.speed_param_to_rpm(param, microsteps=16, work_mode=mode)
 
 
 def mks_accel_param_to_rpm_per_sec_sq(
-    param: int, current_rpm: float, target_rpm: float
+    param: int, current_rpm: float = 0.0, target_rpm: float = 0.0
 ) -> float:
     """
-    Converts an MKS acceleration parameter (0-255) to an approximate acceleration
-    in RPM per second squared for simulation.
+    Converts an MKS acceleration parameter (0-255) to RPM per second.
 
-    A parameter of 0 implies instantaneous acceleration. The formula is based
-    on the MKS manual's description of acceleration timing.
+    Thin delegate to `mks_servo_can.motor_profile.accel_param_to_rpm_per_second`.
+    Manual section 6.1 defines the ramp as 1 RPM every (256 - acc) * 50 us, so
+    the parameter is an inverse rate rather than an acceleration.
 
     Args:
         param: The MKS acceleration parameter (0-255).
-        current_rpm: The current RPM of the motor (not directly used in this simplified model).
-        target_rpm: The target RPM of the motor (not directly used in this simplified model).
+        current_rpm: Unused; retained for call-site compatibility.
+        target_rpm: Unused; retained for call-site compatibility.
 
     Returns:
-        The approximate acceleration in RPM/s^2. Returns float('inf') for
-        instantaneous acceleration (param=0 or very high).
+        Acceleration in RPM/s, or float('inf') when param is 0 (no ramp).
     """
-    if param == 0: # Instantaneous
-        return float("inf") 
-    if param > SIM_MAX_ACCEL_PARAM:
-        param = SIM_MAX_ACCEL_PARAM
-    
-    # Time for 1 RPM change = (256 - acc_param) * 50 us
-    # So, RPMs per 1 second = 1 / ((256 - acc_param) * 50e-6)
-    time_for_1_rpm_change_sec = (256 - param) * 50e-6
-    if time_for_1_rpm_change_sec <= 1e-9: # effectively zero or negative, treat as infinite accel
-        return float("inf")
-    return 1.0 / time_for_1_rpm_change_sec
+    del current_rpm, target_rpm  # The MKS ramp rate does not depend on either.
+    return _profile.accel_param_to_rpm_per_second(
+        max(0, min(int(param), SIM_MAX_ACCEL_PARAM))
+    )
 
 
 class SimulatedMotor:

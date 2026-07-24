@@ -75,10 +75,9 @@ setup(
         "rich>=10.0.0",  # For the rich console dashboard
         "fastapi>=0.68.0",  # For the HTTP debug server
         "uvicorn>=0.15.0",  # For running the FastAPI server
-        # If the simulator directly uses the mks-servo-can library as a
-        # dependency:
-        # "mks-servo-can @ path=../mks_servo_can_library" # For local dev
-        # Or if library is installed: "mks-servo-can>=0.1.0"
+        # Not optional: the simulator shares the library's constants, CRC and
+        # motion model rather than reimplementing them.
+        "mks-servo-can>=0.3.0",
         # For now, it tries to import directly for constants, which is okay
         # if run from project root or if mks_servo_can_library is in
         # PYTHONPATH.
