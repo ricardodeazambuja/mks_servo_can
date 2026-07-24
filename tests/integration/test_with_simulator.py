@@ -8,49 +8,45 @@
 
 import math
 
-import os  # For checking if simulator executable exists
+# Imports 'pytest_asyncio', an extension for pytest that allows testing asynchronous code
+# written with 'asyncio'. This is crucial for this project as the 'mks_servo_can' library is heavily async.
+import subprocess
+
 # Imports the 'os' module, which provides a way of using operating system dependent functionality.
 # In this script, it's mentioned as potentially being used for checking if the simulator executable exists,
 # though the actual check uses 'subprocess.check_output("command -v ...")' which is more common on Unix-like systems.
+import sys  # Ensure sys is imported at the top
 
-import sys # Ensure sys is imported at the top
-import pytest
-# Imports the 'pytest' framework, which is used for writing and running tests.
-# Pytest offers a powerful and flexible way to define test functions, fixtures, and run test suites.
-
-import pytest_asyncio  # For async fixtures
-# Imports 'pytest_asyncio', an extension for pytest that allows testing asynchronous code
-# written with 'asyncio'. This is crucial for this project as the 'mks_servo_can' library is heavily async.
-
-import subprocess
 # Imports the 'subprocess' module, used to run and manage child processes.
 # Here, it's used to start and stop the MKS Servo Simulator executable as a separate process for integration testing.
-
 import time
+
+import pytest
+
+# Imports the 'pytest' framework, which is used for writing and running tests.
+# Pytest offers a powerful and flexible way to define test functions, fixtures, and run test suites.
+import pytest_asyncio  # For async fixtures
+
 # Imports the 'time' module, providing various time-related functions.
 # In this script, it's used for 'time.sleep()' to pause execution, allowing the simulator process time to start up.
-
-from mks_servo_can import Axis
 # Imports the 'Axis' class from the 'mks_servo_can' library.
 # The 'Axis' class is a high-level interface for controlling a single MKS servo motor.
-
-from mks_servo_can import CANInterface
 # Imports the 'CANInterface' class, responsible for managing the communication link
 # (either to real hardware or the simulator).
-
-from mks_servo_can import const
 # Imports the 'const' module (likely 'constants.py') from the 'mks_servo_can' library.
 # This module is expected to contain various constants used throughout the library, such as default values, command codes, etc.
-
-from mks_servo_can import exceptions
 # Imports the 'exceptions' module, which defines custom exception classes for the library.
 # This allows for more specific error handling.
-
-from mks_servo_can import LinearKinematics
 # Imports the 'LinearKinematics' class, used for converting between linear physical units (e.g., mm)
 # and motor steps, for axes that perform linear motion.
-
-from mks_servo_can import MultiAxisController
+from mks_servo_can import (
+    Axis,
+    CANInterface,
+    LinearKinematics,
+    MultiAxisController,
+    const,
+    exceptions,
+)
 
 SIMULATOR_HOST = "localhost"
 # Defines a constant for the hostname where the simulator is expected to be running.
@@ -368,7 +364,7 @@ async def test_sim_axis_relative_move(sim_axis1: Axis):
     initial_pos_steps = await sim_axis1.get_current_position_steps()
     # Gets the starting position in steps.
 
-    delta_encoder_steps = const.ENCODER_PULSES_PER_REVOLUTION // 4 
+    delta_encoder_steps = const.ENCODER_PULSES_PER_REVOLUTION // 4
 
     relative_move_microsteps = sim_axis1._raw_encoder_steps_to_command_microsteps(
         delta_encoder_steps
@@ -377,7 +373,7 @@ async def test_sim_axis_relative_move(sim_axis1: Axis):
 
     sim_axis1.default_speed_param = 1000
     # Sets the default speed parameter for the axis instance for this test. This parameter (0-3000) influences motor RPM.
-    
+
     sim_axis1.default_accel_param = 150
     # Sets the default acceleration parameter (0-255).
 
@@ -484,7 +480,7 @@ async def sim_plotter_controller(can_interface_sim: CANInterface) -> MultiAxisCo
 async def test_sim_linear_move_with_interpolation(
     # You would need a fixture that provides a connected MultiAxisController
     # with at least two linear axes, similar to the setup in the examples.
-    sim_plotter_controller: MultiAxisController 
+    sim_plotter_controller: MultiAxisController
 ):
     """
     Tests the move_linearly_to method for correct end-to-end behavior
@@ -498,7 +494,7 @@ async def test_sim_linear_move_with_interpolation(
     # 2. Define and execute the linear move
     target_pos = {"AxisX": 30.0, "AxisY": 40.0}
     tool_speed = 25.0 # mm/s
-    
+
     await sim_plotter_controller.move_linearly_to(
         target_positions=target_pos,
         tool_speed_user=tool_speed,
@@ -507,8 +503,7 @@ async def test_sim_linear_move_with_interpolation(
 
     # 3. Verify the result
     final_positions = await sim_plotter_controller.get_all_positions_user()
-    
+
     # Check that both axes reached their target positions accurately
     assert math.isclose(final_positions.get("AxisX"), 30.0, abs_tol=0.1)
     assert math.isclose(final_positions.get("AxisY"), 40.0, abs_tol=0.1)
-    

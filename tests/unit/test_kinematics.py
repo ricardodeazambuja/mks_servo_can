@@ -11,39 +11,38 @@ and motor steps/pulses.
 # of the various kinematics classes.
 
 import math
+
 # Imports the 'math' module, which provides access to mathematical functions like 'sin', 'cos', 'radians', etc.
 # This is used in kinematics calculations, especially for non-linear relationships like in EccentricKinematics.
-
 import pytest
+
 # Imports the 'pytest' framework, used for writing and running these tests.
 # Pytest allows for structured tests, fixtures, and assertions.
+from mks_servo_can.constants import ENCODER_PULSES_PER_REVOLUTION
 
-from mks_servo_can.constants import \
-    ENCODER_PULSES_PER_REVOLUTION
 # Imports 'ENCODER_PULSES_PER_REVOLUTION' from the library's constants module.
 # This constant represents the typical number of encoder pulses a MKS servo motor has per revolution (e.g., 16384).
 # It's used as a default or reference value in kinematics tests.
-
 from mks_servo_can.exceptions import KinematicsError
+
 # Imports the 'KinematicsError' custom exception from the library.
 # This exception is expected to be raised by kinematics classes when invalid parameters
 # are provided during initialization or when a conversion is impossible.
-
-from mks_servo_can.kinematics import EccentricKinematics
 # Imports the 'EccentricKinematics' class. This is an example of a non-linear kinematics model,
 # and these tests will verify its behavior.
-
-from mks_servo_can.kinematics import Kinematics
 # Imports the base 'Kinematics' abstract class.
 # While not directly instantiated in tests for functionality (it's abstract),
 # it's relevant for understanding the inheritance structure and for testing
 # that concrete classes correctly implement its abstract methods.
-
-from mks_servo_can.kinematics import LinearKinematics
 # Imports the 'LinearKinematics' class, used for systems where motor rotation
 # results in linear motion (e.g., a lead screw).
+from mks_servo_can.kinematics import (
+    EccentricKinematics,
+    Kinematics,
+    LinearKinematics,
+    RotaryKinematics,
+)
 
-from mks_servo_can.kinematics import RotaryKinematics
 # Imports the 'RotaryKinematics' class, used for systems where motor rotation
 # results in rotary motion of an output shaft.
 
@@ -429,4 +428,3 @@ class TestEccentricKinematics:  # Basic tests for the example implementation
         assert kin.motor_speed_to_user_speed(10) == pytest.approx(
             10.0 * (math.pi / 3.0)
         )
-        

@@ -1,22 +1,34 @@
 import unittest
+from typing import Optional  # Added to resolve NameError
 from unittest.mock import MagicMock, patch
-from typing import Optional, List # Added to resolve NameError
 
 # Assuming FASTAPI_AVAILABLE is True for these tests
 # If it were False, these tests would likely need to be skipped or handled differently.
 FASTAPI_AVAILABLE = True
 
 if FASTAPI_AVAILABLE:
-    import json # Added for JSON parsing
-    from fastapi import FastAPI, HTTPException
+    import json  # Added for JSON parsing
+
     from fastapi.testclient import TestClient
+
+    from mks_servo_simulator.mks_simulator.interface.config_manager import (  # Corrected import
+        ConfigurationManager,
+        LiveConfigurationInterface,
+    )
+    from mks_servo_simulator.mks_simulator.interface.debug_tools import (
+        CommandInjector,  # LiveConfigurationInterface removed from here
+    )
+
     # Assuming these are the correct paths. Adjust if necessary.
     # Removed CommandResult, CommandInjectorPayload, TemplateCommandPayload, ParameterUpdatePayload
     # as they are not defined in http_debug_server.py and not directly used by tests.
-    from mks_servo_simulator.mks_simulator.interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
-    from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import LLMDebugInterface
-    from mks_servo_simulator.mks_simulator.interface.config_manager import ConfigurationManager, LiveConfigurationInterface # Corrected import
-    from mks_servo_simulator.mks_simulator.interface.debug_tools import CommandInjector # LiveConfigurationInterface removed from here
+    from mks_servo_simulator.mks_simulator.interface.http_debug_server import (
+        DebugHTTPServer,
+        JSONOutputHandler,
+    )
+    from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import (
+        LLMDebugInterface,
+    )
 
     # Mock dependencies
     MotorModel = MagicMock()

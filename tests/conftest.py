@@ -67,18 +67,17 @@ async def test_feature(self, compliance_api):
 ```
 """
 
-import pytest
-import pytest_asyncio
 import os
 import subprocess
+import sys  # Added import
 import tempfile
 import time
-import asyncio
-import sys # Added import
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+import pytest
+import pytest_asyncio
 
 from mks_servo_can import CANInterface, LowLevelAPI, exceptions
-
 
 # Simulator configuration constants
 SIMULATOR_HOST = "localhost"
@@ -91,7 +90,7 @@ SIMULATOR_CMD = "mks-servo-simulator"
 
 class SimulatorManager:
     """Manages simulator subprocess lifecycle for tests"""
-    
+
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.process: Optional[subprocess.Popen] = None
@@ -101,7 +100,7 @@ class SimulatorManager:
         self.start_can_id = config.get("start_can_id", 1)
         self.log_level = config.get("log_level", "INFO")
         self.latency_ms = config.get("latency_ms", 1)
-        
+
     def _assert_port_is_free(self) -> None:
         """
         Fails loudly if something is already listening on the fixture's port.
@@ -135,7 +134,7 @@ class SimulatorManager:
         #         f"'{SIMULATOR_CMD}' not found in PATH. Skipping simulator-dependent tests."
         #     )
         #     return
-        
+
         cmd = [
             sys.executable, "-m", "mks_simulator.main", # Changed invocation
             "--port", str(self.port),
@@ -143,13 +142,13 @@ class SimulatorManager:
             "--start-can-id", str(self.start_can_id),
             "--log-level", self.log_level,
         ]
-        
+
         # Add latency parameter if supported
         if self.latency_ms is not None:
             cmd.extend(["--latency-ms", str(self.latency_ms)])
-        
+
         print(f"\nStarting simulator: {' '.join(cmd)}")
-        
+
         try:
             # Route output to a temp file, never to a pipe. A pipe nobody reads
             # fills its 64 KB kernel buffer and blocks the simulator on write -
@@ -161,12 +160,12 @@ class SimulatorManager:
             self.process = subprocess.Popen(
                 cmd, stdout=self._log_file, stderr=subprocess.STDOUT
             )
-            
+
             print(f"Simulator starting with PID: {self.process.pid}")
-            
+
             # Wait for simulator to initialize
             time.sleep(SIMULATOR_STARTUP_TIMEOUT)
-            
+
             # Check if process is still running
             if self.process.poll() is not None:
                 pytest.fail(
@@ -174,12 +173,12 @@ class SimulatorManager:
                     f"{self.process.returncode}\n"
                     f"Output: {self.read_log()}"
                 )
-            
+
             print("Simulator started successfully")
-            
+
         except Exception as e:
             pytest.fail(f"Failed to start simulator: {e}")
-    
+
     def read_log(self, limit: int = 4000) -> str:
         """
         Returns the tail of the simulator's log, for failure messages.
@@ -193,7 +192,7 @@ class SimulatorManager:
         if not getattr(self, "_log_file", None):
             return "<no log captured>"
         try:
-            with open(self._log_file.name, "r", errors="replace") as handle:
+            with open(self._log_file.name, errors="replace") as handle:
                 return handle.read()[-limit:]
         except OSError as exc:
             return f"<could not read simulator log: {exc}>"
@@ -223,7 +222,7 @@ class SimulatorManager:
             except OSError:
                 pass
             self._log_file = None
-    
+
     def is_running(self) -> bool:
         """Check if simulator is still running"""
         return self.process is not None and self.process.poll() is None
@@ -242,16 +241,16 @@ def basic_simulator():
         "log_level": "INFO",
         "latency_ms": 1
     }
-    
+
     manager = SimulatorManager(config)
     manager.start()
-    
+
     yield manager
-    
+
     manager.stop()
 
 
-@pytest.fixture(scope="module") 
+@pytest.fixture(scope="module")
 def compliance_simulator():
     """
     Compliance simulator fixture for protocol testing.
@@ -264,12 +263,12 @@ def compliance_simulator():
         "log_level": "INFO",
         "latency_ms": 1
     }
-    
+
     manager = SimulatorManager(config)
     manager.start()
-    
+
     yield manager
-    
+
     manager.stop()
 
 
@@ -286,12 +285,12 @@ def performance_simulator():
         "log_level": "WARNING",  # Reduce log noise for performance tests
         "latency_ms": 5
     }
-    
+
     manager = SimulatorManager(config)
     manager.start()
-    
+
     yield manager
-    
+
     manager.stop()
 
 
@@ -306,7 +305,7 @@ async def basic_can_interface(basic_simulator: SimulatorManager):
         simulator_host=SIMULATOR_HOST,
         simulator_port=basic_simulator.port,
     )
-    
+
     try:
         await iface.connect()
         print(f"Connected to basic simulator on port {basic_simulator.port}")
@@ -332,7 +331,7 @@ async def compliance_can_interface(compliance_simulator: SimulatorManager):
         simulator_host=SIMULATOR_HOST,
         simulator_port=compliance_simulator.port,
     )
-    
+
     try:
         await iface.connect()
         print(f"Connected to compliance simulator on port {compliance_simulator.port}")
@@ -358,7 +357,7 @@ async def performance_can_interface(performance_simulator: SimulatorManager):
         simulator_host=SIMULATOR_HOST,
         simulator_port=performance_simulator.port,
     )
-    
+
     try:
         await iface.connect()
         print(f"Connected to performance simulator on port {performance_simulator.port}")
@@ -383,7 +382,7 @@ async def compliance_api(compliance_can_interface: CANInterface):
     return api
 
 
-@pytest_asyncio.fixture(scope="function") 
+@pytest_asyncio.fixture(scope="function")
 async def basic_api(basic_can_interface: CANInterface):
     """
     Provides a LowLevelAPI instance connected to the basic simulator.
@@ -414,11 +413,11 @@ def simulator_health_check():
         """Check if simulator is healthy and responsive"""
         if not manager.is_running():
             pytest.fail("Simulator process is not running")
-        
+
         # Additional health checks could be added here
         # e.g., attempting a simple connection test
         return True
-    
+
     return check_health
 
 
@@ -429,7 +428,7 @@ def test_motors_config():
     """
     return {
         1: {"enabled": True, "encoder_position": 0x1000},
-        2: {"enabled": True, "encoder_position": 0x2000}, 
+        2: {"enabled": True, "encoder_position": 0x2000},
         3: {"enabled": False, "encoder_position": 0x3000},
     }
 
@@ -442,8 +441,8 @@ pytest_mark_performance = pytest.mark.performance
 # Skip markers for conditional tests
 requires_simulator = pytest.mark.skipif(
     subprocess.run(
-        f"command -v {SIMULATOR_CMD}", 
-        shell=True, 
+        f"command -v {SIMULATOR_CMD}",
+        shell=True,
         capture_output=True
     ).returncode != 0,
     reason="mks-servo-simulator not available"

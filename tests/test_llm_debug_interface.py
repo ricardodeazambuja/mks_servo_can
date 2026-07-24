@@ -1,21 +1,24 @@
-import unittest
 import time
-import sys
-from unittest.mock import MagicMock, patch, PropertyMock
+import unittest
+from unittest.mock import MagicMock, PropertyMock, patch
+
+# sys.modules['mks_servo_simulator.mks_simulator.helpers'] = MagicMock() # If helpers is also an issue - keeping for now if it was needed
+# Now, import the class to be tested
+from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import (
+    ErrorRecord,
+    LLMDebugInterface,
+)
 
 # Mock modules before importing LLMDebugInterface
 # This is a common pattern when dealing with modules that might have complex
 # dependencies or side effects on import, especially if those modules are
 # not directly under test or are part of a larger system not fully available
 # in the unit test environment.
-
 # Import actual classes for spec
-from mks_servo_simulator.mks_simulator.motor_model import SimulatedMotor # Corrected class name
+from mks_servo_simulator.mks_simulator.motor_model import (
+    SimulatedMotor,  # Corrected class name
+)
 from mks_servo_simulator.mks_simulator.virtual_can_bus import VirtualCANBus
-# sys.modules['mks_servo_simulator.mks_simulator.helpers'] = MagicMock() # If helpers is also an issue - keeping for now if it was needed
-
-# Now, import the class to be tested
-from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import LLMDebugInterface, CommandRecord, ErrorRecord, MANUAL_COMMANDS
 
 
 class TestLLMDebugInterface(unittest.TestCase):

@@ -3,15 +3,17 @@ CAN Communication Layer for MKS Servo Control.
 Handles raw CAN bus communication using python-can for real hardware
 and provides a "virtual" backend for the simulator.
 """
-from typing import Any, Callable, Dict, List, Optional, Tuple # Added Tuple
-
 import asyncio
 import logging
 import time
+from typing import Any, Callable, Dict, List, Optional, Tuple  # Added Tuple
 
 try:
     import can
-    from can.notifier import Notifier # For advanced listening
+
+    # Imported to confirm the notifier machinery exists in this python-can
+    # build; the class itself is referenced as can.Notifier below.
+    from can.notifier import Notifier  # noqa: F401
     CAN_AVAILABLE = True
 except ImportError:
     CAN_AVAILABLE = False
@@ -129,12 +131,8 @@ except ImportError:
             pass
 
 
-from .constants import CAN_DEFAULT_BITRATE
-from .constants import CAN_TIMEOUT_SECONDS
-from .exceptions import CANError
-from .exceptions import CommunicationError
-from .exceptions import ConfigurationError
-from .exceptions import SimulatorError
+from .constants import CAN_DEFAULT_BITRATE, CAN_TIMEOUT_SECONDS
+from .exceptions import CANError, CommunicationError, ConfigurationError, SimulatorError
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +402,7 @@ class CANInterface:
                     logger.warning(f"Error during CAN bus shutdown: {e}")
                 finally:
                     self.bus = None
-        
+
         self._message_handlers.clear()
         # Cancel and clear pending futures
         for key_tuple in list(self._response_futures.keys()): # Iterate over a copy
@@ -447,7 +445,7 @@ class CANInterface:
             A `can.Message` object if parsing is successful, otherwise None.
         """
         parts = line.strip().split()
-        if not parts or parts[0] != "SIM_CAN_RECV" or len(parts) < 3: 
+        if not parts or parts[0] != "SIM_CAN_RECV" or len(parts) < 3:
             logger.warning(
                 f"Received unknown or malformed data from simulator: {line}"
             )
@@ -463,7 +461,7 @@ class CANInterface:
                 )
                 return None
 
-            data = bytes.fromhex(hex_data) if dlc > 0 else b"" 
+            data = bytes.fromhex(hex_data) if dlc > 0 else b""
 
             return can.Message( # type: ignore[name-defined]
                 arbitration_id=can_id,
@@ -548,7 +546,7 @@ class CANInterface:
             logger.error("Hardware listener: Message queue not initialized.")
             self._is_listening = False # Ensure it's marked as not listening
             return
-        
+
         logger.info("Hardware CAN listener started (Notifier-based).")
         try:
             while self._is_listening:
@@ -564,7 +562,7 @@ class CANInterface:
                     continue
                 except asyncio.CancelledError: # Handle task cancellation
                     logger.info("Hardware CAN listener task was cancelled.")
-                    break 
+                    break
         except Exception as e: # pylint: disable=broad-except
             if self._is_listening: # Log only if error happened while actively listening
                 logger.error(
@@ -595,7 +593,7 @@ class CANInterface:
                     break
                 try:
                     line_bytes = await asyncio.wait_for(
-                        self._sim_reader.readline(), timeout=1.0 
+                        self._sim_reader.readline(), timeout=1.0
                     )
                     if not line_bytes:
                         logger.info("Simulator connection closed by peer (empty read).")
@@ -608,7 +606,7 @@ class CANInterface:
                             await self._process_received_message(msg)
                 except asyncio.TimeoutError:
                     if not self._is_listening: break
-                    continue 
+                    continue
                 except (asyncio.IncompleteReadError, ConnectionResetError) as e:
                     logger.warning(f"Simulator connection issue: {e}. Stopping listener.")
                     break
@@ -616,7 +614,7 @@ class CANInterface:
                     logger.info("Simulator listener task was cancelled.")
                     break
         except Exception as e: # pylint: disable=broad-except
-            if self._is_listening: 
+            if self._is_listening:
                 logger.error(f"Simulator listener error: {e}", exc_info=True)
         finally:
             logger.info("Simulator listener stopped.")
@@ -688,7 +686,7 @@ class CANInterface:
             self._response_futures[key_tuple] = remaining_futures_for_key
         elif key_tuple in self._response_futures: # List became empty
             del self._response_futures[key_tuple]
-        
+
         if resolved_this_message:
              return # Message handled by a future
 
@@ -766,7 +764,7 @@ class CANInterface:
             An `asyncio.Future` object that the caller can await.
         """
         key_tuple = (can_id, command_code)
-        
+
         # Clean up any old, done futures for this key_tuple before adding new one
         if key_tuple in self._response_futures:
             self._response_futures[key_tuple] = [
@@ -776,12 +774,12 @@ class CANInterface:
                 del self._response_futures[key_tuple]
 
         future = self._loop.create_future()
-        
+
         if key_tuple not in self._response_futures:
             self._response_futures[key_tuple] = []
-            
+
         self._response_futures[key_tuple].append((future, response_predicate))
-        
+
         logger.debug(f"Created future for CAN ID {can_id:03X}, CMD {command_code:02X}{' with predicate' if response_predicate else ''}. Total waiters for key: {len(self._response_futures[key_tuple])}")
         return future
 
@@ -874,7 +872,7 @@ class CANInterface:
         Signals the background message listening task to stop and cancels it if running.
         """
         if self._is_listening:
-            self._is_listening = False 
+            self._is_listening = False
             if self._listener_task and not self._listener_task.done():
                 self._listener_task.cancel()
             # For hardware, notifier is stopped in disconnect()
@@ -927,7 +925,7 @@ class CANInterface:
 
         try:
             await self.send_message(msg_to_send, timeout=timeout)
-        except Exception: 
+        except Exception:
             if not future.done():
                 future.cancel("Send operation failed")
             raise # Re-raise the send error
@@ -942,7 +940,7 @@ class CANInterface:
                 self._response_futures[key] = [(f, p) for f, p in self._response_futures[key] if f is not future or f.done()]
                 if not self._response_futures[key]:
                     del self._response_futures[key]
-            
+
             cmd_byte_str = f"{msg_to_send.data[0]:02X}" if msg_to_send.data else "N/A"
             payload_str = msg_to_send.data.hex() if msg_to_send.data else "N/A"
             error_msg = (
@@ -984,4 +982,3 @@ class CANInterface:
                  # or relying on successful bus initialization.
                  return self.bus is not None
             return self.bus is not None # Basic check if notifier isn't used or as fallback
-        

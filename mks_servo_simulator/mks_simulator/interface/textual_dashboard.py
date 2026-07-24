@@ -3,37 +3,34 @@ Textual-based dashboard for MKS servo simulator.
 Enhanced version with auto-refresh and improved layout.
 """
 
-import asyncio
-import threading
-import time
 import itertools
+import time
 from typing import TYPE_CHECKING, Optional
 
-from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Header, Footer, DataTable, Static, Label
-from textual.timer import Timer
 from rich.markup import escape
 from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.timer import Timer
+from textual.widgets import DataTable, Footer, Header, Static
 
 from mks_servo_can import constants as const
 
 if TYPE_CHECKING:
+    from ..motor_model import SimulatedMotor  # Added import
     from ..virtual_can_bus import VirtualCANBus
-    from ..motor_model import SimulatedMotor # Added import
-    from .llm_debug_interface import LLMDebugInterface # Add this
+    from .llm_debug_interface import LLMDebugInterface  # Add this
 
 
 class MotorStatusWidget(Static):
     """Widget displaying motor status in a table"""
-    
+
     def __init__(self, virtual_can_bus=None, id: Optional[str] = None):
         super().__init__(id=id)
         self.virtual_can_bus = virtual_can_bus
-    
+
     def compose(self) -> ComposeResult:
         yield DataTable()
-    
+
     def on_mount(self) -> None:
         """Initialize the motor status table"""
         table = self.query_one(DataTable)
@@ -44,13 +41,13 @@ class MotorStatusWidget(Static):
         # --- END OF CHANGE ---
 
         self.refresh_data()
-    
+
     def refresh_data(self) -> None:
         """Refresh table with real motor data"""
         try:
             table = self.query_one(DataTable)
             table.clear()
-            
+
             if self.virtual_can_bus and hasattr(self.virtual_can_bus, 'simulated_motors') and self.virtual_can_bus.simulated_motors:
                 # Real data from virtual CAN bus
                 for motor_id, motor in sorted(self.virtual_can_bus.simulated_motors.items()):
@@ -66,18 +63,18 @@ class MotorStatusWidget(Static):
                             const.MOTOR_STATUS_CALIBRATING: "Calibrating"
                         }
                         status = status_map.get(getattr(motor, 'motor_status_code', const.MOTOR_STATUS_QUERY_FAIL), "Unknown Status")
-                        
+
                         # Position in degrees with safe defaults
                         position_steps = getattr(motor, 'position_steps', 0)
                         steps_per_rev = getattr(motor, 'steps_per_rev_encoder', 1)
                         pos_degrees = (position_steps / steps_per_rev) * 360 # This is a simplification if units change
                         units = getattr(motor, 'kinematics_units', 'N/A')
                         position = f"{pos_degrees:.1f} {units}"
-                        
+
                         # Speed in RPM
                         current_rpm = getattr(motor, 'current_rpm', 0.0)
                         speed = f"{current_rpm:.1f} RPM" # This is motor RPM, not user speed
-                        
+
                         # User velocity
                         user_velocity = getattr(motor, 'current_speed_user_units_per_sec', 0.0)
                         velocity_str = f"{user_velocity:.1f} {units}/s"
@@ -89,7 +86,7 @@ class MotorStatusWidget(Static):
                             target = f"{target_degrees:.1f} {units}"
                         else:
                             target = "None"
-                        
+
                         # Enabled status
                         is_enabled = getattr(motor, 'is_enabled', False)
                         enabled = "Yes" if is_enabled else "No"
@@ -97,9 +94,9 @@ class MotorStatusWidget(Static):
                         # Work Mode and Microsteps
                         work_mode_str = getattr(motor, 'work_mode_str', 'N/A')
                         microsteps_val = getattr(motor, 'microsteps', 'N/A')
-                        
+
                         table.add_row(str(motor_id), status, position, speed, target, velocity_str, work_mode_str, str(microsteps_val), enabled)
-                    except Exception as e:
+                    except Exception:
                         # Handle individual motor errors gracefully
                         table.add_row(str(motor_id), "Error", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A")
             else:
@@ -117,38 +114,38 @@ class MotorStatusWidget(Static):
                 table = self.query_one(DataTable)
                 table.clear()
                 table.add_row("Error", str(e)[:20], "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A")
-            except:
+            except Exception:
                 pass
 
 
 class SystemInfoWidget(Static):
     """Widget displaying system information"""
-    
+
     def __init__(self, virtual_can_bus=None):
         super().__init__()
         self.virtual_can_bus = virtual_can_bus
         self.start_time = None
-    
+
     def compose(self) -> ComposeResult:
         yield Static("", id="system-info")
-    
+
     def on_mount(self) -> None:
         """Initialize with current data"""
         import time
         self.start_time = time.time()
         self.refresh_data()
-    
+
     def refresh_data(self) -> None:
         """Refresh system information"""
         try:
             import time
-            
+
             if self.virtual_can_bus:
                 try:
                     motor_count = len(self.virtual_can_bus.simulated_motors)
                     client_count = len(self.virtual_can_bus.clients)
                     # Check if any motors are enabled
-                    enabled_motors = sum(1 for motor in self.virtual_can_bus.simulated_motors.values() 
+                    enabled_motors = sum(1 for motor in self.virtual_can_bus.simulated_motors.values()
                                        if getattr(motor, 'is_enabled', False))
                     connection_status = "Connected"
                 except Exception as e:
@@ -161,21 +158,21 @@ class SystemInfoWidget(Static):
                 client_count = 0
                 enabled_motors = 0
                 connection_status = "No CAN Bus"
-            
+
             uptime = time.time() - self.start_time if self.start_time else 0.0
             uptime_str = f"{int(uptime//3600):02d}:{int((uptime%3600)//60):02d}:{int(uptime%60):02d}"
-            
+
             info_text = (f"Status: {connection_status}\n"
                         f"Motors: {motor_count} ({enabled_motors} enabled)\n"
                         f"Clients: {client_count}\n"
                         f"Uptime: {uptime_str}")
-            
+
             self.update(info_text)
         except Exception as e:
             # Graceful fallback on any error
             try:
                 self.update(f"System Info Error:\n{str(e)[:30]}")
-            except:
+            except Exception:
                 pass
 
 
@@ -184,7 +181,7 @@ class DetailedMotorViewWidget(Static):
 
     def __init__(self, id: Optional[str] = None): # Removed *args, **kwargs for specific signature
         super().__init__(id=id)
-        self.selected_motor: Optional['SimulatedMotor'] = None
+        self.selected_motor: Optional[SimulatedMotor] = None
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
@@ -314,7 +311,7 @@ class TextualDashboard(App):
     Textual-based dashboard application.
     Phase 1: Static layout with fake data.
     """
-    
+
     CSS = """
     Screen {
         layout: vertical;
@@ -348,7 +345,7 @@ class TextualDashboard(App):
         scrollbar-size-vertical: 1;
     }
     """
-    
+
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh"),
@@ -357,7 +354,7 @@ class TextualDashboard(App):
         ("up", "select_previous_motor", "Prev Mtr"),
         ("down", "select_next_motor", "Next Mtr"),
     ]
-    
+
     def __init__(self, virtual_can_bus: "VirtualCANBus" = None, enable_auto_refresh: bool = True, refresh_interval: float = 2.0):
         super().__init__()
 
@@ -374,7 +371,7 @@ class TextualDashboard(App):
         self.start_time = time.time()
         self.is_paused = False
         self.selected_motor_id: Optional[int] = None
-    
+
     def compose(self) -> ComposeResult:
         """Create the dashboard layout"""
         yield Header(show_clock=True)
@@ -382,7 +379,7 @@ class TextualDashboard(App):
         yield DetailedMotorViewWidget(id="detailed-motor-view")
         yield CommandLogWidget(self.debug_interface, id="command-log-widget") # Add this
         yield Footer()
-    
+
     def on_mount(self) -> None:
         """Called when the app starts"""
         # Only set default if no motor is selected yet
@@ -397,7 +394,7 @@ class TextualDashboard(App):
             self.start_auto_refresh()
         self.action_refresh() # Initial refresh
         self.screen.focus() # Added this line
-    
+
     def action_select_previous_motor(self) -> None:
         """Selects the previous motor in the list."""
         if not self.virtual_can_bus or not self.virtual_can_bus.simulated_motors:
@@ -454,13 +451,13 @@ class TextualDashboard(App):
         if self.refresh_timer:
             self.refresh_timer.stop()
         self.refresh_timer = self.set_interval(self.refresh_interval, self.action_refresh)
-    
+
     def stop_auto_refresh(self) -> None:
         """Stop the auto-refresh timer"""
         if self.refresh_timer:
             self.refresh_timer.stop()
             self.refresh_timer = None
-    
+
     def action_refresh(self) -> None:
         """Manual refresh action - updates all widgets with real data"""
         # self.app.log.info(f"[ACTION_REFRESH] Start. selected_motor_id: {self.selected_motor_id}") # Original logging
@@ -497,7 +494,7 @@ class TextualDashboard(App):
             # self.app.log.error(f"[ACTION_REFRESH] Error refreshing CommandLogWidget: {e}") # Original logging
 
         # self.app.log.info(f"[ACTION_REFRESH] End. selected_motor_id: {self.selected_motor_id}") # Original logging
-    
+
     def action_toggle_pause(self) -> None:
         """Toggle pause/resume of auto-refresh"""
         self.is_paused = not self.is_paused
@@ -508,14 +505,14 @@ class TextualDashboard(App):
             self.start_auto_refresh()
             self.notify("Auto-refresh resumed")
         # self.update_status_panel() # Status panel display might be removed or changed
-    
+
     # update_status_panel might be removed or simplified if SystemInfoWidget is removed from layout
     def update_status_panel(self) -> None:
         """Update the status panel with current information (simplified for now)."""
         # This method might need significant rework if SystemInfoWidget is not present
         # or if its display logic changes. For now, it's a placeholder.
         pass # Placeholder
-    
+
     def action_quit(self) -> None:
         """Quit the application"""
         self.stop_auto_refresh()

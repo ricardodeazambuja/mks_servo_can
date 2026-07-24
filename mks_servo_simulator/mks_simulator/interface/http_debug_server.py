@@ -7,16 +7,16 @@ query simulator state, command history, and perform state validation.
 
 import asyncio
 import json
-from typing import Optional, Dict, Any
-from pathlib import Path
+from typing import Any, Dict, Optional
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
-    from fastapi.responses import JSONResponse
-    from fastapi.middleware.cors import CORSMiddleware
+    from typing import Any, Dict, List  # Added (already present but good to ensure)
+
     import uvicorn
-    from pydantic import BaseModel, Field # Added
-    from typing import List, Dict, Any # Added (already present but good to ensure)
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import JSONResponse
+    from pydantic import BaseModel, Field  # Added
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
@@ -31,10 +31,11 @@ except ImportError:
     class Field: # type: ignore
         pass
     # Ensure List, Dict, Any, Optional are available for stub if typing wasn't already imported
-    from typing import List, Dict, Any, Optional
+    from typing import Any, Dict, List, Optional
 
 
 from .llm_debug_interface import LLMDebugInterface
+
 
 # Pydantic Models for Request Validation
 class RawCommandPayload(BaseModel):
@@ -304,7 +305,7 @@ class DebugHTTPServer:
                 }
                 
             except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
         
         @self.app.post("/inject_template", summary="Inject template command")
         async def inject_template_command(request_data: TemplateCommandPayload):
@@ -351,7 +352,7 @@ class DebugHTTPServer:
                 }
                 
             except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
         
         @self.app.get("/templates", summary="Get available command templates")
         async def get_command_templates():
@@ -442,7 +443,7 @@ class DebugHTTPServer:
                 }
                 
             except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
         
         # Performance monitoring endpoints
         @self.app.get("/performance", summary="Get current performance metrics")
@@ -574,7 +575,7 @@ class DebugHTTPServer:
                     # It's better to let FastAPI handle validation errors for consistent 422,
                     # but for other errors, 500 is okay.
                     # However, the test for not_found expects 200 with success:False, so we handle it above.
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
             
             @self.app.post("/config/profiles/{profile_name}/save", summary="Save configuration profile")
             async def save_profile(profile_name: str):
@@ -609,7 +610,7 @@ class DebugHTTPServer:
                 except HTTPException as http_exc: # Catch HTTPException first and re-raise
                     raise http_exc
                 except Exception as e:
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
             
             @self.app.delete("/config/profiles/{profile_name}", summary="Delete configuration profile")
             async def delete_profile(profile_name: str):
@@ -629,7 +630,7 @@ class DebugHTTPServer:
                     else:
                         return {"success": False, "message": f"Profile '{profile_name}' not found"}
                 except Exception as e:
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
             
             @self.app.get("/config/templates", summary="Get motor templates")
             async def get_motor_templates():
@@ -681,7 +682,7 @@ class DebugHTTPServer:
                     else:
                         return {"success": False, "message": f"Failed to apply template '{template_name}' to motor {motor_id}"}
                 except Exception as e:
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
         
         # Live configuration endpoints (only if live config is available)
         if self.live_config:
@@ -725,7 +726,7 @@ class DebugHTTPServer:
                     # Specific exceptions from live_config.update_parameter could be handled here
                     # For now, a general 500 for unexpected issues.
                     # Pydantic validation errors will be automatically handled by FastAPI as 422.
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
     
     async def start_server(self):
         """

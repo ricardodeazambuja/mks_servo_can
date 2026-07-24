@@ -11,29 +11,27 @@ Make sure the simulator is running before executing this script.
 # with a specific configuration (at least two motors).
 
 import asyncio
+
 # Imports the 'asyncio' library, essential for using the asynchronous features
 # of the 'mks_servo_can' library.
-
 import logging
+
 # Imports the 'logging' module to provide informative output during script execution.
-
-from mks_servo_can import Axis
 # Imports the 'Axis' class, used to represent and control individual motors.
-
-from mks_servo_can import CANInterface
 # Imports the 'CANInterface' class, used to establish a connection (in this case, to the simulator).
-
-from mks_servo_can import const
 # Imports the 'const' module for library-defined constants (e.g., default encoder pulses).
-
-from mks_servo_can import exceptions
 # Imports the 'exceptions' module for handling library-specific errors.
-
-from mks_servo_can import MultiAxisController
 # Imports the 'MultiAxisController' class, which is key for managing and
 # sending commands to multiple axes in a coordinated manner.
+from mks_servo_can import (
+    Axis,
+    CANInterface,
+    MultiAxisController,
+    RotaryKinematics,
+    const,
+    exceptions,
+)
 
-from mks_servo_can import RotaryKinematics
 # Imports 'RotaryKinematics' as an example kinematics model for the motors.
 # This defines the relationship between motor steps and user units (e.g., degrees).
 
@@ -296,4 +294,3 @@ if __name__ == "__main__":
     # only when the script is executed directly (not when imported as a module).
     asyncio.run(main())
     # Runs the main asynchronous function, starting the asyncio event loop.
-    

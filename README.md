@@ -26,6 +26,17 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
     * Precision testing with automated assessment (EXCELLENT/GOOD/FAIR/POOR).
     * Surface mapping and height profiling capabilities for complex geometries.
     * Advanced plotting capabilities including SVG rendering and calligraphy.
+* **Real-Time Streaming Control** (`mks_servo_can.realtime`):
+    * `ServoStream` drives several axes from a fixed-rate loop, streaming absolute
+      position targets fire-and-forget. For tracking a moving reference, where the
+      target changes faster than any single move completes.
+    * `AlphaBetaTracker` / `AlphaBetaGammaTracker` extrapolate a delayed, noisy
+      measurement stream forward by the measured pipeline latency.
+    * Soft limits, a producer watchdog, and loop-jitter statistics.
+* **Motion Parameter Model** (`mks_servo_can.motor_profile`): converts the MKS
+  speed (0-3000) and acceleration (0-255) parameters to and from RPM, deg/s^2 and
+  ramp times, including the microstep calibration and work-mode ceilings that
+  section 6.1 of the manual describes only in prose.
 * **Hardware & Simulator Support**: Can connect to real MKS servo motors via various `python-can` compatible interfaces or to the provided `mks-servo-simulator`.
 * **Robust Error Handling**: Custom exceptions for clear diagnostics of communication, motor, and configuration issues.
 
@@ -74,17 +85,17 @@ mks_servo_can/
 │   ├── mks_servo_can/               # Source code for the library
 │   │   ├── kinematics/              # Kinematic transformation modules
 │   │   ├── digitizer/               # Motor digitizing and precision testing
-│   │   │   ├── __init__.py
 │   │   │   ├── base_digitizer.py    # Core MotorDigitizer class
 │   │   │   ├── data_structures.py   # DigitizedPoint, DigitizedSequence, etc.
 │   │   │   ├── precision_analyzer.py # Statistical analysis and assessment
 │   │   │   ├── surface_mapping.py   # Enhanced height mapping capabilities
-│   │   │   └── utils.py             # Utility functions (create_linear_axis, etc.)
-│   │   ├── __init__.py
+│   │   │   └── utils.py             # create_linear_axis, create_rotary_axis
 │   │   ├── can_interface.py         # Handles real CAN and simulator connection
 │   │   ├── low_level_api.py         # Implements MKS CAN commands
 │   │   ├── axis.py                  # High-level single motor control
 │   │   ├── multi_axis_controller.py # High-level multi-motor control
+│   │   ├── realtime.py              # Fixed-rate streaming control + predictors
+│   │   ├── motor_profile.py         # Speed/accel parameters <-> engineering units
 │   │   ├── robot_kinematics.py      # High-level robot model kinematics
 │   │   ├── constants.py
 │   │   ├── crc.py
@@ -96,23 +107,24 @@ mks_servo_can/
 │   │   ├── cli.py                   # Command-line interface (using Click)
 │   │   ├── motor_model.py           # Simulates individual motor behavior
 │   │   ├── virtual_can_bus.py       # Manages simulated CAN traffic
-│   │   ├── interface/               # User interface modules ✅ NEW
-│   │   │   ├── __init__.py
-│   │   │   ├── rich_dashboard.py    # Rich console dashboard with real-time display
-│   │   │   ├── interactive_controls.py # Keyboard controls and user interaction
-│   │   │   ├── config_manager.py    # Configuration profiles and live parameter adjustment
+│   │   ├── interface/               # User interface modules
+│   │   │   ├── textual_dashboard.py # Interactive terminal dashboard
+│   │   │   ├── config_manager.py    # Configuration profiles and live adjustment
 │   │   │   ├── debug_tools.py       # Command injection and testing framework
 │   │   │   ├── performance_monitor.py # Performance tracking and monitoring
 │   │   │   ├── llm_debug_interface.py # LLM-friendly debugging interface
+│   │   │   ├── sdk_client.py        # Client helper for the debug API
 │   │   │   └── http_debug_server.py # HTTP REST API for programmatic access
 │   │   └── main.py                  # Entry point for the simulator CLI
 │   └── setup.py                     # Packaging script for the simulator
-├── tests/                           # Unit, integration, HIL, determinism tests
-│   ├── unit/
-│   ├── integration/
-│   ├── hil/
-│   └── determinism/
+├── tests/                           # Test suite (478 tests)
+│   ├── unit/                        # Fast, mocked; no simulator needed
+│   ├── integration/                 # Against a live simulator
+│   ├── simulator_compliance/        # Wire-format conformance vs the manual
+│   ├── hil/                         # Hardware-in-the-loop; see tests/hil/
+│   └── fixtures/                    # manual_commands_v106.json + errata
 ├── examples/                        # Example scripts demonstrating library usage
+│   ├── camera_gimbal_tracker.py     # 3-axis gimbal tracking a fast target
 │   ├── single_axis_real_hw.py       # Basic single motor control with real hardware
 │   ├── multi_axis_simulator.py      # Multi-motor control with simulator
 │   ├── advanced_axis_control.py     # Advanced motor control techniques
@@ -124,15 +136,13 @@ mks_servo_can/
 │   ├── basic_digitizer_demo.py      # MotorDigitizer library integration demo
 │   ├── motor_digitizer.py           # Advanced digitizing with recording/playback
 │   ├── digitizer_precision_test.py  # Comprehensive precision testing suite
-│   ├── height_map_generator.py      # Basic surface height mapping
-│   ├── height_map_generator_v2.py   # Enhanced surface mapping with digitizer
-│   ├── svg_plotter.py               # SVG file plotting capabilities
-│   ├── enhanced_svg_plotter.py      # Advanced SVG plotting with optimization
+│   ├── height_map_generator_v2.py   # Surface mapping with digitizer integration
+│   ├── enhanced_svg_plotter.py      # SVG plotting with path optimization
 │   ├── calligraphy_plotter.py       # Artistic calligraphy and text rendering
 │   └── calligraphy_plotter_manual_interpolation.py # Manual interpolation techniques
 ├── docs/                            # Detailed documentation
 │   └── README.md                    # Overview of documentation structure
-│   └── (other .md files for specific sections)
+├── CHANGELOG.md                     # Release history
 ├── README.md                        # Main project README (this file)
 ├── requirements.txt                 # Core Python dependencies
 └── LICENSE.txt                      # Project license
@@ -157,7 +167,7 @@ mks_servo_can/
 **For the simulator CLI:**
 * `click` library: `pip install click`
 
-**For enhanced simulator features (✅ NEW):**
+**For enhanced simulator features:**
 * `rich` library: `pip install rich` (for interactive dashboard and real-time displays)
 * `fastapi` and `uvicorn`: `pip install fastapi uvicorn` (for HTTP debug API)
 * `psutil`: `pip install psutil` (optional, for advanced performance monitoring)
@@ -212,7 +222,7 @@ Using editable installs (`pip install -e .`) for both packages within the same v
 mks-servo-simulator --num-motors 2 --start-can-id 1 --latency-ms 5
 ```
 
-**Rich Interactive Dashboard (✅ NEW):**
+**Rich Interactive Dashboard:**
 ```bash
 # Start with interactive dashboard and real-time monitoring
 mks-servo-simulator --dashboard --num-motors 3 --refresh-rate 200
@@ -226,7 +236,7 @@ Interactive controls include:
 - **l**: Live parameter adjustment
 - **+/-**: Adjust refresh rate
 
-**Debug API with Configuration Management (✅ NEW):**
+**Debug API with Configuration Management:**
 ```bash
 # Start with HTTP API for programmatic access
 mks-servo-simulator --debug-api --dashboard --num-motors 2
@@ -234,7 +244,7 @@ mks-servo-simulator --debug-api --dashboard --num-motors 2
 # Configuration endpoints: http://localhost:8765/config/*
 ```
 
-**Configuration Profiles (✅ NEW):**
+**Configuration Profiles:**
 ```bash
 # Load saved configuration profile
 mks-servo-simulator --config-profile my_setup
@@ -246,7 +256,7 @@ mks-servo-simulator --save-config my_setup --num-motors 2
 mks-servo-simulator --config-dir ./my_configs --dashboard
 ```
 
-**JSON Output for LLMs (✅ NEW):**
+**JSON Output for LLMs:**
 ```bash
 # JSON output mode for Claude Code integration
 mks-servo-simulator --json-output --num-motors 2
@@ -289,6 +299,12 @@ Refer to the scripts in the `examples/` directory for complete, runnable code:
 * `examples/height_map_generator_v2.py`: Enhanced surface mapping with digitizer integration.
 * `examples/enhanced_svg_plotter.py`: Advanced SVG plotting with path optimization.
 * `examples/calligraphy_plotter.py`: Artistic text rendering and calligraphy.
+
+**Real-Time Tracking:**
+* `examples/camera_gimbal_tracker.py`: A three-axis camera gimbal tracking a fast
+  target. Runs against the simulator with no hardware. Documents the design
+  reasoning - why direct drive beats a reduction here, why latency rather than
+  motor speed is the binding constraint, and how to size the axes.
 
 **Performance & Analysis:**
 * `examples/benchmark_command_latency.py`: Command latency measurement and analysis.
@@ -373,7 +389,7 @@ async def digitizer_example():
     await can_if.disconnect()
 ```
 
-### 4. Using the HTTP Debug API (✅ NEW)
+### 4. Using the HTTP Debug API
 
 The simulator provides a comprehensive REST API for programmatic access and LLM integration:
 
@@ -438,14 +454,66 @@ curl http://localhost:8765/performance/history
 curl http://localhost:8765/performance/connections
 ```
 
+### 5. Real-Time Tracking
+
+For anything that follows a moving reference, the discrete-move API is the wrong
+model: it waits for each move to finish. `ServoStream` streams targets instead.
+
+```python
+import asyncio
+from mks_servo_can import CANInterface, ServoStream, StreamAxis, AlphaBetaGammaTracker
+
+async def track():
+    can_if = CANInterface(use_simulator=True)
+    await can_if.connect()
+
+    axes = [
+        StreamAxis("pan", can_id=1, min_position=-170, max_position=170),
+        StreamAxis("tilt", can_id=2, min_position=-45, max_position=90),
+    ]
+    predictor = AlphaBetaGammaTracker(alpha=0.5, beta=0.3, gamma=0.05)
+
+    # Disables motor responses on entry, restores them on exit.
+    async with ServoStream(can_if, axes, rate_hz=200) as stream:
+        while tracking:
+            bearing, captured_at = await detector.next_sighting()
+            predictor.update(bearing, captured_at)
+            # Extrapolate to when the command will actually take effect.
+            horizon = time.monotonic() - captured_at + command_latency
+            stream.set_target(
+                "pan",
+                predictor.predict(horizon),
+                feedforward_rate=abs(predictor.predict_velocity(horizon)),
+            )
+            await asyncio.sleep(0.01)
+
+    await can_if.disconnect()
+```
+
+Two things worth internalising before building on this:
+
+* **Prediction dominates.** Pointing error from transport delay is
+  `rate x latency`. At 172 deg/s a 50 ms pipeline is 8.6 degrees behind; with
+  extrapolation the residual is around 0.3 degrees. Optimising the CAN path is
+  worth far less than adding the predictor.
+* **Measure the latency, do not guess it.** And count the detector's share
+  exactly once - it is already inside the measurement's age. Double-counting it
+  is silent and makes the result worse than not predicting at all.
+
+See `examples/camera_gimbal_tracker.py` for a complete, runnable treatment.
+
 ## Documentation
 
-Detailed documentation, including API references, user guides, and advanced topics, is planned for the `docs/` directory. The `docs/README.md` file provides an overview of the planned documentation structure.
+Detailed documentation lives in the `docs/` directory; `docs/README.md` is the
+index. Alongside it:
 
-For now, please refer to:
-* **Docstrings** within the source code of the library.
-* The **example scripts** in the `examples/` directory.
-* The **"MKS SERVO42D/57D_CAN User Manual V1.0.6.pdf"** (which should be obtained separately) for specifics on CAN commands, motor parameters, and behavior.
+* **Docstrings** within the source code, which carry the design rationale.
+* The **example scripts** in `examples/`.
+* The **"MKS SERVO42D/57D_CAN User Manual V1.0.6"**, obtained separately, for
+  specifics on CAN commands and motor behaviour. Note that
+  `tests/fixtures/manual_commands_v106.json` records an **errata** block: the
+  manual contradicts itself on sign convention, and the worked examples (CCW
+  positive) are the ones to trust.
 
 ## Development and Testing
 

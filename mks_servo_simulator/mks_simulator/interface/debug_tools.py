@@ -7,13 +7,12 @@ Provides command injection, testing utilities, and debugging features.
 import asyncio
 import json
 import time
-from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from ..virtual_can_bus import VirtualCANBus
-    from ..motor_model import SimulatedMotor
     from .llm_debug_interface import LLMDebugInterface
 
 
@@ -54,7 +53,7 @@ class CommandInjector:
     - Response tracking
     - Test scenario execution
     """
-    
+
     def __init__(
         self,
         virtual_can_bus: "VirtualCANBus",
@@ -69,19 +68,19 @@ class CommandInjector:
         """
         self.virtual_can_bus = virtual_can_bus
         self.debug_interface = debug_interface
-        
+
         # Command history and tracking
         self.injected_commands: List[InjectedCommand] = []
         self.max_history = 1000
-        
+
         # Load command specifications
         self.command_specs: Dict[int, CommandSpec] = {}
         self._load_command_specs()
-        
+
         # Pre-defined command templates
         self.command_templates: Dict[str, Dict[str, Any]] = {}
         self._setup_command_templates()
-    
+
     def _load_command_specs(self):
         """Load command specifications from the manual database"""
         try:
@@ -91,17 +90,17 @@ class CommandInjector:
                 Path("../tests/fixtures/manual_commands_v106.json"),
                 Path("../../tests/fixtures/manual_commands_v106.json")
             ]
-            
+
             commands_file = None
             for path in possible_paths:
                 if path.exists():
                     commands_file = path
                     break
-            
+
             if commands_file:
-                with open(commands_file, 'r') as f:
+                with open(commands_file) as f:
                     data = json.load(f)
-                
+
                 # Parse command specifications
                 for cmd_data in data.get('commands', []):
                     code = cmd_data.get('code')
@@ -115,10 +114,10 @@ class CommandInjector:
                             category=cmd_data.get('category', 'unknown'),
                             parameters=cmd_data.get('parameters', [])
                         )
-        except Exception as e:
+        except Exception:
             # Fallback to basic command specs
             self._setup_basic_command_specs()
-    
+
     def _setup_basic_command_specs(self):
         """Setup basic command specifications as fallback"""
         basic_commands = [
@@ -135,7 +134,7 @@ class CommandInjector:
             (0x83, "Set Current", "Set motor current", 2, 0, "config"),
             (0x84, "Set Subdivision", "Set step subdivision", 1, 0, "config"),
         ]
-        
+
         for code, name, desc, data_len, resp_len, category in basic_commands:
             self.command_specs[code] = CommandSpec(
                 code=code,
@@ -146,7 +145,7 @@ class CommandInjector:
                 category=category,
                 parameters=[]
             )
-    
+
     def _setup_command_templates(self):
         """Setup pre-defined command templates for common operations"""
         self.command_templates = {
@@ -217,15 +216,15 @@ class CommandInjector:
                 "description": "Set motor current to 50%"
             }
         }
-    
+
     def get_command_spec(self, command_code: int) -> Optional[CommandSpec]:
         """Get command specification for a given command code"""
         return self.command_specs.get(command_code)
-    
+
     def get_available_templates(self) -> Dict[str, Dict[str, Any]]:
         """Get all available command templates"""
         return self.command_templates.copy()
-    
+
     def validate_command(self, command_code: int, data_bytes: List[int]) -> Tuple[bool, str]:
         """
         Validate a command before injection.
@@ -241,23 +240,23 @@ class CommandInjector:
         spec = self.get_command_spec(command_code)
         if not spec:
             return False, f"Unknown command code: 0x{command_code:02X}"
-        
+
         # Check data length
         if spec.data_length > 0 and len(data_bytes) != spec.data_length:
             return False, f"Expected {spec.data_length} data bytes, got {len(data_bytes)}"
-        
+
         # Check data byte values
         for i, byte_val in enumerate(data_bytes):
             if not (0 <= byte_val <= 255):
                 return False, f"Invalid byte value at position {i}: {byte_val} (must be 0-255)"
-        
+
         return True, "Command is valid"
-    
+
     def calculate_crc(self, motor_id: int, command_code: int, data_bytes: List[int]) -> int:
         """Calculate CRC for a command"""
         crc = (motor_id + command_code + sum(data_bytes)) & 0xFF
         return crc
-    
+
     async def inject_command(
         self,
         motor_id: int,
@@ -278,7 +277,7 @@ class CommandInjector:
             InjectedCommand record with execution details
         """
         start_time = time.time()
-        
+
         # Validate command
         is_valid, error_msg = self.validate_command(command_code, data_bytes)
         if not is_valid:
@@ -293,11 +292,11 @@ class CommandInjector:
                 success=False,
                 error_message=error_msg
             )
-        
+
         # Get command spec
         spec = self.get_command_spec(command_code)
         command_name = spec.name if spec else f"Command_0x{command_code:02X}"
-        
+
         # Check if motor exists
         motor = self.virtual_can_bus.simulated_motors.get(motor_id)
         if not motor:
@@ -312,33 +311,33 @@ class CommandInjector:
                 success=False,
                 error_message=f"Motor {motor_id} not found"
             )
-        
+
         try:
             # Create a mock callback for response handling
             response_data = None
             response_received = asyncio.Event()
-            
+
             def response_callback(response_bytes: bytes):
                 nonlocal response_data
                 response_data = response_bytes
                 response_received.set()
-            
+
             # Execute the command
             await motor.process_command(
                 command_code=command_code,
                 data_from_payload=bytes(data_bytes),
                 send_completion_callback=response_callback if expect_response else None
             )
-            
+
             # Wait for response if expected
             if expect_response and spec and spec.response_length > 0:
                 try:
                     await asyncio.wait_for(response_received.wait(), timeout=1.0)
                 except asyncio.TimeoutError:
                     pass  # Continue without response
-            
+
             execution_time = (time.time() - start_time) * 1000
-            
+
             # Create command record
             command_record = InjectedCommand(
                 timestamp=start_time,
@@ -351,17 +350,17 @@ class CommandInjector:
                 success=True,
                 error_message=None
             )
-            
+
             # Add to history
             self.injected_commands.append(command_record)
             if len(self.injected_commands) > self.max_history:
                 self.injected_commands.pop(0)
-            
+
             return command_record
-            
+
         except Exception as e:
             execution_time = (time.time() - start_time) * 1000
-            
+
             return InjectedCommand(
                 timestamp=start_time,
                 motor_id=motor_id,
@@ -373,7 +372,7 @@ class CommandInjector:
                 success=False,
                 error_message=str(e)
             )
-    
+
     async def inject_template_command(
         self,
         motor_id: int,
@@ -402,21 +401,21 @@ class CommandInjector:
                 success=False,
                 error_message=f"Template '{template_name}' not found"
             )
-        
+
         return await self.inject_command(
             motor_id=motor_id,
             command_code=template['code'],
             data_bytes=template['data']
         )
-    
+
     def get_command_history(self, limit: int = 50) -> List[InjectedCommand]:
         """Get recent command injection history"""
         return self.injected_commands[-limit:] if self.injected_commands else []
-    
+
     def clear_command_history(self):
         """Clear the command injection history"""
         self.injected_commands.clear()
-    
+
     def get_command_statistics(self) -> Dict[str, Any]:
         """Get statistics about injected commands"""
         if not self.injected_commands:
@@ -428,26 +427,26 @@ class CommandInjector:
                 "most_used_commands": [],
                 "motor_usage": {}
             }
-        
+
         total = len(self.injected_commands)
         successful = sum(1 for cmd in self.injected_commands if cmd.success)
         failed = total - successful
-        
+
         # Calculate average execution time
         total_time = sum(cmd.execution_time_ms for cmd in self.injected_commands)
         avg_time = total_time / total if total > 0 else 0.0
-        
+
         # Count command usage
         command_counts = {}
         motor_counts = {}
-        
+
         for cmd in self.injected_commands:
             command_counts[cmd.command_name] = command_counts.get(cmd.command_name, 0) + 1
             motor_counts[cmd.motor_id] = motor_counts.get(cmd.motor_id, 0) + 1
-        
+
         # Sort by usage
         most_used = sorted(command_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        
+
         return {
             "total_commands": total,
             "successful_commands": successful,
@@ -457,7 +456,7 @@ class CommandInjector:
             "most_used_commands": most_used,
             "motor_usage": motor_counts
         }
-    
+
     async def run_test_scenario(
         self,
         motor_id: int,
@@ -506,16 +505,16 @@ class CommandInjector:
                 "disable"
             ]
         }
-        
+
         template_sequence = scenarios.get(scenario_name, [])
         if not template_sequence:
             return []
-        
+
         results = []
         for template_name in template_sequence:
             result = await self.inject_template_command(motor_id, template_name)
             results.append(result)
             # Small delay between commands
             await asyncio.sleep(0.1)
-        
+
         return results

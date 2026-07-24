@@ -19,14 +19,14 @@ import logging
 import math
 
 from mks_servo_can import (
-    CANInterface,
     Axis,
+    CANInterface,
     MultiAxisController,
-    RotaryKinematics, # Assuming revolute joints
+    RotaryKinematics,  # Assuming revolute joints
     const,
-    exceptions
+    exceptions,
 )
-from mks_servo_can.robot_kinematics import TwoLinkArmPlanar, CartesianPose
+from mks_servo_can.robot_kinematics import CartesianPose, TwoLinkArmPlanar
 
 # --- Configuration ---
 # General Settings
@@ -90,7 +90,7 @@ async def main():
                 bitrate=CAN_BITRATE,
                 use_simulator=False,
             )
-        
+
         await can_if.connect()
         logger.info("CAN Interface connected.")
 
@@ -120,7 +120,7 @@ async def main():
             kinematics=joint_kinematics
         )
         multi_controller.add_axis(elbow_joint_axis)
-        
+
         logger.info(f"Added axes: '{BASE_JOINT_AXIS_NAME}' (ID {BASE_JOINT_CAN_ID}), "
                     f"'{ELBOW_JOINT_AXIS_NAME}' (ID {ELBOW_JOINT_CAN_ID})")
 
@@ -172,7 +172,7 @@ async def main():
             ELBOW_JOINT_AXIS_NAME: 45.0  # degrees/s
         }
         logger.info(f"Moving arm to target Cartesian pose with joint speeds: {joint_speeds}...")
-        
+
         try:
             await arm.move_to_cartesian_pose(
                 target_pose=target_cartesian_pose,
@@ -201,7 +201,7 @@ async def main():
             if e.individual_errors:
                 for axis_name, err_detail in e.individual_errors.items():
                     logger.error(f"  Error for axis '{axis_name}': {err_detail}")
-        
+
         # Example: Move to another pose
         await asyncio.sleep(1) # Pause
         target_cartesian_pose_2: CartesianPose = {'x': LINK_1_LENGTH * 0.5, 'y': -LINK_2_LENGTH * 0.3}
@@ -225,7 +225,7 @@ async def main():
                 await multi_controller.disable_all_axes()
             except exceptions.MKSServoError as e_dis:
                 logger.error(f"Error disabling axes: {e_dis}")
-        
+
         if can_if and can_if.is_connected:
             logger.info("Disconnecting CAN Interface.")
             await can_if.disconnect()

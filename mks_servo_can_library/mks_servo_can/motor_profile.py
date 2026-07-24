@@ -24,9 +24,8 @@ The motor changes speed by exactly 1 RPM every ``(256 - acc) * 50 us``. So
 ``acc=255`` ramps at 1 RPM per 50 us (120000 deg/s^2 at the shaft) and
 ``acc=236`` at 1 RPM per ms (6000 deg/s^2). ``acc=0`` means no ramp at all.
 """
-from typing import Optional
-
 import math
+from typing import Optional
 
 from . import constants as const
 from .exceptions import ParameterError

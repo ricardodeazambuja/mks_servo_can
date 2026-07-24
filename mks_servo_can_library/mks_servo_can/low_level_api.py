@@ -3,10 +3,9 @@ Low-Level API for MKS Servo CAN commands.
 Implements functions to construct, send, and parse responses for each
 CAN command specified in the MKS SERVO42D/57D_CAN User Manual.
 """
-from typing import Dict, List, Optional, Tuple
-
 import logging
 import struct
+from typing import Dict, List, Optional, Tuple
 
 try:
     from can import Message as CanMessage
@@ -45,14 +44,15 @@ except ImportError:
 
 from . import constants as const
 from .can_interface import CANInterface
-from .crc import calculate_crc
-from .crc import verify_crc
-from .exceptions import CalibrationError
-from .exceptions import CommandError
-from .exceptions import CommunicationError
-from .exceptions import CRCError
-from .exceptions import MotorError
-from .exceptions import ParameterError
+from .crc import calculate_crc, verify_crc
+from .exceptions import (
+    CalibrationError,
+    CommandError,
+    CommunicationError,
+    CRCError,
+    MotorError,
+    ParameterError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ class LowLevelAPI:
             )
 
         expected_response_can_id = can_id
-        
+
         # Determine the expected command code in the response
         if command_code == const.CMD_READ_SYSTEM_PARAMETER_PREFIX and data:
             # For CMD_READ_SYSTEM_PARAMETER_PREFIX (0x00), the motor echoes the parameter code being read.
@@ -677,7 +677,7 @@ class LowLevelAPI:
             raise CommandError(
                 f"Unexpected status from calibrate_encoder: {status}"
             )
-            
+
     async def set_work_mode(self, can_id: int, mode: int) -> None:
         """
         Sets the working mode of the motor (Command 0x82).
@@ -791,7 +791,7 @@ class LowLevelAPI:
                 error_code=response.data[1],
                 can_id=can_id,
             )
-            
+
     async def set_en_pin_active_level(self, can_id: int, level_code: int) -> None:
         """
         Sets the active level of the EN (enable) pin (Command 0x85).
@@ -903,7 +903,7 @@ class LowLevelAPI:
                 error_code=response.data[1],
                 can_id=can_id,
             )
-            
+
     async def set_subdivision_interpolation(self, can_id: int, enable: bool) -> None:
         """
         Sets the internal 256 subdivision interpolation function (Command 0x89).
@@ -979,7 +979,7 @@ class LowLevelAPI:
             raise ParameterError(f"Invalid new CAN ID: {new_can_id}. Must be 0-2047.")
         # Pack new_can_id as big-endian (MSB first) uint16_t [MKS Servo42D CAN Manual] (Page 25, byte2 byte3 ID(00~7FF))
         id_bytes = list(struct.pack(">H", new_can_id))
-        
+
         response = await self._send_command_and_get_response(
             current_can_id,
             const.CMD_SET_CAN_ID,
@@ -1074,7 +1074,7 @@ class LowLevelAPI:
                 error_code=response.data[1],
                 can_id=can_id,
             )
-            
+
     # --- Part 5.3: Write IO port command ---
     async def write_io_port(
         self,
@@ -1109,7 +1109,7 @@ class LowLevelAPI:
             raise ParameterError("Mask actions must be 0, 1, or 2.")
 
         data_byte = 0 # byte2 in the manual [MKS Servo42D CAN Manual] (Page 28)
-        
+
         # OUT2_mask (bits 7-6), OUT2 value (bit 3)
         if out2_mask_action == 1: # Write value
             if out2_value not in [0, 1]:
@@ -1120,7 +1120,7 @@ class LowLevelAPI:
             data_byte |= (0b00 << 6) # OUT2_mask = 0
         elif out2_mask_action == 2: # Unchanged
             data_byte |= (0b10 << 6) # OUT2_mask = 2
-        
+
         # OUT1_mask (bits 5-4), OUT1 value (bit 2)
         if out1_mask_action == 1: # Write value
             if out1_value not in [0, 1]:
@@ -1131,9 +1131,9 @@ class LowLevelAPI:
             data_byte |= (0b00 << 4) # OUT1_mask = 0
         elif out1_mask_action == 2: # Unchanged
             data_byte |= (0b10 << 4) # OUT1_mask = 2
-        
+
         # Bits 1 and 0 are reserved (0) according to manual table [MKS Servo42D CAN Manual] (Page 28)
-        
+
         response = await self._send_command_and_get_response(
             can_id, const.CMD_WRITE_IO_PORT, data=[data_byte], expected_dlc=3
         )
@@ -1143,7 +1143,7 @@ class LowLevelAPI:
                 error_code=response.data[1],
                 can_id=can_id,
             )
-            
+
     # --- Part 5.4: Set Home command ---
     async def set_home_parameters(
         self,
@@ -1186,7 +1186,7 @@ class LowLevelAPI:
         byte4_5_speed = list(struct.pack(">H", home_speed_rpm))
         byte6_endlimit = 0x01 if end_limit_enabled else 0x00
         byte7_hmMode = home_mode & 0x01
-        
+
         data_payload = [byte2_level, byte3_dir] + byte4_5_speed + [byte6_endlimit, byte7_hmMode]
 
         response = await self._send_command_and_get_response(
@@ -1219,14 +1219,14 @@ class LowLevelAPI:
         response = await self._send_command_and_get_response(
             can_id, const.CMD_GO_HOME, expected_dlc=3
         )
-        status = response.data[1] 
+        status = response.data[1]
         if status == const.HOME_FAIL: # status = 0 [MKS Servo42D CAN Manual] (Page 30)
              raise MotorError(
                 f"Go home command failed to start or reported immediate failure for CAN ID {can_id}. Status: {status}",
                 error_code=status, can_id=can_id
             )
         return status
-        
+
     async def set_current_axis_to_zero(self, can_id: int) -> None:
         """
         Sets the current motor position as the zero point (Command 0x92).
@@ -1343,9 +1343,9 @@ class LowLevelAPI:
             raise ParameterError("Invalid 0_Mode 'speed_code'. Must be 0-4.")
         if direction_code not in [0, 1]:
             raise ParameterError("Invalid 0_Mode 'direction_code'. Must be 0 (CW) or 1 (CCW).")
-        
+
         data_payload = [mode, set_zero_action, speed_code, direction_code]
-        
+
         response = await self._send_command_and_get_response(
             can_id, const.CMD_SET_ZERO_MODE_PARAMETERS, data=data_payload, expected_dlc=3 # Response DLC is 3 [MKS Servo42D CAN Manual] (Page 32)
         )
@@ -1438,7 +1438,7 @@ class LowLevelAPI:
         # bit1 g0En, bit0 pEn. Other bits reserved (0).
         if enable_en_trigger_zero: byte2_config |= (1 << 1) # g0En [MKS Servo42D CAN Manual] (Page 34)
         if enable_pos_error_protection: byte2_config |= (1 << 0) # pEn [MKS Servo42D CAN Manual] (Page 34)
-        
+
         # Pack as big-endian (MSB first) [MKS Servo42D CAN Manual] (Page 34)
         tim_bytes = list(struct.pack(">H", error_detection_time_ms_units))
         errors_bytes = list(struct.pack(">H", error_threshold_pulses))
@@ -1495,7 +1495,7 @@ class LowLevelAPI:
         echoed_code = response_msg.data[0] # This should be parameter_command_code
         param_data_bytes = response_msg.data[1:-1] # Parameter data, CRC is last byte
         return echoed_code, param_data_bytes
-        
+
     # --- Part 6: Run Motor Commands ---
     async def _run_motor_command(
         self, can_id: int, command_code: int, data: List[int]
@@ -1584,7 +1584,7 @@ class LowLevelAPI:
         # byte2: b7=dir, b6-b4=Rev(0), b3-b0=speed_high_nibble [MKS Servo42D CAN Manual] (Page 43)
         # byte3: b7-b0=speed_low_byte [MKS Servo42D CAN Manual] (Page 43)
         # Speed is a 12-bit value (0xFFF max from these fields).
-        byte2 = (speed >> 8) & 0x0F 
+        byte2 = (speed >> 8) & 0x0F
         if not ccw_direction: # CW direction, dir bit = 1
             byte2 |= 0x80
         # if ccw_direction, dir bit = 0, already handled by masking.
@@ -1592,8 +1592,8 @@ class LowLevelAPI:
         byte4 = acceleration & 0xFF
         # Pulses: 24-bit unsigned, send MSB first [MKS Servo42D CAN Manual] (Page 43, example 00 FA 00 for pulses)
         pulse_bytes = [(pulses >> 16) & 0xFF, (pulses >> 8) & 0xFF, pulses & 0xFF]
-        data_payload = [byte2, byte3, byte4] + pulse_bytes 
-        
+        data_payload = [byte2, byte3, byte4] + pulse_bytes
+
         return await self._run_motor_command(
             can_id, const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES, data_payload
         )
@@ -1632,9 +1632,9 @@ class LowLevelAPI:
 
         # speed: byte2-3 (uint16_t) [MKS Servo42D CAN Manual] (Page 45)
         # Pack speed as big-endian (MSB first)
-        speed_bytes = list(struct.pack(">H", speed)) 
+        speed_bytes = list(struct.pack(">H", speed))
         acc_byte = acceleration & 0xFF # byte4 [MKS Servo42D CAN Manual] (Page 45)
-        
+
         # absolute_pulses: byte5-7 (int24_t), send MSB of 24-bit value first
         # Convert to unsigned 24-bit for masking/shifting
         val_to_pack_unsigned_24bit = absolute_pulses & 0xFFFFFF
@@ -1644,7 +1644,7 @@ class LowLevelAPI:
             val_to_pack_unsigned_24bit & 0xFF,         # LSB
         ]
         data_payload = speed_bytes + [acc_byte] + abs_pulse_bytes
-        
+
         return await self._run_motor_command(
             can_id, const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES, data_payload
         )
@@ -1684,8 +1684,8 @@ class LowLevelAPI:
             byte2 |= 0x80
         byte3 = speed & 0xFF # Speed low part (8 bits)
         byte4 = acceleration # Accel (8 bits)
-        data_payload = [byte2, byte3, byte4] 
-        
+        data_payload = [byte2, byte3, byte4]
+
         return await self._run_motor_command(
             can_id, const.CMD_RUN_SPEED_MODE, data_payload
         )
@@ -1715,11 +1715,11 @@ class LowLevelAPI:
         byte3 = 0x00 # speed_low=0
         byte4 = acceleration # deceleration
         data_payload = [byte2, byte3, byte4]
-        
+
         return await self._run_motor_command(
             can_id, const.CMD_RUN_SPEED_MODE, data_payload
         )
-        
+
     async def emergency_stop(self, can_id: int) -> None:
         """
         Commands an emergency stop for the motor (Command 0xF7).
@@ -1741,7 +1741,7 @@ class LowLevelAPI:
                 error_code=response.data[1],
                 can_id=can_id,
             )
-            
+
     async def enable_motor(self, can_id: int, enable: bool) -> None:
         """
         Enables or disables the motor (Command 0xF3).
@@ -1826,20 +1826,20 @@ class LowLevelAPI:
 
         # speed: byte2-3 (uint16_t) [MKS Servo42D CAN Manual] (Page 47)
         # Pack speed as big-endian (MSB first)
-        speed_bytes = list(struct.pack(">H", speed)) 
+        speed_bytes = list(struct.pack(">H", speed))
         acc_byte = acceleration & 0xFF # byte4 [MKS Servo42D CAN Manual] (Page 47)
-        
+
         # relative_axis: byte5-7 (int24_t), send MSB of 24-bit value first
         # Convert to unsigned 24-bit for masking/shifting
         val_to_pack_unsigned_24bit = relative_axis & 0xFFFFFF
-        
+
         rel_axis_bytes = [
             (val_to_pack_unsigned_24bit >> 16) & 0xFF, # MSB
             (val_to_pack_unsigned_24bit >> 8) & 0xFF,  # Mid
             val_to_pack_unsigned_24bit & 0xFF,         # LSB
         ]
         data_payload = speed_bytes + [acc_byte] + rel_axis_bytes
-        
+
         return await self._run_motor_command(
             can_id, const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS, data_payload
         )
@@ -1870,7 +1870,7 @@ class LowLevelAPI:
         acc_byte = acceleration & 0xFF
         rel_axis_bytes = [0x00, 0x00, 0x00] # Relative axis = 0
         data_payload = speed_bytes + [acc_byte] + rel_axis_bytes
-        
+
         return await self._run_motor_command(
             can_id, const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS, data_payload
         )
@@ -1915,18 +1915,18 @@ class LowLevelAPI:
         # Pack speed as big-endian (MSB first)
         speed_bytes = list(struct.pack(">H", speed))
         acc_byte = acceleration & 0xFF # byte4 [MKS Servo42D CAN Manual] (Page 49)
-        
+
         # absolute_axis: byte5-7 (int24_t), send MSB of 24-bit value first
         # Convert to unsigned 24-bit for masking/shifting
         val_to_pack_unsigned_24bit = absolute_axis & 0xFFFFFF
-        
+
         abs_axis_bytes = [
             (val_to_pack_unsigned_24bit >> 16) & 0xFF, # MSB
             (val_to_pack_unsigned_24bit >> 8) & 0xFF,  # Mid
             val_to_pack_unsigned_24bit & 0xFF,         # LSB
         ]
         data_payload = speed_bytes + [acc_byte] + abs_axis_bytes
-        
+
         return await self._run_motor_command(
             can_id, const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS, data_payload
         )
@@ -1957,11 +1957,11 @@ class LowLevelAPI:
         acc_byte = acceleration & 0xFF
         abs_axis_bytes = [0x00, 0x00, 0x00] # Absolute axis = 0
         data_payload = speed_bytes + [acc_byte] + abs_axis_bytes
-        
+
         return await self._run_motor_command(
             can_id, const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS, data_payload
         )
-        
+
     async def save_or_clean_speed_mode_params(self, can_id: int, save: bool) -> None:
         """
         Saves or cleans the parameters in speed mode (Command 0xFF).
@@ -1977,7 +1977,7 @@ class LowLevelAPI:
             MotorError: If the motor fails to save/clean parameters.
         """
         action_code = const.SPEED_MODE_PARAM_SAVE if save else const.SPEED_MODE_PARAM_CLEAN
-        
+
         response = await self._send_command_and_get_response(
             can_id, const.CMD_SAVE_CLEAN_SPEED_MODE_PARAMS, data=[action_code], expected_dlc=3
         )
@@ -1991,4 +1991,3 @@ class LowLevelAPI:
                 can_id=can_id,
             )
         logger.info(f"CAN ID {can_id}: {'Save' if save else 'Clean'} speed mode parameters successful.")
-        

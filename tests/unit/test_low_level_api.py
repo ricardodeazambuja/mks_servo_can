@@ -9,55 +9,51 @@ and communication issues.
 # focusing on how it constructs CAN messages, processes responses, and handles errors,
 # typically by mocking the CANInterface.
 
-import pytest
 # Imports the pytest framework for writing and running tests.
-
 import struct
-# Imports the 'struct' module, used for packing and unpacking binary data.
-# This is relevant because CAN commands often involve multi-byte data fields
-# representing numbers (integers, etc.) that need to be converted to/from byte sequences.
 
-from unittest.mock import AsyncMock, call, ANY # Added ANY
 # From the 'unittest.mock' module, 'AsyncMock' is imported to create mock objects
 # for asynchronous functions/methods. 'call' is used to make assertions about how
 # mocks were called. 'ANY' is a matcher that can be used when asserting calls
 # if the exact value of an argument doesn't matter,
 # but its presence or type might.
+# Imports the 'struct' module, used for packing and unpacking binary data.
+# This is relevant because CAN commands often involve multi-byte data fields
+# representing numbers (integers, etc.) that need to be converted to/from byte sequences.
+from unittest.mock import AsyncMock  # Added ANY
 
-from typing import List
+import pytest
+
 # Imports 'List' from the 'typing' module for type hinting, specifically for lists.
-
 from mks_servo_can import constants as const
+
 # Imports the 'constants' module (aliased as 'const') from the mks_servo_can library.
 # This provides access to predefined constants like command codes, status codes, default values, etc.
-
 from mks_servo_can.can_interface import CANInterface
+
+# Imports the 'LowLevelAPI' class, which is the System Under Test (SUT) for this file.
+from mks_servo_can.crc import calculate_crc
+
 # Imports the 'CANInterface' class, which the LowLevelAPI uses for actual CAN communication.
 # In these unit tests, CANInterface will be mocked.
-
-from mks_servo_can.exceptions import CalibrationError
 # Imports specific exception types from the library's 'exceptions' module.
 # These are used to assert that the LowLevelAPI raises the correct errors under certain conditions.
-
-from mks_servo_can.exceptions import CommandError
 # For errors related to command formatting or unexpected responses.
-
-from mks_servo_can.exceptions import CommunicationError
 # For general communication issues like timeouts.
-
-from mks_servo_can.exceptions import CRCError
 # For CRC validation failures.
-
-from mks_servo_can.exceptions import MotorError
 # For errors reported by the motor itself.
+from mks_servo_can.exceptions import (
+    CalibrationError,
+    CommandError,
+    CommunicationError,
+    CRCError,
+    MotorError,
+    ParameterError,
+)
 
-from mks_servo_can.exceptions import ParameterError
 # For invalid parameters passed to API methods.
-
 from mks_servo_can.low_level_api import LowLevelAPI
-# Imports the 'LowLevelAPI' class, which is the System Under Test (SUT) for this file.
 
-from mks_servo_can.crc import calculate_crc
 # Imports 'calculate_crc' to generate expected CRC values for asserting sent messages
 # and for creating mock responses with correct CRCs.
 
@@ -167,12 +163,12 @@ class TestLowLevelAPIReads:
         # Specifies the command code for reading the encoder's accumulated value.
         encoder_val = 16384
         # The simulated encoder value to be returned by the mock motor.
-        
+
         # MKS uses 6 bytes for 48-bit value, big-endian.
         # Python's struct.pack('>q', ...) packs to 8 bytes, so slice [2:] for 6 bytes (or pad for 48-bit handling)
         # LowLevelAPI's read_encoder_value_addition unpacks >q after prepending 0x0000 or 0xFFFF
         val_bytes_48bit_be = struct.pack(">q", encoder_val)[2:] # Get 6 bytes, big-endian
-        
+
         response_payload_data = [command_code] + list(val_bytes_48bit_be)
         # Constructs the data part of the mock response: echoed command code + 6 bytes of the packed encoder value.
         response_crc = calculate_crc(can_id, response_payload_data)
@@ -791,4 +787,3 @@ class TestLowLevelAPIReadSystemParameter:
             await low_level_api.read_system_parameter(
                 can_id, param_to_read_cmd_code
             )
-            

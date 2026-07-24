@@ -5,10 +5,14 @@ This module provides convenience functions for creating commonly used
 axis configurations and other digitizer utilities.
 """
 
-from .. import CANInterface, Axis, LinearKinematics, RotaryKinematics, const
+# Concrete modules, not the package root: see the note in base_digitizer.py.
+from .. import constants as const
+from ..axis import Axis
+from ..can_interface import CANInterface
+from ..kinematics import LinearKinematics, RotaryKinematics
 
 
-def create_linear_axis(can_interface: CANInterface, motor_can_id: int, 
+def create_linear_axis(can_interface: CANInterface, motor_can_id: int,
                       name: str, pitch_mm: float, gear_ratio: float = 1.0) -> Axis:
     """
     Create a linear axis with standard configuration.
@@ -32,7 +36,7 @@ def create_linear_axis(can_interface: CANInterface, motor_can_id: int,
     return Axis(can_interface, motor_can_id=motor_can_id, name=name, kinematics=kinematics)
 
 
-def create_rotary_axis(can_interface: CANInterface, motor_can_id: int, 
+def create_rotary_axis(can_interface: CANInterface, motor_can_id: int,
                       name: str, gear_ratio: float = 1.0) -> Axis:
     """
     Create a rotary axis with standard configuration.

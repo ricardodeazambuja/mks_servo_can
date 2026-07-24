@@ -9,12 +9,61 @@ and MultiAxisController objects, and utilities for kinematics and simulation.
 
 # Import the constants module and alias it as 'const' for patterned access
 from . import constants as const
+from . import motor_profile
 
 # Import other key components from submodules
 from .axis import Axis
 from .can_interface import CANInterface
+
+# Make all constants available directly in the package's namespace
+# This allows users to do 'from mks_servo_can import CAN_DEFAULT_BITRATE'
+from .constants import *
+
+# Import CRC functions explicitly if they are to be exported
+from .crc import calculate_crc, verify_crc
+
+# Import digitizer classes
+from .digitizer import (
+    DigitizedPoint,
+    DigitizedSequence,
+    EnhancedHeightMapGenerator,
+    MotorDigitizer,
+    PlaybackStats,
+    PrecisionAnalyzer,
+    SurfaceMap,
+    SurfacePoint,
+    create_linear_axis,
+    create_rotary_axis,
+)
+
+# Import all exception classes explicitly if they are to be exported
+from .exceptions import (
+    CalibrationError,
+    CANError,
+    CommandError,
+    CommunicationError,
+    ConfigurationError,
+    CRCError,
+    HomingError,
+    KinematicsError,
+    LimitError,
+    MKSServoError,
+    MotorError,
+    MultiAxisError,
+    ParameterError,
+    SimulatorError,
+    StallError,
+)
+
+# Import kinematics classes
+from .kinematics import (
+    EccentricKinematics,
+    Kinematics,
+    LinearKinematics,
+    RotaryKinematics,
+)
 from .low_level_api import LowLevelAPI
-from . import motor_profile
+from .multi_axis_controller import MultiAxisController
 from .realtime import (
     AlphaBetaGammaTracker,
     AlphaBetaTracker,
@@ -22,63 +71,9 @@ from .realtime import (
     StreamAxis,
     StreamStats,
 )
-from .multi_axis_controller import MultiAxisController
-
-# Import kinematics classes
-from .kinematics import (
-    Kinematics,
-    LinearKinematics,
-    RotaryKinematics,
-    EccentricKinematics,
-)
 
 # Import robot kinematics classes
-from .robot_kinematics import (
-    RobotModelBase,
-    TwoLinkArmPlanar,
-    CartesianRobot,
-    RRRArm
-)
-
-# Import digitizer classes
-from .digitizer import (
-    MotorDigitizer,
-    DigitizedPoint,
-    DigitizedSequence,
-    PlaybackStats,
-    PrecisionAnalyzer,
-    SurfacePoint,
-    SurfaceMap,
-    EnhancedHeightMapGenerator,
-    create_linear_axis,
-    create_rotary_axis
-)
-
-# Import CRC functions explicitly if they are to be exported
-from .crc import calculate_crc, verify_crc
-
-# Import all exception classes explicitly if they are to be exported
-from .exceptions import (
-    MKSServoError,
-    CANError,
-    CRCError,
-    CommandError,
-    ParameterError,
-    MotorError,
-    CommunicationError,
-    MultiAxisError,
-    SimulatorError,
-    KinematicsError,
-    ConfigurationError,
-    HomingError,
-    CalibrationError,
-    LimitError,
-    StallError,
-)
-
-# Make all constants available directly in the package's namespace
-# This allows users to do 'from mks_servo_can import CAN_DEFAULT_BITRATE'
-from .constants import *
+from .robot_kinematics import CartesianRobot, RobotModelBase, RRRArm, TwoLinkArmPlanar
 
 __version__ = "0.3.0"
 
@@ -117,11 +112,11 @@ __all__ = [
     # Digitizer classes
     "MotorDigitizer",
     "DigitizedPoint",
-    "DigitizedSequence", 
+    "DigitizedSequence",
     "PlaybackStats",
     "PrecisionAnalyzer",
     "SurfacePoint",
-    "SurfaceMap", 
+    "SurfaceMap",
     "EnhancedHeightMapGenerator",
     "create_linear_axis",
     "create_rotary_axis",

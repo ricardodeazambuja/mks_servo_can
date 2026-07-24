@@ -13,42 +13,40 @@ and receiving a response from an MKS servo motor.
 # - It helps quantify the delay between sending a command and getting a response.
 
 import argparse  # For command-line arguments
+
+# Imports the 'statistics' module, used to calculate statistical measures
+# (mean, median, standard deviation) from the collected latency data.
+import asyncio
+
+# Imports the 'asyncio' library, as the 'mks_servo_can' library is asynchronous.
+import logging
+
 # Imports the 'argparse' module, which is used to create a command-line interface
 # for the script, allowing users to specify parameters like whether to use the simulator,
 # CAN settings, motor ID, and number of iterations.
-
 import statistics  # For mean, median, stdev
-# Imports the 'statistics' module, used to calculate statistical measures
-# (mean, median, standard deviation) from the collected latency data.
 
-import asyncio
-# Imports the 'asyncio' library, as the 'mks_servo_can' library is asynchronous.
-
-import logging
 # Imports the 'logging' module for displaying informational messages and results.
-
 import time
+
 # Imports the 'time' module, specifically 'time.perf_counter()' for precise timing
 # of command execution to measure latency.
-
 # Assuming the library is installed or in PYTHONPATH
 # This comment indicates that the 'mks_servo_can' library components need to be importable.
-from mks_servo_can import Axis
 # Imports the high-level 'Axis' class for motor control.
-
-from mks_servo_can import CANInterface
 # Imports 'CANInterface' for managing the CAN connection.
-
-from mks_servo_can import const
 # Imports library constants (e.g., default values, command codes).
-
-from mks_servo_can import exceptions
 # Imports custom exceptions for error handling.
-
-from mks_servo_can import RotaryKinematics
 # Imports 'RotaryKinematics' for setting up a basic Axis instance.
+from mks_servo_can import (
+    Axis,
+    CANInterface,
+    LowLevelAPI,
+    RotaryKinematics,
+    const,
+    exceptions,
+)
 
-from mks_servo_can import LowLevelAPI
 # Imports 'LowLevelAPI' to allow benchmarking direct low-level command calls
 # in addition to higher-level Axis method calls.
 
@@ -280,7 +278,7 @@ def _parse_args() -> argparse.Namespace:
     # --- Hardware Mode Selection ---
     # Default behavior is to use the simulator. Use --hardware flag to enable real hardware.
     parser.add_argument(
-        '--hardware', 
+        '--hardware',
         action='store_true',
         help='Use real hardware instead of the simulator (default is to use simulator).'
     )
@@ -558,4 +556,3 @@ if __name__ == "__main__":
     # Standard Python idiom: if the script is executed directly (not imported),
     # call main_cli().
     main_cli()
-    

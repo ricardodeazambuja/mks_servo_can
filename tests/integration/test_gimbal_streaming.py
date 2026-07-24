@@ -16,7 +16,6 @@ from mks_servo_can import (
     AlphaBetaGammaTracker,
     ServoStream,
     StreamAxis,
-    constants as const,
     motor_profile,
 )
 from mks_servo_can.low_level_api import LowLevelAPI

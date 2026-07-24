@@ -8,19 +8,14 @@ coordinated movements (to the extent supported by the underlying MKS CAN protoco
 which typically means concurrent command dispatch rather than true interpolated
 multi-axis motion).
 """
-import math
-
-from typing import Any, Dict, List, Optional
-
 import asyncio
 import logging
+import math
+from typing import Any, Dict, List, Optional
 
 from .axis import Axis
 from .can_interface import CANInterface
-from .exceptions import ConfigurationError
-from .exceptions import MKSServoError
-from .exceptions import MultiAxisError
-from .kinematics import Kinematics  # For type hinting if needed
+from .exceptions import ConfigurationError, MKSServoError, MultiAxisError
 
 logger = logging.getLogger(__name__)
 
@@ -463,7 +458,7 @@ class MultiAxisController:
             axis = self.axes.get(axis_name)
             if not axis:
                 raise ConfigurationError(f"Axis '{axis_name}' not found in controller.")
-            
+
             axes_to_move.append(axis)
             axis_speed = speeds_user.get(axis_name) if speeds_user else None
             # move_..._user now calls the internal handler and returns immediately
@@ -478,14 +473,14 @@ class MultiAxisController:
 
         # Dispatch all move commands
         initiation_results = await asyncio.gather(*initiation_tasks, return_exceptions=True)
-        
+
         # Check for errors during initiation
         initiation_errors: Dict[str, Exception] = {}
         for i, result in enumerate(initiation_results):
             if isinstance(result, Exception):
                 axis_name = axes_to_move[i].name
                 initiation_errors[axis_name] = result
-        
+
         if initiation_errors:
             raise MultiAxisError("Error(s) initiating multi-axis absolute move.", individual_errors=initiation_errors)
 
@@ -570,7 +565,7 @@ class MultiAxisController:
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         if initiation_errors:
             raise MultiAxisError("Error(s) initiating multi-axis relative move.", individual_errors=initiation_errors)
 
@@ -587,7 +582,7 @@ class MultiAxisController:
                 )
                 # This line is now the single source of truth for results.
                 completion_results = await asyncio.gather(*futures_to_wait, return_exceptions=True)
-                
+
                 # Directly process the results from gather.
                 move_execution_errors: Dict[str, Exception] = {}
                 for i, result in enumerate(completion_results):
@@ -621,7 +616,7 @@ class MultiAxisController:
         results = await self._execute_on_axes(
             "get_current_position_user", concurrent=True
         )
-        
+
         valid_results: Dict[str, float] = {}
         errors_found: Dict[str, Exception] = {}
 
@@ -638,7 +633,7 @@ class MultiAxisController:
 
         if errors_found:
             raise MultiAxisError("Failed to get positions for one or more axes.", individual_errors=errors_found)
-            
+
         return valid_results
 
     async def get_all_statuses(self) -> Dict[str, Dict[str, Any]]:
@@ -733,7 +728,7 @@ class MultiAxisController:
                         logger.error(f"Error waiting for move completion on axis '{axis_name}': {result}")
                     else: # Should not happen if tasks and axis_list align
                         logger.error(f"Mismatch in results and axis list during wait_for_all_moves_to_complete: {result}")
-            
+
             if errors_found:
                 raise MultiAxisError("One or more axes failed to complete their move.", individual_errors=errors_found)
 
@@ -779,7 +774,7 @@ class MultiAxisController:
         # This ensures we calculate the path from the true current state.
         axes_to_move = list(target_positions.keys())
         current_positions = await self.get_all_positions_user()
-        
+
         deltas = {}
         for axis_name in axes_to_move:
             current_pos = current_positions.get(axis_name)
@@ -804,7 +799,7 @@ class MultiAxisController:
             axis_name: abs(delta / duration_seconds)
             for axis_name, delta in deltas.items()
         }
-        
+
         logger.info(f"Calculated move duration: {duration_seconds:.2f}s. "
                     f"Calculated axis speeds: {speeds_user}")
 

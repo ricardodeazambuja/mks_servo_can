@@ -2,12 +2,11 @@
 Simulated Motor Model for MKS SERVO42D/57D.
 Models the internal state and behavior of a motor responding to CAN commands.
 """
-from typing import Callable, List, Optional, Tuple, Dict, Any
-
 import asyncio
 import logging
 import struct
 import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("SimulatedMotor") # Changed from __name__ for clarity if file is moved/copied
 
@@ -20,7 +19,7 @@ try:
     from mks_servo_can import constants as const
     from mks_servo_can import motor_profile as _profile
     from mks_servo_can.crc import calculate_crc
-    from mks_servo_can.exceptions import ConfigurationError
+    from mks_servo_can.exceptions import ConfigurationError, MKSServoError
 except ImportError as exc:  # pragma: no cover - install-time failure
     raise ImportError(
         "mks-servo-simulator requires the mks-servo-can library. Install it "
@@ -131,7 +130,7 @@ class SimulatedMotor:
         self.motor_type = motor_type
         self._loop = loop
         self.is_running_task: Optional[asyncio.Task] = None
-        
+
         # Core state
         self.position_steps: float = float(initial_pos_steps)
         self.target_position_steps: Optional[float] = None
@@ -140,7 +139,7 @@ class SimulatedMotor:
         self.target_rpm: float = 0.0
         self.current_accel_rpm_per_sec_sq: float = 0.0
         self.target_accel_mks: int = 100
-        
+
         self.is_enabled: bool = False
         self.motor_status_code: int = const.MOTOR_STATUS_STOPPED
         self._last_update_time: float = time.monotonic()
@@ -169,7 +168,7 @@ class SimulatedMotor:
         self.slave_active_initiation_enabled: bool = True
         self.group_id: int = 0x00
         self.is_key_locked: bool = False
-        
+
         self.io_out1_value: int = 0
         self.io_out2_value: int = 0
 
@@ -284,7 +283,7 @@ class SimulatedMotor:
             await self._send_completion_callback(
                 self.original_can_id, response_can_payload
             )
-            
+
     def _pack_int24_be(self, value: int) -> List[int]:
         """Packs a signed 24-bit integer into 3 bytes, big-endian (MSB first)."""
         unsigned_val = value & 0xFFFFFF
@@ -345,7 +344,7 @@ class SimulatedMotor:
                         self._current_move_task.set_exception(MKSServoError(f"Move failed due to motor disable/stall/protection for motor {self.original_can_id}"))
                         self.target_position_steps = None
                 continue
-            
+
             # Acceleration/Deceleration
             if self.current_rpm != self.target_rpm:
                 self.current_accel_rpm_per_sec_sq = mks_accel_param_to_rpm_per_sec_sq(
@@ -361,7 +360,7 @@ class SimulatedMotor:
                     else: # target_rpm < self.current_rpm
                         self.current_rpm = max(self.target_rpm, self.current_rpm - rpm_change)
                         self.motor_status_code = const.MOTOR_STATUS_SPEED_DOWN
-                
+
                 if abs(self.current_rpm - self.target_rpm) < 0.1: # Close enough
                     self.current_rpm = self.target_rpm
                     if self.target_rpm == 0 and self.target_position_steps is None: # Stopped in speed mode
@@ -396,7 +395,7 @@ class SimulatedMotor:
                 elif abs(self.position_steps - self.target_position_steps) < 1.0 : # Close enough
                     if abs(self.current_rpm) < 1.0: # And nearly stopped
                         target_reached = True
-                
+
                 if target_reached:
                     logger.info(
                         f"Motor {self.original_can_id}: Target position {self.target_position_steps:.2f} reached. Current: {self.position_steps:.2f}"
@@ -405,7 +404,7 @@ class SimulatedMotor:
                     self.current_rpm = 0.0
                     self.target_rpm = 0.0
                     self.motor_status_code = const.MOTOR_STATUS_STOPPED
-                    
+
                     if self._current_move_task and not self._current_move_task.done():
                         self._current_move_task.set_result(True)
                     await self._send_completion_if_callback(self._current_move_command_code, const.POS_RUN_COMPLETE)
@@ -451,7 +450,7 @@ class SimulatedMotor:
             self.target_rpm = 0.0
             self.motor_status_code = const.MOTOR_STATUS_STOPPED
             self.target_position_steps = None
-            
+
             # For immediate completion, send STARTING then COMPLETE if active responses are on
             if self.slave_respond_enabled:
                  # Generate STARTING response from the original command call site
@@ -479,11 +478,11 @@ class SimulatedMotor:
         if abs(self.target_rpm) > 0.1:
             # Simplified duration: time to reach full speed + time at full speed + time to decel
             # For now, a simpler estimation:
-            avg_speed_rpm = abs(self.target_rpm) / 2.0 
+            avg_speed_rpm = abs(self.target_rpm) / 2.0
             avg_speed_steps_sec = (avg_speed_rpm / 60.0) * self.steps_per_rev_encoder
             if avg_speed_steps_sec > 0:
                 est_duration = (abs(delta_pos) / avg_speed_steps_sec)
-        
+
         est_duration = max(1.0, est_duration + 1.0) # Add buffer, min 1s
 
         logger.info(
@@ -548,7 +547,7 @@ class SimulatedMotor:
             if not data_from_payload or len(data_from_payload) < 1:
                 logger.error(f"Motor {self.original_can_id}: Read System Parameter (0x00) missing actual parameter code in data.")
                 return self._generate_simple_status_response(const.CMD_READ_SYSTEM_PARAMETER_PREFIX, False) # Or some other error indication
-            
+
             actual_param_cmd_code = data_from_payload[0]
             logger.info(f"Motor {self.original_can_id}: Read System Parameter for internal CMD 0x{actual_param_cmd_code:02X}")
             param_data = self._get_param_data_bytes(actual_param_cmd_code)
@@ -705,7 +704,7 @@ class SimulatedMotor:
             self.motor_status_code = const.MOTOR_STATUS_HOMING
             # In a real scenario, this would trigger an async operation.
             # For now, just return "starting". Completion handled by active response.
-            response_status_override = const.HOME_START 
+            response_status_override = const.HOME_START
             # Simulate completion after a delay if active responses on
             if self.slave_active_initiation_enabled:
                 async def _complete_homing():
@@ -757,7 +756,7 @@ class SimulatedMotor:
             self.motor_status_code = const.MOTOR_STATUS_STOPPED
             self.is_enabled = False
             response_status_override = const.STATUS_SUCCESS
-            
+
         # --- Part 5.8: En Triggers and Position Error Protection ---
         elif command_code == const.CMD_SET_EN_TRIGGER_POS_ERROR_PROTECTION: # 0x9D
             if data_from_payload and len(data_from_payload) >= 5:
@@ -800,7 +799,7 @@ class SimulatedMotor:
                 mks_speed_param = ((b2 & 0x0F) << 8) | b3
                 mks_accel_param = b4
                 is_ccw = (b2 & 0x80) == 0
-                
+
                 calculated_target_rpm = mks_speed_param_to_rpm(mks_speed_param, self.work_mode)
                 self.target_rpm = calculated_target_rpm if is_ccw else -calculated_target_rpm
                 self.target_accel_mks = mks_accel_param
@@ -809,7 +808,7 @@ class SimulatedMotor:
                     self._current_move_task.cancel("Speed mode started")
                 response_status_override = const.POS_RUN_STARTING # Manual says 0 or 1
             else: response_status_override = const.POS_RUN_FAIL
-            
+
         elif command_code == const.CMD_SAVE_CLEAN_SPEED_MODE_PARAMS: # 0xFF
             if data_from_payload and len(data_from_payload) >= 1:
                 action_code = data_from_payload[0]
@@ -835,7 +834,7 @@ class SimulatedMotor:
             mks_speed_val = 0
             mks_accel_val = 0
             parsed_ok = False
-            
+
             try:
                 if command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES:
                     if data_from_payload and len(data_from_payload) >= 6:
@@ -894,7 +893,7 @@ class SimulatedMotor:
                     # For absolute, stop also means speed=0, target_axis=0 (as per manual depiction for stop)
                     if mks_speed_val == 0 and target_pos_abs_final == 0: # Assuming stop means target axis 0
                         is_stop_command = True
-                
+
                 if is_stop_command:
                     logger.info(f"Motor {self.original_can_id}: Processing CMD {command_code:02X} as STOP. Accel: {mks_accel_val}")
                     self.target_rpm = 0.0 # Stop
@@ -969,13 +968,13 @@ class SimulatedMotor:
         """
         if self._current_move_task and not self._current_move_task.done():
             self._current_move_task.cancel("Simulation stopping")
-            await asyncio.sleep(0) 
-        self._current_move_task = None 
+            await asyncio.sleep(0)
+        self._current_move_task = None
 
         if self.is_running_task and not self.is_running_task.done():
             self.is_running_task.cancel()
             try:
-                await self.is_running_task 
+                await self.is_running_task
             except asyncio.CancelledError:
                 logger.info(f"SimulatedMotor {self.original_can_id} update task successfully cancelled.")
             except Exception as e:
@@ -1015,4 +1014,3 @@ class SimulatedMotor:
 
         # Fallback to the locally defined map
         return _work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
-        

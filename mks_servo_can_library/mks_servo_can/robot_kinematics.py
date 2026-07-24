@@ -11,23 +11,26 @@ Current implementations are illustrative and may require more detailed
 kinematic models and error handling for production use.
 """
 
-import asyncio
-import math
 import logging
+import math
 from abc import ABC, abstractmethod
-from typing import List, Dict, Tuple, Optional, Union, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-from .axis import Axis
+from .exceptions import (
+    ConfigurationError,
+    KinematicsError,
+    MKSServoError,
+    MultiAxisError,
+)
 from .multi_axis_controller import MultiAxisController
-from .exceptions import KinematicsError, ConfigurationError, MKSServoError, MultiAxisError
 
 __all__ = [
-    "RobotModelBase",
-    "TwoLinkArmPlanar",
-    "CartesianRobot",
-    "RRRArm",
     "CartesianPose",
-    "JointStates"
+    "CartesianRobot",
+    "JointStates",
+    "RRRArm",
+    "RobotModelBase",
+    "TwoLinkArmPlanar"
 ]
 
 logger = logging.getLogger(__name__)
@@ -90,7 +93,7 @@ class RobotModelBase(ABC):
                     f"Axis '{name}' specified in axis_names_in_order "
                     f"not found in the MultiAxisController."
                 )
-        
+
         logger.info(
             f"Initialized {self.__class__.__name__} with DOF: {self.dof} "
             f"using axes: {self.axis_names_in_order}"
@@ -233,7 +236,7 @@ class RobotModelBase(ABC):
         logger.info(f"Robot '{self.__class__.__name__}': Moving to Cartesian pose: {target_pose}")
         try:
             joint_targets_dict = await self.inverse_kinematics(target_pose)
-            
+
             # Validate that IK returned targets for all necessary axes
             for axis_name in self.axis_names_in_order:
                 if axis_name not in joint_targets_dict:
@@ -254,7 +257,7 @@ class RobotModelBase(ABC):
             raise
         except Exception as e: # pylint: disable=broad-except
             logger.error(f"Unexpected error in move_to_cartesian_pose: {e}", exc_info=True)
-            raise MKSServoError(f"Unexpected error in move_to_cartesian_pose: {e}")
+            raise MKSServoError(f"Unexpected error in move_to_cartesian_pose: {e}") from e
 
 
 class TwoLinkArmPlanar(RobotModelBase):
@@ -294,10 +297,10 @@ class TwoLinkArmPlanar(RobotModelBase):
                 "TwoLinkArmPlanar requires exactly two axis names (for base and elbow joints)."
             )
         super().__init__(multi_axis_controller, axis_names) # DOF will be 2
-        
+
         if link1_length <= 0 or link2_length <= 0:
             raise ConfigurationError("Link lengths must be positive.")
-            
+
         self.l1 = link1_length
         self.l2 = link2_length
         self.origin_x = origin_offset[0]
@@ -333,7 +336,7 @@ class TwoLinkArmPlanar(RobotModelBase):
         # y = l1 * sin(theta1) + l2 * sin(theta1 + theta2)
         x_val = self.l1 * math.cos(theta1_rad) + self.l2 * math.cos(theta1_rad + theta2_rad)
         y_val = self.l1 * math.sin(theta1_rad) + self.l2 * math.sin(theta1_rad + theta2_rad)
-        
+
         return {'x': x_val + self.origin_x, 'y': y_val + self.origin_y}
 
     async def inverse_kinematics(
@@ -368,7 +371,7 @@ class TwoLinkArmPlanar(RobotModelBase):
 
         if d_denominator == 0: # Should not happen if l1, l2 > 0
             raise KinematicsError("Link lengths l1 or l2 are zero, cannot compute IK.")
-        
+
         cos_theta2 = d_numerator / d_denominator
 
         if not (-1.0 <= cos_theta2 <= 1.0):
@@ -392,7 +395,7 @@ class TwoLinkArmPlanar(RobotModelBase):
         # theta1 = atan2(y, x) - atan2(k2, k1)
         k1 = self.l1 + self.l2 * math.cos(theta2_rad)
         k2 = self.l2 * math.sin(theta2_rad)
-        
+
         # atan2(y, x) gives the angle of the target point from origin
         # atan2(k2, k1) gives the angle correction due to the elbow
         theta1_rad = math.atan2(y, x) - math.atan2(k2, k1)
@@ -436,7 +439,7 @@ class CartesianRobot(RobotModelBase):
         super().__init__(multi_axis_controller, axis_names)
         if self.dof != 3: # Should be caught by super if axis_names length is not 3.
              raise ConfigurationError("CartesianRobot requires exactly three axis names (X, Y, Z).")
-        
+
         self.x_axis_name = x_axis_name
         self.y_axis_name = y_axis_name
         self.z_axis_name = z_axis_name
@@ -462,7 +465,7 @@ class CartesianRobot(RobotModelBase):
         """
         ordered_states = self._resolve_joint_states_to_list(joint_states)
         x_robot, y_robot, z_robot = ordered_states[0], ordered_states[1], ordered_states[2]
-        
+
         return {
             'x': x_robot + self.origin_x,
             'y': y_robot + self.origin_y,
@@ -553,10 +556,10 @@ class RRRArm(RobotModelBase):
                 "RRRArm requires exactly three axis names (for base, shoulder, and elbow joints)."
             )
         super().__init__(multi_axis_controller, axis_names)
-        
+
         if link1_length <= 0 or link2_length <= 0:
             raise ConfigurationError("Link lengths must be positive for RRRArm.")
-            
+
         self.l1 = link1_length # Length of the "upper arm" (shoulder to elbow)
         self.l2 = link2_length # Length of the "forearm" (elbow to end-effector)
         self.origin_x, self.origin_y, self.origin_z = origin_offset
@@ -600,7 +603,7 @@ class RRRArm(RobotModelBase):
         x_val = math.cos(t1) * (self.l1 * math.cos(t2) + self.l2 * math.cos(t2 + t3))
         y_val = math.sin(t1) * (self.l1 * math.cos(t2) + self.l2 * math.cos(t2 + t3))
         z_val = self.l1 * math.sin(t2) + self.l2 * math.sin(t2 + t3)
-        
+
         return {
             'x': x_val + self.origin_x,
             'y': y_val + self.origin_y,
@@ -630,7 +633,7 @@ class RRRArm(RobotModelBase):
         px = target_pose['x'] - self.origin_x
         py = target_pose['y'] - self.origin_y
         pz = target_pose['z'] - self.origin_z
-        
+
         l1_sq = self.l1**2
         l2_sq = self.l2**2
 
@@ -645,23 +648,19 @@ class RRRArm(RobotModelBase):
         # 'r' would need to be calculated relative to J2's projection.
         # For this example, assume J2's axis of rotation passes through J1's Z-axis when viewed from top.
 
-        # Distance squared from shoulder joint (J2) to end-effector (P) in the vertical plane.
-        # Here, 'r' is the horizontal component in this plane, 'pz' is the vertical.
-        dist_sq_j2_to_p = r**2 + pz**2 
-
         # Calculate theta3 (Elbow angle) using Law of Cosines
         # (l1^2 + l2^2 - dist_sq_j2_to_p) / (2 * l1 * l2) is for angle opposite to dist_j2_to_p
         # We need angle at elbow: cos_val_theta3 = (l1^2 + l2^2 - (r^2 + pz^2)) / (2 * l1 * l2)
         # This formula is for theta3 as the angle *between* l1 and l2 when they form a triangle with j2-to-p.
         # A common convention is theta3 as the relative angle of l2 to l1 extended.
         # So, theta3_conv = pi - acos(cos_val_theta3)
-        
+
         cos_theta3_num = (r**2 + pz**2 - l1_sq - l2_sq)
         cos_theta3_den = (2 * self.l1 * self.l2)
 
         if abs(cos_theta3_den) < 1e-9: # Avoid division by zero if l1 or l2 is zero
             raise KinematicsError("Link lengths l1 or l2 are zero in RRRArm.")
-        
+
         cos_theta3 = cos_theta3_num / cos_theta3_den
 
         if not (-1.000001 <= cos_theta3 <= 1.000001): # Check reachability
@@ -682,7 +681,7 @@ class RRRArm(RobotModelBase):
         # Numerator and denominator for atan2 for the component of theta2
         beta_num = self.l2 * s3
         beta_den = self.l1 + self.l2 * c3
-        
+
         gamma = math.atan2(pz, r) # Angle of the vector from shoulder to target in the vertical plane
         beta = math.atan2(beta_num, beta_den) # Angle correction due to elbow bend
 

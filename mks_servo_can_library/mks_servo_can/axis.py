@@ -6,14 +6,15 @@ asynchronous interface for controlling a single MKS SERVO42D/57D motor.
 It abstracts away the low-level CAN command details and manages motor state,
 kinematic conversions, and error handling.
 """
-from typing import Any, Dict, Optional, Callable
-import math
 import asyncio
 import logging
+import math
 import time
+from functools import partial
+from typing import Any, Dict, Optional
 
 try:
-    from can import Message as CanMessage # For predicate type hint
+    from can import Message as CanMessage  # For predicate type hint
 except ImportError:
     class CanMessage: # type: ignore # Dummy for type hint
         """
@@ -38,16 +39,17 @@ except ImportError:
 
 from . import constants as const
 from .can_interface import CANInterface
-from .exceptions import CalibrationError
-from .exceptions import CommunicationError
-from .exceptions import ConfigurationError
-from .exceptions import HomingError
-from .exceptions import LimitError
-from .exceptions import MKSServoError
-from .exceptions import MotorError
-from .exceptions import ParameterError
-from .kinematics import Kinematics
-from .kinematics import RotaryKinematics
+from .exceptions import (
+    CalibrationError,
+    CommunicationError,
+    ConfigurationError,
+    HomingError,
+    LimitError,
+    MKSServoError,
+    MotorError,
+    ParameterError,
+)
+from .kinematics import Kinematics, RotaryKinematics
 from .low_level_api import LowLevelAPI
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,7 @@ class Axis:
         name: str = "default_axis",
         motor_type: str = const.MOTOR_TYPE_SERVO42D,
         kinematics: Optional[Kinematics] = None,
-        mstep_value: int = 16, 
+        mstep_value: int = 16,
         base_motor_steps_per_rev: int = 200,
         default_speed_param: int = 500,
         default_accel_param: int = 100,
@@ -122,7 +124,7 @@ class Axis:
             )
         # MKS Manual for 0x84 (Set Subdivision) implies micstep(00~FF), typical values are powers of 2.
         # We'll assume mstep_value is the actual desired subdivision factor.
-        if not (0 < mstep_value <= 256): 
+        if not (0 < mstep_value <= 256):
             raise ConfigurationError(f"Invalid mstep_value: {mstep_value}. Must be positive and typically up to 256.")
         if not (base_motor_steps_per_rev > 0):
             raise ConfigurationError(f"Invalid base_motor_steps_per_rev: {base_motor_steps_per_rev}. Must be positive.")
@@ -259,8 +261,8 @@ class Axis:
                 await self.calibrate_encoder() # Sets _is_calibrated on success
             else:
                 # If not calibrating, assume it's usable (e.g., previously calibrated).
-                self._is_calibrated = True 
-            
+                self._is_calibrated = True
+
             if home:
                 if self._is_calibrated: # Home only if considered calibrated
                     await self.home_axis()
@@ -294,7 +296,7 @@ class Axis:
         logger.info(f"Axis '{self.name}': Setting motor subdivision to {mstep_register_value}.")
         # LowLevelAPI's set_subdivision takes the value that the motor expects (0-255) [MKS SERVO42&57D_CAN User Manual V1.0.6.pdf, p. 22]
         await self._low_level_api.set_subdivision(self.can_id, mstep_register_value)
-        
+
         # Update internal state
         self.mstep_value = mstep_register_value
         self._microsteps_per_motor_revolution_for_cmd = self.base_motor_steps_per_rev * self.mstep_value
@@ -403,13 +405,13 @@ class Axis:
         self._is_homed = False # Mark as not homed until confirmed
         try:
             initial_status = await self._low_level_api.go_home(self.can_id)
-            
+
             if initial_status == const.HOME_START:
                 if wait_for_completion:
                     logger.info(
                         f"Axis '{self.name}': Homing started, waiting for completion (timeout: {timeout}s)..."
                     )
-                    
+
                     def home_completion_predicate(msg: CanMessage) -> bool:
                         # Check if data exists and has at least 2 bytes (command_echo, status)
                         return msg.data is not None and len(msg.data) >= 2 and \
@@ -815,11 +817,11 @@ class Axis:
         """Internal handler for all relative moves."""
         sp = speed if speed is not None else self.default_speed_param
         ac = accel_param if accel_param is not None else self.default_accel_param
-        
+
         cmd_func = None
         cmd_const = 0
         pulses_for_timeout = 0
-        
+
         if unit == 'user':
             relative_encoder_steps = self.kinematics.user_to_steps(distance)
             # Use the more direct relative axis command (0xF4)
@@ -827,7 +829,10 @@ class Axis:
                 logger.info(f"Axis '{self.name}': Relative move of {distance} {self.kinematics.units} is effectively zero steps. No move needed.")
                 return
             mks_speed = self.kinematics.user_speed_to_motor_speed(sp) if sp is not None else self.default_speed_param
-            cmd_func = lambda: self._low_level_api.run_position_mode_relative_axis(self.can_id, mks_speed, ac, relative_encoder_steps)
+            cmd_func = partial(
+                self._low_level_api.run_position_mode_relative_axis,
+                self.can_id, mks_speed, ac, relative_encoder_steps,
+            )
             cmd_const = const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS
             pulses_for_timeout = relative_encoder_steps
             sp = mks_speed
@@ -839,19 +844,25 @@ class Axis:
                 return
             direction_ccw = relative_microsteps >= 0
             num_microsteps = abs(relative_microsteps)
-            cmd_func = lambda: self._low_level_api.run_position_mode_relative_pulses(self.can_id, direction_ccw, int(sp), ac, num_microsteps)
+            cmd_func = partial(
+                self._low_level_api.run_position_mode_relative_pulses,
+                self.can_id, direction_ccw, int(sp), ac, num_microsteps,
+            )
             cmd_const = const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES
             pulses_for_timeout = num_microsteps
-        
+
         elif unit == 'axis':
             relative_encoder_steps = int(distance)
             if abs(relative_encoder_steps) < 1:
                 logger.info(f"Axis '{self.name}': Relative move of zero axis steps requested. No move needed.")
                 return
-            cmd_func = lambda: self._low_level_api.run_position_mode_relative_axis(self.can_id, int(sp), ac, relative_encoder_steps)
+            cmd_func = partial(
+                self._low_level_api.run_position_mode_relative_axis,
+                self.can_id, int(sp), ac, relative_encoder_steps,
+            )
             cmd_const = const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS
             pulses_for_timeout = relative_encoder_steps
-        
+
         else:
             raise ParameterError(f"Unknown unit type '{unit}' for relative move.")
 
@@ -908,8 +919,9 @@ class Axis:
             return
 
         # 3. Execute the move using the direct absolute axis command
-        cmd_func = lambda: self._low_level_api.run_position_mode_absolute_axis(
-            self.can_id, mks_speed_param, ac, target_encoder_steps
+        cmd_func = partial(
+            self._low_level_api.run_position_mode_absolute_axis,
+            self.can_id, mks_speed_param, ac, target_encoder_steps,
         )
         await self._execute_move(
             cmd_func,
@@ -917,13 +929,13 @@ class Axis:
             pulses_to_move_for_timeout=abs(target_encoder_steps - current_steps),
             speed_param_for_calc=mks_speed_param
         )
-        
+
         if wait and self._active_move_future:
             await self._active_move_future
 
     async def move_to_position_abs_pulses(
         self,
-        target_command_microsteps: int, 
+        target_command_microsteps: int,
         speed_param: Optional[int] = None,
         accel_param: Optional[int] = None,
         wait: bool = True,
@@ -1090,7 +1102,7 @@ class Axis:
         await self._move_absolute_handler(target_pos_user, 'user', speed=speed_user, wait=wait)
 
     async def set_speed_user(
-        self, speed_user: float, accel_user: Optional[float] = None 
+        self, speed_user: float, accel_user: Optional[float] = None
     ) -> None:
         """
         Sets the motor to run continuously at a specified speed in user units (speed/velocity mode).
@@ -1121,7 +1133,7 @@ class Axis:
         # TODO: Convert accel_user to MKS accel_param if accel_user is provided.
         # This would require kinematics.acceleration_to_motor_acceleration_param()
         # For now, using default_accel_param.
-        mks_accel_param = self.default_accel_param 
+        mks_accel_param = self.default_accel_param
         direction_ccw = speed_user >= 0
 
         if abs(speed_user) < 1e-6: # Effectively zero speed (using a small epsilon)
@@ -1137,7 +1149,7 @@ class Axis:
             await self._low_level_api.run_speed_mode(
                 self.can_id, direction_ccw, mks_speed_param, mks_accel_param
             )
-        
+
         if self._active_move_future and not self._active_move_future.done():
             self._active_move_future.cancel("Speed mode initiated, cancelling positional move future.")
         self._active_move_future = None
@@ -1177,7 +1189,7 @@ class Axis:
                 f"Axis '{self.name}': Graceful stop command failed ({e}), attempting emergency stop."
             )
             await self.emergency_stop() # This will also cancel active_move_future
-        finally: 
+        finally:
             if self._active_move_future and not self._active_move_future.done():
                  self._active_move_future.cancel("Motor stop initiated")
             self._active_move_future = None
@@ -1401,7 +1413,7 @@ class Axis:
             KinematicsError: If an error occurs during kinematic conversion.
         """
         rpm = await self.get_current_speed_rpm()
-        
+
         # The kinematics.motor_speed_to_user_speed typically expects MKS speed param (0-3000).
         # Directly converting RPM to user speed requires reversing the logic in
         # kinematics.user_speed_to_motor_speed or having a dedicated RPM input method.
@@ -1488,7 +1500,7 @@ class Axis:
 
         pos_user = self.kinematics.steps_to_user(pos_steps)
         status_map = const.MOTOR_STATUS_MAP
-        
+
         return {
             "name": self.name,
             "can_id": self.can_id,
@@ -1577,7 +1589,7 @@ class Axis:
             try:
                 # asyncio.wait_for will raise asyncio.TimeoutError on timeout
                 await asyncio.wait_for(self._active_move_future, timeout=timeout)
-            except asyncio.TimeoutError as e:
+            except asyncio.TimeoutError:
                 # If asyncio.wait_for times out, we need to make sure the future itself reflects this
                 # or is cancelled to prevent it from resolving later unexpectedly.
                 # However, the future might still complete normally or with its own error from CAN timeout.
@@ -1592,7 +1604,7 @@ class Axis:
                 raise # Re-raise asyncio.TimeoutError to signal the caller's wait timed out
             # If _active_move_future completed with an exception, it will be raised here by the await.
         # If future is already done, this will return immediately or raise stored exception if any.
-        
+
     async def ping(self, timeout: Optional[float] = None) -> bool: # Changed return from Optional[float] to bool
         """
         Pings the motor to check for basic communication and responsiveness.
@@ -1614,7 +1626,7 @@ class Axis:
             (e.g., due to communication timeout, motor error, or unexpected issues).
         """
         logger.debug(f"Axis '{self.name}': Pinging motor (CAN ID: {self.can_id:03X})...")
-        
+
         # The actual timeout for the CAN read will be const.CAN_TIMEOUT_SECONDS
         # unless low_level_api.read_en_pin_status itself takes and uses a timeout parameter.
         # If `timeout` here is meant to cap the entire operation:
@@ -1627,7 +1639,7 @@ class Axis:
                 await asyncio.wait_for(_do_ping(), timeout=timeout)
             else: # Use default underlying timeouts
                 await _do_ping()
-            
+
             logger.info(f"Axis '{self.name}': Ping successful.")
             return True
         except asyncio.TimeoutError: # This catches timeout from asyncio.wait_for
@@ -1636,10 +1648,9 @@ class Axis:
         except CommunicationError as e: # This catches CAN level timeouts from _low_level_api
             logger.warning(f"Axis '{self.name}': Ping failed due to communication error: {e}")
             return False
-        except MKSServoError as e: 
+        except MKSServoError as e:
             logger.warning(f"Axis '{self.name}': Ping failed due to MKS error: {e}")
             return False
         except Exception as e: # pylint: disable=broad-except
             logger.error(f"Axis '{self.name}': Ping failed due to unexpected error: {e}", exc_info=True)
             return False
-        

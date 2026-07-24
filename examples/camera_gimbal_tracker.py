@@ -90,7 +90,6 @@ import asyncio
 import logging
 import math
 import time
-
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -99,8 +98,10 @@ from mks_servo_can import (
     CANInterface,
     ServoStream,
     StreamAxis,
-    constants as const,
     motor_profile,
+)
+from mks_servo_can import (
+    constants as const,
 )
 
 logger = logging.getLogger("gimbal")

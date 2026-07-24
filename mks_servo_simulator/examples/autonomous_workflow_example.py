@@ -13,11 +13,15 @@ This script showcases:
 """
 import json
 import time
-import requests # For requests.exceptions.ConnectionError
+
+import requests  # For requests.exceptions.ConnectionError
 
 # Adjust the import path based on your project structure.
 # If 'mks_servo_simulator' is in your PYTHONPATH or installed:
-from mks_servo_simulator.mks_simulator.interface.sdk_client import MKSSimulatorClient, SimulatorAPIError
+from mks_servo_simulator.mks_simulator.interface.sdk_client import (
+    MKSSimulatorClient,
+    SimulatorAPIError,
+)
 
 # Configuration
 SIMULATOR_BASE_URL = "http://localhost:8765"
@@ -31,7 +35,7 @@ def main():
     """
     Main function to execute the autonomous workflow example.
     """
-    print(f"--- MKS Servo Simulator: Autonomous Workflow Example ---")
+    print("--- MKS Servo Simulator: Autonomous Workflow Example ---")
     print(f"Attempting to connect to simulator at: {SIMULATOR_BASE_URL}")
 
     client = MKSSimulatorClient(SIMULATOR_BASE_URL)
@@ -193,7 +197,7 @@ def main():
 
         # 6. Demonstrate Saving a Configuration Profile
         print("\n[Phase 6: Demonstrating Saving Configuration Profile]")
-        current_config_summary = client.get_configuration()
+        _current_config_summary = client.get_configuration()
         # The 'name' field might not exist if the config is default/unsaved.
         # It's better to save first, then list to confirm.
         profile_name_to_save = f"my_workflow_profile_{int(time.time())}" # Unique name

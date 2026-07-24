@@ -35,20 +35,21 @@ To run with real hardware:
    `python svg_plotter.py --file drawing.svg --no-simulator --can-channel /dev/ttyACM0`
 """
 
+import argparse
 import asyncio
+import json
 import logging
 import math
-import argparse
-import json
-from typing import List, Tuple, Optional, Dict, Any
 from dataclasses import dataclass
-from scipy.interpolate import griddata
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
+from scipy.interpolate import griddata
 
 # This script requires the 'svgelements' library for SVG parsing.
 # Install it using: pip install svgelements
 try:
-    from svgelements import SVG, Path, Shape, Text, Circle
+    from svgelements import SVG, Circle, Path, Shape, Text
 except ImportError:
     print("This script requires the 'svgelements' library.")
     print("Please install it using: pip install svgelements")
@@ -56,18 +57,18 @@ except ImportError:
 
 # scipy is required for height map interpolation
 try:
-    from scipy.interpolate import griddata
     import numpy as np
+    from scipy.interpolate import griddata
 except ImportError:
     print("This script requires scipy and numpy for height map interpolation.")
     print("Please install using: pip install scipy numpy")
     exit(1)
 
 from mks_servo_can import (
-    CANInterface,
     Axis,
-    MultiAxisController,
+    CANInterface,
     LinearKinematics,
+    MultiAxisController,
     RotaryKinematics,
     const,
     exceptions,
@@ -169,7 +170,7 @@ class ProbePoint:
 
 class HeightMap:
     """Height map for surface-following drawing"""
-    
+
     def __init__(self, data: Dict[str, Any]):
         """Initializes the HeightMap instance.
 
@@ -181,23 +182,23 @@ class HeightMap:
         self.grid_spacing = data["grid_spacing"]
         self.bounds = data["bounds"]
         self.interpolation_method = data.get("interpolation_method", "bicubic")
-        
+
         # Convert probe points to arrays for interpolation
         self.probe_points = [
-            ProbePoint(p["x"], p["y"], p["z"], p["pen_angle"]) 
+            ProbePoint(p["x"], p["y"], p["z"], p["pen_angle"])
             for p in data["probe_points"]
         ]
-        
+
         # Prepare interpolation data
         self.x_coords = np.array([p.x for p in self.probe_points])
         self.y_coords = np.array([p.y for p in self.probe_points])
         self.z_coords = np.array([p.z for p in self.probe_points])
         self.angle_coords = np.array([p.pen_angle for p in self.probe_points])
-        
+
         logger.info(f"Height map loaded: {len(self.probe_points)} points, "
                    f"bounds ({self.bounds['x_min']:.1f},{self.bounds['y_min']:.1f}) to "
                    f"({self.bounds['x_max']:.1f},{self.bounds['y_max']:.1f})")
-    
+
     def get_height_and_angle(self, x: float, y: float) -> Tuple[float, float]:
         """
         Interpolate height and pen angle for given X,Y coordinates.
@@ -206,42 +207,42 @@ class HeightMap:
             Tuple of (z_height, pen_angle)
         """
         # Check bounds
-        if (x < self.bounds["x_min"] or x > self.bounds["x_max"] or 
+        if (x < self.bounds["x_min"] or x > self.bounds["x_max"] or
             y < self.bounds["y_min"] or y > self.bounds["y_max"]):
             logger.warning(f"Point ({x:.1f},{y:.1f}) outside height map bounds")
             return 0.0, 0.0
-        
+
         # Interpolate height
         try:
             z_height = griddata(
-                (self.x_coords, self.y_coords), 
-                self.z_coords, 
-                (x, y), 
+                (self.x_coords, self.y_coords),
+                self.z_coords,
+                (x, y),
                 method='linear',  # Use linear for better stability
                 fill_value=0.0
             )
-            
+
             # Interpolate pen angle
             pen_angle = griddata(
-                (self.x_coords, self.y_coords), 
-                self.angle_coords, 
-                (x, y), 
+                (self.x_coords, self.y_coords),
+                self.angle_coords,
+                (x, y),
                 method='linear',
                 fill_value=0.0
             )
-            
+
             # Handle scalar results (when interpolating single points)
             if np.isscalar(z_height):
                 return float(z_height), float(pen_angle)
             else:
                 return float(z_height[0]), float(pen_angle[0])
-                
+
         except Exception as e:
             logger.warning(f"Interpolation failed at ({x:.1f},{y:.1f}): {e}")
             return 0.0, 0.0
 
 
-def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scale: float = None, max_x_limit: float = None, max_y_limit: float = None) -> List[List[Tuple[float, float]]]:
+def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scale: Optional[float] = None, max_x_limit: Optional[float] = None, max_y_limit: Optional[float] = None) -> List[List[Tuple[float, float]]]:
     """
     Loads, parses, and processes an SVG file into plotter-ready coordinates.
 
@@ -279,7 +280,7 @@ def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scal
     # Convert all shapes to Path objects, including Text elements
     all_paths = []
     circle_paths = []  # Store circle coordinate lists separately
-    
+
     for elem in elements:
         if isinstance(elem, Circle):
             # Handle circles specially to avoid triangulation
@@ -320,7 +321,7 @@ def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scal
             except Exception as e:
                 logger.debug(f"Could not convert element {type(elem).__name__} to path: {e}")
                 continue
-    
+
     if not all_paths and not circle_paths:
         logger.warning("Could not extract any valid paths from the SVG elements.")
         return []
@@ -331,17 +332,17 @@ def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scal
         bbox = path.bbox()
         if bbox:
             all_bboxes.append(bbox)
-    
+
     if not all_bboxes:
         logger.warning("Could not extract any valid bboxes from the paths.")
         return []
-    
+
     # Calculate combined bounding box
     xmin = min(bbox[0] for bbox in all_bboxes)
     ymin = min(bbox[1] for bbox in all_bboxes)
     xmax = max(bbox[2] for bbox in all_bboxes)
     ymax = max(bbox[3] for bbox in all_bboxes)
-    
+
     svg_width = xmax - xmin
     svg_height = ymax - ymin
 
@@ -353,46 +354,46 @@ def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scal
     if manual_scale is not None:
         scale = manual_scale
         logger.info(f"Using manual scale factor: {scale:.3f} ({scale*100:.1f}%)")
-        
+
         # Calculate the resulting dimensions
         scaled_width = svg_width * scale
         scaled_height = svg_height * scale
         logger.info(f"SVG size: {svg_width:.1f} x {svg_height:.1f} -> Scaled size: {scaled_width:.1f} x {scaled_height:.1f}")
-        
+
         # Check if the scaled drawing exceeds plotter bounds and refuse if it does
         if scaled_width > max_plot_x or scaled_height > max_plot_y:
             raise ValueError(f"Manual scale {scale:.3f} ({scale*100:.1f}%) results in drawing size "
                            f"({scaled_width:.1f} x {scaled_height:.1f}) that exceeds machine limits "
                            f"({max_plot_x} x {max_plot_y}). Please use a smaller scale.")
-    
+
     elif max_x_limit is not None or max_y_limit is not None:
         # Scale to fit within specified limits
         scale_factors = []
-        
+
         if max_x_limit is not None:
             if max_x_limit > max_plot_x:
                 raise ValueError(f"Specified max X limit ({max_x_limit}mm) exceeds machine limit ({max_plot_x}mm)")
             scale_x = max_x_limit / svg_width
             scale_factors.append(scale_x)
             logger.info(f"X constraint: {max_x_limit}mm -> scale factor {scale_x:.3f}")
-        
+
         if max_y_limit is not None:
             if max_y_limit > max_plot_y:
                 raise ValueError(f"Specified max Y limit ({max_y_limit}mm) exceeds machine limit ({max_plot_y}mm)")
             scale_y = max_y_limit / svg_height
             scale_factors.append(scale_y)
             logger.info(f"Y constraint: {max_y_limit}mm -> scale factor {scale_y:.3f}")
-        
+
         # Use the most restrictive (smallest) scale factor to ensure both constraints are met
         scale = min(scale_factors)
-        
+
         # Calculate final dimensions
         scaled_width = svg_width * scale
         scaled_height = svg_height * scale
-        
+
         logger.info(f"Using constrained scale factor: {scale:.3f} ({scale*100:.1f}%)")
         logger.info(f"SVG size: {svg_width:.1f} x {svg_height:.1f} -> Final size: {scaled_width:.1f} x {scaled_height:.1f}")
-        
+
     else:
         # Use automatic fitting to machine area
         scale_x = max_plot_x / svg_width
@@ -408,22 +409,22 @@ def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scal
         try:
             # Linearize the path (convert curves to line segments)
             linearized_path = []
-            
+
             # Use as_points() method which is more reliable for getting path points
             try:
                 points = list(path.as_points())
                 linearized_path = points
-            except:
+            except Exception:
                 # Fallback to segments method
                 for segment in path.segments():
                     if not linearized_path:
                         linearized_path.append(segment.start)
                     linearized_path.append(segment.end)
-            
+
             if not linearized_path:
                 logger.warning(f"Path {i} produced no points, skipping.")
                 continue
-            
+
             # Transform coordinates
             transformed_path = []
             for point in linearized_path:
@@ -435,21 +436,21 @@ def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scal
                 else:
                     logger.warning(f"Unknown point type: {type(point)}, skipping point.")
                     continue
-                
+
                 # Scale relative to the SVG's own origin (xmin, ymin)
                 plot_x = (x - xmin) * scale
                 # Scale and invert the Y-axis
                 plot_y = max_plot_y - ((y - ymin) * scale)
                 transformed_path.append((plot_x, plot_y))
-            
+
             if transformed_path:
                 paths.append(transformed_path)
                 logger.info(f"Path {i+1}: {len(transformed_path)} points")
-            
+
         except Exception as e:
             logger.warning(f"Error processing path {i}: {e}")
             continue
-    
+
     # Process circle paths with the same transformations
     for i, circle_points in enumerate(circle_paths):
         try:
@@ -460,14 +461,14 @@ def process_svg(filepath: str, max_plot_x: float, max_plot_y: float, manual_scal
                 # Scale and invert the Y-axis
                 plot_y = max_plot_y - ((y - ymin) * scale)
                 transformed_path.append((plot_x, plot_y))
-            
+
             if transformed_path:
                 paths.append(transformed_path)
                 logger.info(f"Circle {i+1}: {len(transformed_path)} points")
         except Exception as e:
             logger.warning(f"Error processing circle {i}: {e}")
             continue
-        
+
     logger.info(f"Successfully processed SVG into {len(paths)} drawable paths.")
     return paths
 
@@ -487,18 +488,18 @@ def validate_drawing_reach(paths: List[List[Tuple[float, float]]], height_map: O
     if not height_map or not pen_geometry:
         logger.info("No height map or pen geometry - skipping reach validation")
         return True
-    
+
     unreachable_points = []
-    
+
     for path_idx, path in enumerate(paths):
         for point_idx, (x, y) in enumerate(path):
             # Get required pen angle for this position
-            z_height, required_angle = height_map.get_height_and_angle(x, y)
-            
+            _z_height, required_angle = height_map.get_height_and_angle(x, y)
+
             # Check if angle is within pen limits
             if required_angle < pen_geometry.angle_min or required_angle > pen_geometry.angle_max:
                 unreachable_points.append((path_idx, point_idx, x, y, required_angle))
-    
+
     if unreachable_points:
         logger.error(f"Found {len(unreachable_points)} unreachable points:")
         for path_idx, point_idx, x, y, angle in unreachable_points[:5]:  # Show first 5
@@ -507,7 +508,7 @@ def validate_drawing_reach(paths: List[List[Tuple[float, float]]], height_map: O
         if len(unreachable_points) > 5:
             logger.error(f"  ... and {len(unreachable_points) - 5} more points")
         return False
-    
+
     logger.info("All drawing points are within pen reach limits")
     return True
 
@@ -527,10 +528,10 @@ def calculate_pen_angle_for_position(x: float, y: float, height_map: Optional[He
     if not height_map or not pen_geometry:
         # Fallback to simple pen down angle
         return PEN_DOWN_ANGLE
-    
+
     # Get surface height and suggested angle from height map
-    z_height, suggested_angle = height_map.get_height_and_angle(x, y)
-    
+    _z_height, suggested_angle = height_map.get_height_and_angle(x, y)
+
     # Validate angle is within limits
     if suggested_angle < pen_geometry.angle_min:
         logger.warning(f"Angle {suggested_angle:.1f}° below limit {pen_geometry.angle_min:.1f}° at ({x:.1f},{y:.1f})")
@@ -538,7 +539,7 @@ def calculate_pen_angle_for_position(x: float, y: float, height_map: Optional[He
     elif suggested_angle > pen_geometry.angle_max:
         logger.warning(f"Angle {suggested_angle:.1f}° above limit {pen_geometry.angle_max:.1f}° at ({x:.1f},{y:.1f})")
         return pen_geometry.angle_max
-    
+
     return suggested_angle
 
 
@@ -550,7 +551,7 @@ async def pen_up(controller: MultiAxisController, speed_degps: float, pen_geomet
         logger.info("Pen axis not active, skipping pen up.")
         await asyncio.sleep(0.5)
         return
-    
+
     # Use safe travel height if available, otherwise use traditional pen up angle
     if pen_geometry:
         # Calculate angle for safe travel height
@@ -561,22 +562,22 @@ async def pen_up(controller: MultiAxisController, speed_degps: float, pen_geomet
     else:
         logger.info(f"Moving pen UP to {PEN_UP_ANGLE}°")
         target_angle = PEN_UP_ANGLE
-    
+
     await controller.axes[PEN_AXIS_NAME].move_to_position_abs_user(
         target_angle, speed_user=speed_degps, wait=True
     )
 
-async def pen_down(controller: MultiAxisController, x: float, y: float, speed_degps: float, 
+async def pen_down(controller: MultiAxisController, x: float, y: float, speed_degps: float,
                    height_map: Optional[HeightMap] = None, pen_geometry: Optional[PenGeometry] = None):
     """Commands the pen to move to the appropriate 'down' position for the given coordinates."""
     if PEN_AXIS_NAME not in controller.axes:
         logger.info("Pen axis not active, skipping pen down.")
         await asyncio.sleep(0.5)
         return
-    
+
     # Calculate required angle for this position
     target_angle = calculate_pen_angle_for_position(x, y, height_map, pen_geometry)
-    
+
     logger.info(f"Moving pen DOWN to {target_angle:.1f}° for position ({x:.1f},{y:.1f})")
     await controller.axes[PEN_AXIS_NAME].move_to_position_abs_user(
         target_angle, speed_user=speed_degps, wait=True
@@ -601,12 +602,12 @@ async def move_to(
         return
 
     logger.info(f"Moving to (X:{target_x:.2f}, Y:{target_y:.2f}) at {speed_mms:.1f} mm/s.")
-    
+
     current_positions = await controller.get_all_positions_user()
-    
+
     positions_to_move = {}
     deltas = {}
-    
+
     if X_AXIS_NAME in controller.axes:
         current_x = current_positions.get(X_AXIS_NAME, 0.0)
         deltas[X_AXIS_NAME] = target_x - current_x
@@ -633,13 +634,13 @@ async def move_to(
         axis_name: abs(delta / duration_s) if duration_s > 0 else 0
         for axis_name, delta in deltas.items()
     }
-    
+
     # If drawing and we have height compensation, adjust pen angle during the move
     if is_drawing and height_map and pen_geometry and PEN_AXIS_NAME in controller.axes:
         target_pen_angle = calculate_pen_angle_for_position(target_x, target_y, height_map, pen_geometry)
         positions_to_move[PEN_AXIS_NAME] = target_pen_angle
         speeds_for_move[PEN_AXIS_NAME] = abs(target_pen_angle - current_positions.get(PEN_AXIS_NAME, 0.0)) / duration_s if duration_s > 0 else 0
-    
+
     await controller.move_all_to_positions_abs_user(
         positions_user=positions_to_move,
         speeds_user=speeds_for_move,
@@ -649,9 +650,9 @@ async def move_to(
 
 def load_pen_config(filepath: str) -> PenGeometry:
     """Load pen geometry configuration from JSON file"""
-    with open(filepath, 'r') as f:
+    with open(filepath) as f:
         data = json.load(f)
-        
+
     return PenGeometry(
         arm_radius_mm=data["pen_arm_radius_mm"],
         pivot_height_mm=data["pen_pivot_height_mm"],
@@ -663,9 +664,9 @@ def load_pen_config(filepath: str) -> PenGeometry:
 
 def load_height_map(filepath: str) -> HeightMap:
     """Load height map from JSON file"""
-    with open(filepath, 'r') as f:
+    with open(filepath) as f:
         data = json.load(f)
-    
+
     return HeightMap(data)
 
 
@@ -683,24 +684,24 @@ async def run_plotter_sequence(args: argparse.Namespace):
         # --- 1. Load configuration files ---
         pen_geometry = None
         height_map = None
-        
+
         if args.pen_config:
             logger.info(f"Loading pen configuration from {args.pen_config}")
             pen_geometry = load_pen_config(args.pen_config)
             logger.info(f"Pen config: arm={pen_geometry.arm_radius_mm:.1f}mm, "
                        f"pivot={pen_geometry.pivot_height_mm:.1f}mm, "
                        f"angles={pen_geometry.angle_min:.1f}° to {pen_geometry.angle_max:.1f}°")
-        
+
         if args.height_map:
             logger.info(f"Loading height map from {args.height_map}")
             height_map = load_height_map(args.height_map)
-        
+
         # --- 2. Process SVG file ---
         # Determine which scale to use: command line args, constant, or automatic
         manual_scale = None
         max_x_limit = args.max_x if hasattr(args, 'max_x') else None
         max_y_limit = args.max_y if hasattr(args, 'max_y') else None
-        
+
         if args.scale is not None:
             manual_scale = args.scale
             logger.info(f"Using command-line scale: {manual_scale} ({manual_scale*100:.1f}%)")
@@ -711,7 +712,7 @@ async def run_plotter_sequence(args: argparse.Namespace):
             logger.info(f"Using dimension constraints: max_x={max_x_limit}, max_y={max_y_limit}")
         else:
             logger.info("Using automatic fitting to machine area")
-        
+
         plotter_paths = process_svg(args.file, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM, manual_scale, max_x_limit, max_y_limit)
         if not plotter_paths:
             logger.error("No drawable paths were generated from the SVG. Exiting.")
@@ -746,13 +747,13 @@ async def run_plotter_sequence(args: argparse.Namespace):
         logger.info("CAN Interface connected.")
 
         multi_controller = MultiAxisController(can_interface_manager=can_if)
-        
+
         all_axes_configs = {
             "X": {"id": args.motor_ids[0], "name": X_AXIS_NAME, "kin": LinearKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, pitch=X_AXIS_PITCH_MM_PER_REV, gear_ratio=X_AXIS_GEAR_RATIO, units="mm")},
             "Y": {"id": args.motor_ids[1], "name": Y_AXIS_NAME, "kin": LinearKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, pitch=Y_AXIS_PITCH_MM_PER_REV, gear_ratio=Y_AXIS_GEAR_RATIO, units="mm")},
             "Z": {"id": args.motor_ids[2], "name": PEN_AXIS_NAME, "kin": RotaryKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, gear_ratio=PEN_AXIS_GEAR_RATIO)},
         }
-        
+
         logger.info(f"Activating specified axes: {args.axes}")
         for axis_key in args.axes:
             config = all_axes_configs[axis_key]
@@ -768,17 +769,17 @@ async def run_plotter_sequence(args: argparse.Namespace):
 
         await multi_controller.initialize_all_axes(calibrate=False)
         await multi_controller.enable_all_axes()
-        
+
         logger.info("Setting current positions as zero for all active axes...")
         for axis in multi_controller.axes.values():
             await axis.set_current_position_as_zero()
-        
+
         # Log drawing mode
         if height_map and pen_geometry:
             logger.info("Surface-following mode enabled with height compensation")
         else:
             logger.info("Traditional flat drawing mode")
-        
+
         logger.info("Plotter setup complete and ready to draw.")
 
         # --- 5. Drawing Logic ---
@@ -788,10 +789,10 @@ async def run_plotter_sequence(args: argparse.Namespace):
             logger.info(f"--- Drawing path {i+1}/{len(plotter_paths)} ---")
             if not path:
                 continue
-            
+
             # Move to the start of the path
             start_point = path[0]
-            await move_to(multi_controller, start_point[0], start_point[1], TRAVEL_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM, 
+            await move_to(multi_controller, start_point[0], start_point[1], TRAVEL_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM,
                          is_drawing=False, height_map=height_map, pen_geometry=pen_geometry)
 
             # Pen down to draw
@@ -801,7 +802,7 @@ async def run_plotter_sequence(args: argparse.Namespace):
             for point in path[1:]:
                 await move_to(multi_controller, point[0], point[1], DRAWING_SPEED_MMS, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM,
                              is_drawing=True, height_map=height_map, pen_geometry=pen_geometry)
-            
+
             # Pen up after finishing a path
             await pen_up(multi_controller, PEN_ROTATION_SPEED_DEGPS, pen_geometry)
 
@@ -825,7 +826,7 @@ async def run_plotter_sequence(args: argparse.Namespace):
                 await multi_controller.disable_all_axes()
             except exceptions.MKSServoError as e:
                 logger.error(f"Error disabling axes: {e}")
-        
+
         if can_if and can_if.is_connected:
             logger.info("Disconnecting CAN Interface.")
             await can_if.disconnect()
@@ -834,7 +835,7 @@ async def run_plotter_sequence(args: argparse.Namespace):
 def parse_arguments() -> argparse.Namespace:
     """Parses command-line arguments for the SVG plotter script."""
     parser = argparse.ArgumentParser(description="MKS Servo CAN SVG Plotter with Height Compensation")
-    
+
     # Required SVG file argument
     parser.add_argument('--file', type=str, required=True, help='Path to the SVG file to draw.')
 
@@ -876,35 +877,35 @@ def parse_arguments() -> argparse.Namespace:
     # --- Hardware Mode Selection ---
     # Default behavior is to use the simulator. Use --hardware flag to enable real hardware.
     can_group.add_argument(
-        '--hardware', 
+        '--hardware',
         action='store_true',
         help='Use real hardware instead of the simulator (default is to use simulator).'
     )
-    
+
     # Simulator-specific
     can_group.add_argument('--simulator-host', default='localhost', help='Simulator host IP address.')
     can_group.add_argument('--simulator-port', type=int, default=6789, help='Simulator TCP port.')
-    
+
     # Hardware-specific
     hw_group = parser.add_argument_group('Hardware Options (if --hardware is used)')
     hw_group.add_argument('--can-interface-type', default='socketcan', help='Type of python-can interface.')
     hw_group.add_argument('--can-channel', default='can0', help='CAN channel.')
     hw_group.add_argument('--can-bitrate', type=int, default=500000, help='CAN bus bitrate.')
-    
+
     # Motor IDs
     hw_group.add_argument(
         '--motor-ids', nargs=3, type=int, default=[X_AXIS_CAN_ID, Y_AXIS_CAN_ID, PEN_AXIS_CAN_ID],
         metavar=('X_ID', 'Y_ID', 'PEN_ID'),
-        help=f'The CAN IDs for the X, Y, and Pen axes respectively.'
+        help='The CAN IDs for the X, Y, and Pen axes respectively.'
     )
-    
+
     # Axis selection
     hw_group.add_argument(
         '--axes', nargs='+', type=str.upper, default=['X', 'Y', 'Z'],
         choices=['X', 'Y', 'Z'],
         help="Specify which axes to activate. E.g., --axes X Y"
     )
-    
+
     # Logging
     parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Set the logging level.')
 

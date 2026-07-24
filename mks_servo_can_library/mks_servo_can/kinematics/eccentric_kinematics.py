@@ -4,8 +4,8 @@ This is a placeholder and would need a specific mechanical model.
 For example, converting an angle of a rotating input (motor) to a linear
 displacement of an eccentrically driven output.
 """
+import logging  # Added for warning
 import math
-import logging # Added for warning
 
 from mks_servo_can.exceptions import KinematicsError
 
@@ -70,7 +70,7 @@ class EccentricKinematics(Kinematics):
             return 0.0
         ratio = user_value / self.arm_length
         # Clamp ratio to avoid math domain errors with asin due to floating point inaccuracies
-        ratio = max(-1.0, min(1.0, ratio)) 
+        ratio = max(-1.0, min(1.0, ratio))
 
         output_angle_rad = math.asin(ratio)
         output_angle_deg = math.degrees(output_angle_rad)
@@ -195,4 +195,3 @@ class EccentricKinematics(Kinematics):
             }
         )
         return params
-    

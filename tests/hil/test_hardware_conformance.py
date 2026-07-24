@@ -41,7 +41,8 @@ import pathlib
 
 import pytest
 
-from mks_servo_can import CANInterface, constants as const
+from mks_servo_can import CANInterface
+from mks_servo_can import constants as const
 from mks_servo_can.crc import calculate_crc, verify_crc
 
 try:

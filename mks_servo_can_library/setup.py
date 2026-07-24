@@ -8,8 +8,9 @@ dependencies, and classifiers.
 """
 
 # mks_servo_can_project/mks_servo_can_library/setup.py
-import re
 import os
+import re
+
 from setuptools import find_packages, setup
 
 
@@ -19,7 +20,7 @@ def get_version_from_init():
         os.path.dirname(__file__), "mks_servo_can", "__init__.py"
     )
     try:
-        with open(init_py_path, "r", encoding="utf-8") as f_version:
+        with open(init_py_path, encoding="utf-8") as f_version:
             version_file_content = f_version.read()
         version_match = re.search(
             r"^__version__\s*=\s*['\"]([^'\"]*)['\"]",
@@ -43,7 +44,7 @@ def get_version_from_init():
 # relative to the root README
 try:
     with open(
-        "../README.md", "r", encoding="utf-8"
+        "../README.md", encoding="utf-8"
     ) as readme_file:  # Path relative to this setup.py
         long_description = readme_file.read()
 except FileNotFoundError:

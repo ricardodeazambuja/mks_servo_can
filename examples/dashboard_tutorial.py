@@ -14,15 +14,15 @@ Requirements:
 - mks-servo-simulator installed with Rich support
 """
 
-import time
 import subprocess
 import sys
+import time
 from typing import List, Tuple
 
 
 class DashboardTutorial:
     """Interactive tutorial for the Rich dashboard features."""
-    
+
     def __init__(self):
         self.tutorial_steps = [
             ("Getting Started", [
@@ -34,12 +34,12 @@ class DashboardTutorial:
                 "",
                 "The dashboard will show real-time motor status and system information."
             ]),
-            
+
             ("Basic Navigation", [
                 "Once the dashboard is running, you can navigate with these keys:",
                 "",
                 "🔼 ↑ (Up Arrow)    - Select previous motor",
-                "🔽 ↓ (Down Arrow)  - Select next motor", 
+                "🔽 ↓ (Down Arrow)  - Select next motor",
                 "⏎ Enter          - Show detailed motor information",
                 "❓ h              - Show/hide help panel",
                 "⏸️ Space          - Pause/resume dashboard updates",
@@ -47,12 +47,12 @@ class DashboardTutorial:
                 "",
                 "Try selecting different motors with the arrow keys!"
             ]),
-            
+
             ("Motor Controls", [
                 "You can directly control motors from the dashboard:",
                 "",
                 "🔘 e  - Enable/disable the selected motor",
-                "🛑 s  - Stop the selected motor immediately", 
+                "🛑 s  - Stop the selected motor immediately",
                 "0️⃣ z  - Zero the position of selected motor",
                 "",
                 "Motor status will update in real-time as you make changes.",
@@ -61,7 +61,7 @@ class DashboardTutorial:
                 "  🔴 Red = Disabled/Error",
                 "  🟡 Yellow = Warning/Transition"
             ]),
-            
+
             ("Command Injection", [
                 "Advanced users can inject commands directly:",
                 "",
@@ -76,7 +76,7 @@ class DashboardTutorial:
                 "- Run automated test sequences",
                 "- Validate command responses"
             ]),
-            
+
             ("Performance Monitoring", [
                 "The dashboard includes real-time performance monitoring:",
                 "",
@@ -92,13 +92,13 @@ class DashboardTutorial:
                 "",
                 "Monitor these metrics to ensure optimal performance!"
             ]),
-            
+
             ("Configuration Management", [
                 "NEW: Advanced configuration management features:",
                 "",
                 "📁 p  - Configuration profiles menu",
                 "⚙️ l  - Live parameter adjustment",
-                "🏷️ m  - Motor templates menu", 
+                "🏷️ m  - Motor templates menu",
                 "💾 k  - Save current configuration",
                 "",
                 "Configuration features:",
@@ -107,7 +107,7 @@ class DashboardTutorial:
                 "- Adjust parameters live without restart",
                 "- Manage multiple configuration profiles"
             ]),
-            
+
             ("Command Mode Examples", [
                 "When in command mode (press 'c'), try these commands:",
                 "",
@@ -124,7 +124,7 @@ class DashboardTutorial:
                 "  profile my_setup            - Load 'my_setup' profile",
                 "  save test_config            - Save current config as 'test_config'"
             ]),
-            
+
             ("HTTP API Integration", [
                 "The dashboard works alongside the HTTP API:",
                 "",
@@ -141,7 +141,7 @@ class DashboardTutorial:
                 "Use the API for programmatic control while monitoring",
                 "the dashboard for real-time visual feedback!"
             ]),
-            
+
             ("Tips and Best Practices", [
                 "💡 Pro Tips for using the dashboard effectively:",
                 "",
@@ -157,7 +157,7 @@ class DashboardTutorial:
                 "- Use 'q' to quit gracefully if needed",
                 "- Restart simulator if performance degrades"
             ]),
-            
+
             ("Next Steps", [
                 "🎉 Congratulations! You've completed the dashboard tutorial.",
                 "",
@@ -181,13 +181,13 @@ class DashboardTutorial:
                 "Happy simulating! 🚀"
             ])
         ]
-    
+
     def print_step(self, title: str, content: List[str]):
         """Print a tutorial step with formatting."""
         print("\\n" + "=" * 60)
         print(f"📚 {title}")
         print("=" * 60)
-        
+
         for line in content:
             if line.startswith("  "):
                 # Indented content
@@ -198,9 +198,9 @@ class DashboardTutorial:
             else:
                 # Regular content
                 print(f"  {line}")
-        
+
         print("\\n" + "-" * 60)
-    
+
     def run_tutorial(self):
         """Run the complete dashboard tutorial."""
         print("🎯 MKS Servo Simulator - Interactive Dashboard Tutorial")
@@ -208,32 +208,32 @@ class DashboardTutorial:
         print("  This tutorial will teach you how to use the Rich interactive dashboard")
         print("  with all its advanced features and keyboard controls.")
         print("=" * 70)
-        
+
         try:
             for i, (title, content) in enumerate(self.tutorial_steps, 1):
                 self.print_step(f"Step {i}: {title}", content)
-                
+
                 if i < len(self.tutorial_steps):
                     input("Press Enter to continue to the next step...")
-                
+
             print("\\n" + "🎉" * 20)
             print("Tutorial Complete! Start the dashboard and begin exploring.")
             print("🎉" * 20)
-            
+
         except KeyboardInterrupt:
             print("\\n\\n⚠️ Tutorial interrupted by user.")
             print("You can restart the tutorial anytime by running this script again.")
-    
+
     def check_dependencies(self) -> bool:
         """Check if required dependencies are available."""
         try:
             # Check if simulator is installed
-            result = subprocess.run(['mks-servo-simulator', '--help'], 
+            result = subprocess.run(['mks-servo-simulator', '--help'],
                                   capture_output=True, text=True, timeout=5)
             return result.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return False
-    
+
     def show_quick_start(self):
         """Show quick start commands."""
         print("\\n🚀 Quick Start Commands:")
@@ -252,24 +252,24 @@ class DashboardTutorial:
 def main():
     """Main function to run the dashboard tutorial."""
     tutorial = DashboardTutorial()
-    
+
     print("Checking dependencies...")
     if not tutorial.check_dependencies():
         print("❌ Error: mks-servo-simulator not found!")
         print("Please install the simulator first:")
         print("  cd mks_servo_simulator && pip install -e .")
         return
-    
+
     print("✅ Dependencies OK")
-    
+
     # Ask user what they want to do
     print("\\nWhat would you like to do?")
     print("1. Run complete tutorial")
     print("2. Show quick start commands only")
     print("3. Exit")
-    
+
     choice = input("\\nEnter your choice (1-3): ").strip()
-    
+
     if choice == "1":
         tutorial.run_tutorial()
         tutorial.show_quick_start()

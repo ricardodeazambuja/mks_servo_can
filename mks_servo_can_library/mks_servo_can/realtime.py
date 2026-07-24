@@ -36,12 +36,10 @@ Position feedback, if enabled, runs on a separate and much slower task. A
 control loop does not need feedback at the loop rate; it needs it often enough
 to detect loss of sync and to correct predictor drift.
 """
-from typing import Callable, Dict, Iterable, List, Optional
-
 import asyncio
 import logging
-import math
 import time
+from typing import Dict, Iterable, Optional
 
 from . import constants as const
 from . import motor_profile

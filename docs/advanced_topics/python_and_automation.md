@@ -8,10 +8,10 @@ Python, especially when paired with `asyncio`, is highly effective for a wide ra
 
 ### 1. High-Level Sequencing and Orchestration
 
-Python excels at managing the "what to do next" logic of a system. It can easily handle tasks like parsing files, planning a sequence of movements, and coordinating multiple devices. The `svg_plotter.py` example is a perfect illustration: Python handles the complex logic of reading an SVG, processing the coordinates, and then issuing a series of high-level "move here" commands to the motors.
+Python excels at managing the "what to do next" logic of a system. It can easily handle tasks like parsing files, planning a sequence of movements, and coordinating multiple devices. The `enhanced_svg_plotter.py` example is a perfect illustration: Python handles the complex logic of reading an SVG, processing the coordinates, and then issuing a series of high-level "move here" commands to the motors.
 
 ```python
-# From svg_plotter.py - Python handling high-level logic
+# From enhanced_svg_plotter.py - Python handling high-level logic
 # This kind of file parsing, path planning, and looping is a major strength.
 plotter_paths = process_svg(args.file, PLOTTER_MAX_X_MM, PLOTTER_MAX_Y_MM)
 
@@ -80,7 +80,7 @@ The main loop of your Python application should be focused on I/O-bound tasks (l
 Leverage `asyncio` to manage I/O and concurrent operations. This will make your application more responsive and efficient than traditional multi-threaded approaches, especially when dealing with many devices.
 
 ### Prioritize Clarity
-Write clear, well-documented code. Automation logic can become complex, and Python's readability is one of its greatest assets. Use meaningful variable names and helper functions to abstract away complexity, as seen in the `svg_plotter.py` example's `move_to()` function.
+Write clear, well-documented code. Automation logic can become complex, and Python's readability is one of its greatest assets. Use meaningful variable names and helper functions to abstract away complexity, as seen in the `enhanced_svg_plotter.py` example's `move_to()` function.
 
 ### Implement Comprehensive Error Handling
 Automation systems interact with the real world, where errors are inevitable (e.g., a motor stalling, a communication timeout). Wrap your control logic in `try...except` blocks to catch exceptions from the library and handle them gracefully, ensuring your system can recover or fail safely.

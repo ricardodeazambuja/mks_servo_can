@@ -9,6 +9,7 @@ entry point for the simulator's command-line interface.
 """
 import os
 import re
+
 from setuptools import find_packages, setup
 
 
@@ -18,7 +19,7 @@ def get_version_from_init():
         os.path.dirname(__file__), "mks_simulator", "__init__.py"
     )
     try:
-        with open(init_py_path, "r", encoding="utf-8") as f_version:
+        with open(init_py_path, encoding="utf-8") as f_version:
             version_file_content = f_version.read()
         version_match = re.search(
             r"^__version__\s*=\s*['\"]([^'\"]*)['\"]",
@@ -39,7 +40,7 @@ def get_version_from_init():
 
 # Try to get long description from a shared README, adjust path as necessary
 try:
-    with open("../../README.md", "r", encoding="utf-8") as f_readme:
+    with open("../../README.md", encoding="utf-8") as f_readme:
         long_description = f_readme.read()
 except FileNotFoundError:
     long_description = (

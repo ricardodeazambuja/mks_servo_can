@@ -6,19 +6,19 @@ Large Language Models like Claude Code to effectively debug and
 analyze mks-servo-can based applications.
 """
 
-import time
 import json
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
-from dataclasses import dataclass, asdict
+import time
 from collections import deque
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from ..motor_model import MotorModel
     from ..virtual_can_bus import VirtualCANBus
 
 # Load manual command specifications for reference
-import sys
 from pathlib import Path
+
 try:
     # Try to load command specifications
     test_dir = Path(__file__).parent.parent.parent.parent.parent
@@ -67,7 +67,7 @@ class LLMDebugInterface:
     - Error tracking and analysis
     - State validation capabilities
     """
-    
+
     def __init__(self, motors: Dict[int, 'MotorModel'], can_bus: 'VirtualCANBus'):
         """
         Initialize LLM debug interface.
@@ -81,12 +81,12 @@ class LLMDebugInterface:
         self.command_history: deque = deque(maxlen=1000)
         self.recent_errors: deque = deque(maxlen=100)
         self.start_time = time.time()
-        
+
         # Statistics tracking
         self._message_count = 0
         self._last_message_time = time.time()
         self._message_times = deque(maxlen=50)  # For rate calculation
-    
+
     def get_system_status(self) -> Dict[str, Any]:
         """
         Return complete system state in structured format.
@@ -96,7 +96,7 @@ class LLMDebugInterface:
             for LLM analysis and debugging.
         """
         current_time = time.time()
-        
+
         return {
             "timestamp": current_time,
             "uptime_seconds": current_time - self.start_time,
@@ -127,7 +127,7 @@ class LLMDebugInterface:
             ],
             "available_commands": len(MANUAL_COMMANDS)
         }
-    
+
     def _get_motor_status(self, motor: 'MotorModel') -> Dict[str, Any]:
         """Get detailed status for a specific motor"""
         return {
@@ -156,7 +156,7 @@ class LLMDebugInterface:
                 "total_commands": getattr(motor, 'total_commands', 0)
             }
         }
-    
+
     def get_motor_status(self, motor_id: int) -> Optional[Dict[str, Any]]:
         """
         Get detailed status for specific motor.
@@ -170,7 +170,7 @@ class LLMDebugInterface:
         if motor_id in self.motors:
             return self._get_motor_status(self.motors[motor_id])
         return None
-    
+
     def get_command_history(self, motor_id: Optional[int] = None, limit: int = 50) -> List[Dict]:
         """
         Return recent command history for analysis.
@@ -185,7 +185,7 @@ class LLMDebugInterface:
         commands = list(self.command_history)
         if motor_id is not None:
             commands = [cmd for cmd in commands if cmd.motor_id == motor_id]
-        
+
         return [
             {
                 "timestamp": cmd.timestamp,
@@ -199,7 +199,7 @@ class LLMDebugInterface:
             }
             for cmd in commands[-limit:]
         ]
-    
+
     def validate_expected_state(self, expected_state: Dict) -> Dict[str, Any]:
         """
         Validate current state against expected state for testing.
@@ -211,7 +211,7 @@ class LLMDebugInterface:
             Validation results with pass/fail status and detailed feedback
         """
         current = self.get_system_status()
-        
+
         validation_results = {
             "passed": True,
             "failures": [],
@@ -219,9 +219,9 @@ class LLMDebugInterface:
             "summary": "",
             "timestamp": time.time()
         }
-        
+
         tolerance = expected_state.get("tolerance", 0.1) # Global tolerance
-        
+
         # Compare expected vs actual motor states
         for expected_motor_state in expected_state.get("motors", []): # Iterate list
             motor_id = expected_motor_state.get("id")
@@ -237,12 +237,12 @@ class LLMDebugInterface:
                 continue
 
             actual_motor = current["motors"][motor_id_str]
-            
+
             # Iterate through the expected parameters for the current motor
             for field, expected_value in expected_motor_state.items():
                 if field == "id": # Already used
                     continue
-                
+
                 # Handle per-motor tolerance if present, otherwise use global
                 # Also, if 'tolerance' is the field itself, don't treat it as a parameter to check
                 if field == "tolerance":
@@ -253,7 +253,7 @@ class LLMDebugInterface:
                 param_found = True
                 if '.' in field: # Handle nested fields like "status_flags.moving"
                     parts = field.split('.')
-                    for i, part in enumerate(parts):
+                    for _i, part in enumerate(parts):
                         if isinstance(actual_value_container, dict) and part in actual_value_container:
                             actual_value_container = actual_value_container[part]
                         else:
@@ -268,7 +268,7 @@ class LLMDebugInterface:
                     continue
                 else:
                     actual_value = actual_motor[field]
-                
+
                 # Comparison logic
                 if isinstance(expected_value, (int, float)) and isinstance(actual_value, (int, float)):
                     if abs(actual_value - expected_value) > motor_specific_tolerance:
@@ -289,12 +289,12 @@ class LLMDebugInterface:
                         )
                         validation_results["passed"] = False
                 # Add other type comparisons if necessary
-        
+
         # Validate communication expectations
         if "communication" in expected_state:
             comm_expected = expected_state["communication"]
             comm_actual = current["communication"]
-            
+
             for field, expected_value in comm_expected.items():
                 if field in comm_actual:
                     actual_value = comm_actual[field]
@@ -303,17 +303,17 @@ class LLMDebugInterface:
                             validation_results["failures"].append(
                                 f"Communication {field}: expected {expected_value}, got {actual_value}"
                             )
-        
+
         validation_results["passed"] = len(validation_results["failures"]) == 0
         validation_results["summary"] = (
             f"{'PASS' if validation_results['passed'] else 'FAIL'}: "
             f"{len(validation_results['failures'])} failures, {len(validation_results['warnings'])} warnings"
         )
-        
+
         return validation_results
-    
-    def record_command(self, motor_id: int, command_code: int, command_name: str, 
-                      parameters: Dict, response_time: float, success: bool, 
+
+    def record_command(self, motor_id: int, command_code: int, command_name: str,
+                      parameters: Dict, response_time: float, success: bool,
                       error_message: Optional[str] = None):
         """
         Record a command execution for history tracking.
@@ -338,11 +338,11 @@ class LLMDebugInterface:
             error_message=error_message
         )
         self.command_history.append(record)
-        
+
         # Update statistics
         self._message_count += 1
         self._message_times.append(time.time())
-    
+
     def record_error(self, motor_id: int, error_type: str, description: str, context: Dict):
         """
         Record an error for debugging analysis.
@@ -361,7 +361,7 @@ class LLMDebugInterface:
             context=context
         )
         self.recent_errors.append(error)
-    
+
     def get_available_commands(self) -> Dict[str, Any]:
         """
         Return list of all available commands for LLM reference.
@@ -375,7 +375,7 @@ class LLMDebugInterface:
                 "categories": {},
                 "note": "Manual commands specification not loaded"
             }
-        
+
         return {
             "commands": [
                 {
@@ -395,7 +395,7 @@ class LLMDebugInterface:
             },
             "total_commands": len(MANUAL_COMMANDS)
         }
-    
+
     def get_debug_summary(self) -> str:
         """
         Get a concise debug summary suitable for LLM context.
@@ -404,38 +404,38 @@ class LLMDebugInterface:
             String summary of current system state
         """
         status = self.get_system_status()
-        
+
         motor_summaries = []
         for motor_id, motor_status in status["motors"].items():
             pos = motor_status["current_position"]
             enabled = motor_status["enabled"]
             moving = motor_status["status_flags"]["moving"]
             motor_summaries.append(f"Motor {motor_id}: pos={pos}, {'enabled' if enabled else 'disabled'}, {'moving' if moving else 'stopped'}")
-        
+
         recent_commands = len(self.command_history)
         recent_errors = len(self.recent_errors)
         uptime = status["uptime_seconds"]
-        
+
         return f"Simulator uptime: {uptime:.1f}s, Motors: {len(status['motors'])}, Commands: {recent_commands}, Errors: {recent_errors}, {', '.join(motor_summaries)}"
-    
+
     def _calculate_message_rate(self) -> float:
         """Calculate current message rate"""
         if len(self._message_times) < 2:
             return 0.0
-        
+
         time_span = self._message_times[-1] - self._message_times[0]
         return len(self._message_times) / time_span if time_span > 0 else 0.0
-    
+
     def _calculate_average_latency(self) -> float:
         """Calculate average command response latency"""
         if not self.command_history:
             return 0.0
-        
+
         recent_commands = list(self.command_history)[-20:]  # Last 20 commands
         latencies = [cmd.response_time_ms for cmd in recent_commands if cmd.success]
-        
+
         return sum(latencies) / len(latencies) if latencies else 0.0
-    
+
     def export_status_json(self, filepath: Optional[str] = None) -> str:
         """
         Export current status as JSON string or file.
@@ -448,9 +448,9 @@ class LLMDebugInterface:
         """
         status = self.get_system_status()
         json_str = json.dumps(status, indent=2, default=str)
-        
+
         if filepath:
             with open(filepath, 'w') as f:
                 f.write(json_str)
-        
+
         return json_str

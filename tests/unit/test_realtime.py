@@ -1,7 +1,6 @@
 """Tests for the fixed-rate streaming controller and the alpha-beta tracker."""
 import asyncio
 import math
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

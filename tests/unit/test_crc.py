@@ -7,17 +7,16 @@ examples from the MKS servo motor user manual.
 # Unit tests are designed to test individual components or functions in isolation.
 
 import pytest
-# Imports the pytest framework, which is used for writing and running these tests.
 
-from mks_servo_can.crc import calculate_crc
+# Imports the pytest framework, which is used for writing and running these tests.
 # Imports the 'calculate_crc' function from the crc module within the mks_servo_can library.
 # This function is responsible for generating the CRC checksum for a given CAN ID and data payload.
+from mks_servo_can.crc import calculate_crc, verify_crc
 
-from mks_servo_can.crc import verify_crc
 # Imports the 'verify_crc' function from the crc module.
 # This function is used to check if a received CRC matches the calculated CRC for a message.
-
 from mks_servo_can.exceptions import ParameterError
+
 # Imports the 'ParameterError' exception from the library's exceptions module.
 # This custom exception is expected to be raised when invalid parameters are passed to the CRC functions.
 
@@ -234,4 +233,3 @@ class TestCRC:
             ParameterError, match="CAN ID 2048 is out of valid range 0-2047."
         ):
             verify_crc(can_id=0x800, received_bytes=received_bytes)
-            

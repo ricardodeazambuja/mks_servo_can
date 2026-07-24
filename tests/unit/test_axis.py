@@ -10,59 +10,57 @@ its dependencies, such as `CANInterface` and `LowLevelAPI`.
 # It will typically involve mocking the LowLevelAPI and CANInterface to isolate Axis logic.
 
 import asyncio
-# Imports the 'asyncio' library, which is fundamental for the asynchronous operations
-# used in the 'mks_servo_can' library and its tests.
 
-import pytest
 # Imports the 'pytest' framework, used for writing and running these tests.
-
-from unittest.mock import AsyncMock
 # Imports 'AsyncMock' from 'unittest.mock' to create mock objects for asynchronous methods/classes.
-
-from unittest.mock import MagicMock
 # Imports 'MagicMock', a versatile mock object that can mock synchronous methods and attributes.
-
-from unittest.mock import patch
 # Imports 'patch' from 'unittest.mock', used as a decorator or context manager
 # to replace objects with mocks within a specific scope (e.g., a test function).
+from unittest.mock import (
+    ANY,  # Import ANY for flexible argument matching
+    AsyncMock,
+    MagicMock,
+    patch,
+)
 
-from unittest.mock import ANY # Import ANY for flexible argument matching
+# Imports the 'asyncio' library, which is fundamental for the asynchronous operations
+# used in the 'mks_servo_can' library and its tests.
+import pytest
+
 # Imports 'ANY' from 'unittest.mock', which is a special object that compares equal to anything.
 # It's useful in assertions when the exact value of an argument doesn't matter,
 # but its presence or type might.
-
 from mks_servo_can import constants as const
+
 # Imports the 'constants' module (aliased as 'const') from the 'mks_servo_can' library.
 # This provides access to predefined constants used by the Axis class.
-
 from mks_servo_can.axis import Axis
-# Imports the 'Axis' class, which is the System Under Test (SUT) for this file.
 
+# Imports the 'Axis' class, which is the System Under Test (SUT) for this file.
 from mks_servo_can.can_interface import CANInterface
+
 # Imports 'CANInterface', which is a dependency of 'Axis' and will be mocked
 # to simulate CAN communication without actual hardware or a full simulator.
-
-from mks_servo_can.exceptions import CalibrationError
 # Imports specific exception types. These are used to assert that the 'Axis' class
 # raises or correctly handles these errors under various conditions.
-
-from mks_servo_can.exceptions import CommunicationError
 # For errors related to communication timeouts or failures.
-
-from mks_servo_can.exceptions import LimitError
 # For errors indicating a physical or software limit has been reached.
-
-from mks_servo_can.exceptions import ParameterError
 # For errors due to invalid parameters provided to Axis methods.
+from mks_servo_can.exceptions import (
+    CalibrationError,
+    CommunicationError,
+    LimitError,
+    MotorError,
+    ParameterError,
+)
 
-from mks_servo_can.exceptions import MotorError
 # For general errors reported by the motor or during motor operations.
-
 from mks_servo_can.kinematics import RotaryKinematics
+
 # Imports 'RotaryKinematics' as it's the default kinematics type for an Axis
 # and is used in setting up test instances.
-
 from mks_servo_can.low_level_api import LowLevelAPI
+
 # Imports 'LowLevelAPI', another dependency of 'Axis' that will be mocked.
 # The Axis class delegates many hardware-specific commands to the LowLevelAPI.
 
@@ -275,7 +273,7 @@ class TestAxisBasicOps:
         # with the correct CAN ID of the axis and 'True' (to enable the motor).
         assert axis_instance._is_enabled is True # Internal flag should be updated
         # Asserts that the Axis's internal '_is_enabled' flag is set to True after the call.
-        
+
         # Test idempotency: calling enable again when already enabled should not re-call low-level API
         mock_low_level_api.enable_motor.reset_mock() # Reset call count for next check
         # Resets the mock to clear previous call information (like call_count).
@@ -316,7 +314,7 @@ class TestAxisBasicOps:
         mock_steps = 8192 # Example raw step count (e.g., half a revolution for 16384 steps/rev motor).
         # Configure the mock LowLevelAPI's 'read_encoder_value_addition' to return 'mock_steps'.
         mock_low_level_api.read_encoder_value_addition.return_value = mock_steps
-        
+
         # The 'axis_instance' fixture by default uses RotaryKinematics with ENCODER_PULSES_PER_REVOLUTION (16384).
         # So, 8192 steps should correspond to 180.0 degrees.
         user_pos = await axis_instance.get_current_position_user()
@@ -344,7 +342,7 @@ class TestAxisInitialization:
         # The 'initialize' method should still read initial motor status like position and enable state.
         mock_low_level_api.read_encoder_value_addition.return_value = 100 # Simulate initial position in steps.
         mock_low_level_api.read_en_pin_status.return_value = True      # Simulate initial enable state (True = enabled).
-        
+
         await axis_instance.initialize(calibrate=False, home=False)
         # Calls initialize with 'calibrate' and 'home' flags set to False.
 
@@ -356,12 +354,12 @@ class TestAxisInitialization:
         # or by checking that 'mock_low_level_api.go_home' (if it's the direct path) isn't called.
         # A simpler check here is that the internal _is_homed flag remains False (its default).
         assert axis_instance._is_homed is False # Ensure homing didn't inadvertently occur.
-        
+
         assert axis_instance._is_enabled is True # Verify the internal enabled flag is updated from read_en_pin_status.
         assert axis_instance._current_position_steps == 100 # Verify internal position steps cache is updated.
         # After initialization without calibration, the _is_calibrated flag should be True
         # (as per current Axis.initialize logic: if not calibrate, it sets _is_calibrated = True).
-        assert axis_instance._is_calibrated is True 
+        assert axis_instance._is_calibrated is True
 
     @pytest.mark.asyncio
     async def test_initialize_with_calibrate_and_home(
@@ -371,9 +369,9 @@ class TestAxisInitialization:
         # Assumes calibration will succeed.
         mock_low_level_api.read_encoder_value_addition.return_value = 0 # Initial position before actions.
         mock_low_level_api.read_en_pin_status.return_value = False   # Assume motor starts disabled.
-        
+
         # Configure the mock for calibrate_encoder to simulate success (no exception, no specific return needed).
-        mock_low_level_api.calibrate_encoder = AsyncMock(return_value=None) 
+        mock_low_level_api.calibrate_encoder = AsyncMock(return_value=None)
 
         # The 'home_axis' method of the Axis class itself is a complex operation.
         # To isolate the 'initialize' method's logic of *calling* 'home_axis',
@@ -418,7 +416,7 @@ class TestAxisInitialization:
 
         # Verify that 'calibrate_encoder' on the LowLevelAPI was attempted once.
         mock_low_level_api.calibrate_encoder.assert_called_once_with(axis_instance.can_id)
-        
+
         # Verify that the Axis's internal '_is_calibrated' flag is False due to the failure.
         assert axis_instance._is_calibrated is False
         # Verify that the Axis's internal '_is_homed' flag is also False, as homing was skipped.
@@ -444,7 +442,7 @@ class TestAxisMovement:
         # 3. Axis then calls CANInterface's 'create_response_future' to prepare for a completion signal from the motor.
         # 4. This test simulates the arrival of that "move complete" CAN message by resolving the future.
         # 5. Finally, it asserts that the Axis method completes successfully and its internal state (like position) is updated.
-        
+
         relative_pulses = 1000      # Define the number of pulses for the relative move.
         speed_param = 500           # Define the MKS speed parameter for the move.
         accel_param = 100           # Define the MKS acceleration parameter.
@@ -477,7 +475,7 @@ class TestAxisMovement:
 
         # Allow the 'move_task' to start and reach the point where 'Axis._execute_move'
         # is awaiting 'current_test_completion_future'.
-        await asyncio.sleep(0.01) 
+        await asyncio.sleep(0.01)
         assert (
             not current_test_completion_future.done()
         ), "Completion future should be actively awaited by _execute_move at this point."
@@ -487,13 +485,13 @@ class TestAxisMovement:
         # Simulate the "move complete" CAN message arriving from the motor.
         # Construct the data payload for this simulated CAN message.
         # It includes the echoed command code and the "position run complete" status.
-        response_payload_data = [cmd_code, const.POS_RUN_COMPLETE] 
+        response_payload_data = [cmd_code, const.POS_RUN_COMPLETE]
         # Calculate a simplified CRC for the test response.
-        response_crc = (can_id + sum(response_payload_data)) & 0xFF 
+        response_crc = (can_id + sum(response_payload_data)) & 0xFF
         completion_msg_data = bytes(response_payload_data + [response_crc])
-        
+
         # Create a dummy CanMessage object representing the completion signal.
-        simulated_can_msg = CanMessage( 
+        simulated_can_msg = CanMessage(
             arbitration_id=can_id,      # The message comes from the motor's CAN ID.
             data=completion_msg_data,   # The constructed data payload.
             dlc=len(completion_msg_data), # Data Length Code.
@@ -505,7 +503,7 @@ class TestAxisMovement:
 
         # Wait for the 'move_relative_pulses' task (and thus _execute_move) to fully finish.
         # This should complete now that 'current_test_completion_future' has a result.
-        await move_task 
+        await move_task
 
         # Assert that the LowLevelAPI's 'run_position_mode_relative_pulses' was called once
         # with the correct arguments to initiate the move.
@@ -518,7 +516,7 @@ class TestAxisMovement:
         # ANY is used for 'response_predicate' because the exact function object can be hard to match,
         # but we verify it was called with the correct CAN ID and command code.
         mock_can_interface_for_axis.create_response_future.assert_called_once_with(
-            can_id, cmd_code, response_predicate=ANY 
+            can_id, cmd_code, response_predicate=ANY
         )
         # Assert that the Axis now considers the move complete.
         assert axis_instance.is_move_complete()
@@ -559,10 +557,10 @@ class TestAxisMovement:
 
         # Simulate the "limit hit" CAN message arriving.
         # The status byte 'const.POS_RUN_END_LIMIT_STOPPED' indicates a limit stop.
-        response_payload_data = [cmd_code, const.POS_RUN_END_LIMIT_STOPPED] 
-        response_crc = (can_id + sum(response_payload_data)) & 0xFF 
+        response_payload_data = [cmd_code, const.POS_RUN_END_LIMIT_STOPPED]
+        response_crc = (can_id + sum(response_payload_data)) & 0xFF
         completion_msg_data = bytes(response_payload_data + [response_crc])
-        
+
         simulated_can_msg_limit = CanMessage(
             arbitration_id=can_id,
             data=completion_msg_data,
@@ -591,12 +589,12 @@ class TestAxisMovement:
         axis_instance: Axis,
         mock_low_level_api: AsyncMock,
         mock_can_interface_for_axis: MagicMock,
-    ): 
+    ):
         # Tests the scenario where a move times out because no completion signal
         # (neither success nor error like limit hit) is received from the motor.
         relative_pulses = 500
-        can_id = axis_instance.can_id 
-        cmd_code = const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES 
+        can_id = axis_instance.can_id
+        cmd_code = const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES
 
         # Mock LowLevelAPI to indicate move starting.
         mock_low_level_api.run_position_mode_relative_pulses.return_value = (
@@ -611,19 +609,19 @@ class TestAxisMovement:
         mock_can_interface_for_axis.create_response_future.return_value = (
             current_test_completion_future
         )
-        
+
         # Patch the timeout constant used in 'Axis._execute_move' for this specific test.
         # This temporarily changes the value of 'const.CAN_TIMEOUT_SECONDS' (which influences
         # the dynamic timeout calculation or serves as a base for it) to a very short value (0.001s)
         # to make the timeout occur quickly during the test.
-        with patch( 
+        with patch(
             "mks_servo_can.axis.const.CAN_TIMEOUT_SECONDS", 0.001 # New, very short timeout value.
         ):
             # Assert that calling 'move_relative_pulses' (with wait=True)
             # raises a 'CommunicationError' due to the timeout.
             # The error message should indicate a timeout waiting for the move.
             with pytest.raises(
-                CommunicationError, match="Timeout waiting for move" 
+                CommunicationError, match="Timeout waiting for move"
             ):
                 await axis_instance.move_relative_pulses(
                     relative_pulses, wait=True
@@ -632,13 +630,13 @@ class TestAxisMovement:
         # Assert that the Axis considers the move sequence complete (due to the timeout/error).
         assert axis_instance.is_move_complete()
         # Assert that the internal future representing the move ('_active_move_future') exists.
-        assert axis_instance._active_move_future is not None 
+        assert axis_instance._active_move_future is not None
         # Assert that this internal future is marked as done (it should have an exception set).
         assert axis_instance._active_move_future.done()
-        
+
         # Further assert that awaiting this internal future directly also raises CommunicationError.
         # This verifies that the future was correctly set with the CommunicationError exception by _execute_move.
-        with pytest.raises(CommunicationError): 
+        with pytest.raises(CommunicationError):
             await axis_instance._active_move_future
 
         # Verify 'create_response_future' was called, expecting the predicate.
@@ -655,7 +653,7 @@ class TestAxisMovement:
         # correctly calls the internal '_execute_move' method with the expected parameters.
         # It does this by patching '_execute_move' itself with an AsyncMock.
         with patch.object(
-            axis_instance, "_execute_move", new_callable=AsyncMock 
+            axis_instance, "_execute_move", new_callable=AsyncMock
         ) as mock_exec_move:
             # Calls 'move_relative_pulses' with 'wait=False'.
             # If 'wait=True', the outer call would await the (now mocked) '_execute_move'.
@@ -666,11 +664,11 @@ class TestAxisMovement:
             )
             # Assert that the mocked '_execute_move' was called exactly once.
             mock_exec_move.assert_called_once()
-            
+
             # Retrieve the arguments with which '_execute_move' was called.
             # 'call_args' is a tuple (positional_args, keyword_args).
             args, kwargs = mock_exec_move.call_args
-            
+
             # Assert that specific arguments were passed correctly.
             # 'command_const' is passed as the second positional argument (index 1) to _execute_move.
             # args[0] would be the 'move_command_func' (a lambda).
@@ -688,7 +686,7 @@ class TestAxisMovement:
             target_steps = 10000
             speed = 500
             await axis_instance.move_to_position_abs_axis(target_steps, speed, wait=False)
-            
+
             # Verify _execute_move was called with the right command constant and parameters
             mock_exec_move.assert_called_once_with(
                 ANY,  # the lambda function
@@ -696,7 +694,7 @@ class TestAxisMovement:
                 pulses_to_move_for_timeout=target_steps,
                 speed_param_for_calc=speed
             )
-            
+
             # Verify the lambda calls the correct low-level API method
             cmd_func_lambda = mock_exec_move.call_args[0][0]
             await cmd_func_lambda() # Execute the captured lambda
@@ -711,23 +709,23 @@ class TestAxisMovement:
             relative_steps = -5000
             speed = 600
             await axis_instance.move_relative_axis(relative_steps, speed, wait=False)
-            
+
             mock_exec_move.assert_called_once_with(
                 ANY,
                 const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS,
                 pulses_to_move_for_timeout=relative_steps,
                 speed_param_for_calc=speed
             )
-            
+
             cmd_func_lambda = mock_exec_move.call_args[0][0]
             await cmd_func_lambda()
             mock_low_level_api.run_position_mode_relative_axis.assert_called_with(
                 axis_instance.can_id, speed, axis_instance.default_accel_param, relative_steps
             )
-            
+
 @pytest.mark.asyncio
 # Marks this class for asynchronous tests.
-class TestAxisPing: 
+class TestAxisPing:
     # This test class is dedicated to testing the 'ping' functionality of the Axis.
     # Ping is typically used to check if a motor is responsive using a lightweight command.
 
@@ -738,7 +736,7 @@ class TestAxisPing:
         # Configure the mock LowLevelAPI's 'read_en_pin_status' (used by Axis.ping)
         # to simulate a successful read. The actual boolean value returned doesn't matter
         # for ping success, only that the command completes without error.
-        mock_low_level_api.read_en_pin_status.return_value = True 
+        mock_low_level_api.read_en_pin_status.return_value = True
 
         # Call the ping method on the Axis instance.
         result = await axis_instance.ping()
@@ -803,7 +801,7 @@ class TestAxisPing:
         mock_low_level_api.read_en_pin_status.return_value = True # Simulate success for the underlying call.
 
         # Call ping with an explicit timeout for the ping operation.
-        result = await axis_instance.ping(timeout=0.5) 
+        result = await axis_instance.ping(timeout=0.5)
 
         assert result is True # Asserts successful ping.
         mock_low_level_api.read_en_pin_status.assert_called_once_with(axis_instance.can_id)
@@ -811,4 +809,3 @@ class TestAxisPing:
         # If Axis.ping were modified to pass its timeout parameter down to the
         # low_level_api.read_en_pin_status call, that interaction would be asserted here.
         # Currently, the timeout in ping() is for the wrapper around the internal _do_ping call.
-        

@@ -7,18 +7,18 @@ and coordinated movement commands. It uses mocks to isolate the controller's
 logic from the underlying CANInterface and Axis implementations.
 """
 
-import pytest
-import asyncio
 import math
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from mks_servo_can import (
-    CANInterface,
     Axis,
-    MultiAxisController,
+    CANInterface,
     LinearKinematics,
+    MultiAxisController,
+    const,
     exceptions,
-    const
 )
 
 # --- Fixtures ---
@@ -42,7 +42,7 @@ def populated_controller(mock_can_interface: CANInterface) -> MultiAxisControlle
     """
     # Pass the event_loop from the test function to the controller.
     controller = MultiAxisController(can_interface_manager=mock_can_interface)
-    kin = LinearKinematics(pitch=1.0, steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION)
+    _kin = LinearKinematics(pitch=1.0, steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION)
 
     # Create mock Axis objects. Using spec ensures they have the correct methods.
     # MagicMock is used as Axis has both sync and async methods.
@@ -112,7 +112,7 @@ class TestMultiAxisControllerGroupOps:
     async def test_enable_all_axes_success(self, populated_controller: MultiAxisController):
         """Test that enable_all_axes calls enable_motor on all managed axes."""
         await populated_controller.enable_all_axes()
-        
+
         # Verify that enable_motor was called on each mock axis
         for axis in populated_controller.axes.values():
             axis.enable_motor.assert_called_once()
@@ -147,7 +147,7 @@ class TestMultiAxisControllerGroupOps:
         assert isinstance(positions, dict)
         assert positions.get("AxisX") == 10.5
         assert positions.get("AxisY") == -20.2
-        
+
 @pytest.mark.asyncio
 class TestMultiAxisControllerMovement:
     """Tests for multi-axis movement commands, including interpolation logic."""
@@ -159,7 +159,7 @@ class TestMultiAxisControllerMovement:
         start_pos = {"AxisX": 10.0, "AxisY": 10.0}
         # Mock the controller's ability to get current positions
         populated_controller.get_all_positions_user = AsyncMock(return_value=start_pos)
-        
+
         # We will check if this underlying move method is called with the correctly calculated speeds
         populated_controller.move_all_to_positions_abs_user = AsyncMock()
 
@@ -192,7 +192,7 @@ class TestMultiAxisControllerMovement:
         # Expected speed_x = abs(30 / 5.0) = 6.0 mm/s
         # Expected speed_y = abs(40 / 5.0) = 8.0 mm/s
         expected_speeds = {"AxisX": 6.0, "AxisY": 8.0}
-        
+
         # Verify that the underlying move method was called once with the correct parameters
         populated_controller.move_all_to_positions_abs_user.assert_called_once_with(
             positions_user=target_pos,

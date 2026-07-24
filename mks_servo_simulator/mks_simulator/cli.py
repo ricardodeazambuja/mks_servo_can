@@ -3,18 +3,21 @@ Command-Line Interface for the MKS Servo CAN Simulator.
 Uses 'click' for CLI argument parsing and command structure.
 """
 import asyncio
-import click  # Ensure 'click' is in your requirements for the simulator
 import logging
 import signal
-import json
 from typing import Optional
 
+import click  # Ensure 'click' is in your requirements for the simulator
+
+from .interface.config_manager import ConfigurationManager, LiveConfigurationInterface
+from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
+from .interface.llm_debug_interface import LLMDebugInterface
+from .interface.textual_dashboard import TextualDashboard
 from .motor_model import SimulatedMotor
 from .virtual_can_bus import VirtualCANBus
-from .interface.llm_debug_interface import LLMDebugInterface
-from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
-from .interface.textual_dashboard import TextualDashboard
-from .interface.config_manager import ConfigurationManager, LiveConfigurationInterface
+
+# Strong references to background tasks, so they are not garbage collected.
+_keepalive_tasks: set = set()
 
 # Basic logging setup for the simulator
 logging.basicConfig(
@@ -30,7 +33,7 @@ try:
 except ImportError as exc:
     # Minimal fallback if library not in path
     logger.warning(f"Exception: {exc}")
-    logger.warning(f"Bypassing the import...")
+    logger.warning("Bypassing the import...")
     class lib_const:  # type: ignore
         ENCODER_PULSES_PER_REVOLUTION = 16384  # Default from MKS manual
         MOTOR_TYPE_SERVO42D = "SERVO42D"
@@ -53,7 +56,7 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
             logger.info("Server task cancelled successfully.")
         except Exception as e:
             logger.error(f"Error during server task shutdown: {e}")
-    
+
     if debug_server_task and not debug_server_task.done():
         logger.info("Cancelling debug server task...")
         debug_server_task.cancel()
@@ -63,7 +66,7 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
             logger.info("Debug server task cancelled successfully.")
         except Exception as e:
             logger.error(f"Error during debug server shutdown: {e}")
-    
+
     if textual_dashboard_task and not textual_dashboard_task.done():
         logger.info("Cancelling Textual dashboard task...")
         textual_dashboard_task.cancel()
@@ -73,7 +76,7 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
             logger.info("Textual dashboard task cancelled successfully.")
         except Exception as e:
             logger.error(f"Error during Textual dashboard task shutdown: {e}")
-    
+
     if performance_monitor:
         logger.info("Stopping performance monitor...")
         performance_monitor.stop_monitoring()
@@ -258,14 +261,14 @@ def main(
     # Initialize configuration management
     config_manager = ConfigurationManager(config_dir)
     live_config_interface: Optional[LiveConfigurationInterface] = None
-    
+
     # Load configuration profile if specified
     if config_profile:
         loaded_config = config_manager.load_config(config_profile)
         if loaded_config:
             config_manager.current_config = loaded_config
             logger.info(f"Loaded configuration profile: {config_profile}")
-            
+
             # Override CLI parameters with profile settings
             host = loaded_config.host
             port = loaded_config.port
@@ -275,7 +278,7 @@ def main(
             json_output = loaded_config.json_output
             debug_api = loaded_config.debug_api
             textual_dashboard = getattr(loaded_config, 'textual_dashboard', False)
-            
+
             # Use motors from profile
             num_motors = len(loaded_config.motors)
             logger.info(f"Using {num_motors} motors from profile configuration")
@@ -335,10 +338,10 @@ def main(
     loop = asyncio.get_event_loop()
     bus = VirtualCANBus(loop)
     bus.set_latency(latency_ms)  # Set global latency for the bus
-    
+
     # Create live configuration interface
     live_config_interface = LiveConfigurationInterface(config_manager, bus)
-    
+
     # Initialize debug interface and optional components
     debug_interface: Optional[LLMDebugInterface] = None
     debug_server: Optional[DebugHTTPServer] = None
@@ -370,10 +373,10 @@ def main(
                 max_speed=motor_config.max_speed,
                 initial_position=motor_config.initial_position,
             )
-            
+
             if motor_config.enable_on_start:
                 motor.is_enabled = True
-                
+
             bus.add_motor(motor)
     else:
         # Create motors from CLI parameters (original logic)
@@ -402,22 +405,22 @@ def main(
             bus.add_motor(motor)
 
     server_task = loop.create_task(bus.start_server(host, port))
-    
+
     # Initialize LLM debug interface if needed
     if json_output or debug_api or textual_dashboard:
         debug_interface = LLMDebugInterface(bus.simulated_motors, bus)
-        
+
         # Set up debug interface in the bus for command tracking
         bus.debug_interface = debug_interface
-        
+
         # Initialize performance monitoring (will be started after loop is available)
         from .interface.performance_monitor import PerformanceMonitor
         performance_monitor = PerformanceMonitor(bus, debug_interface)
         bus.performance_monitor = performance_monitor
         # Note: performance_monitor.start_monitoring() will be called after loop setup
-        
+
         logger.info("Performance monitoring initialized")
-        
+
         if json_output:
             json_handler = JSONOutputHandler(debug_interface)
             config = {
@@ -428,15 +431,21 @@ def main(
                 "latency_ms": latency_ms
             }
             json_handler.emit_startup(config)
-            
+
             # Start periodic updates
-            loop.create_task(json_handler.run_periodic_updates())
-        
+            # Keep a reference: a bare create_task() may be garbage collected
+            # mid-flight, which silently stops the periodic updates.
+            _periodic_update_task = loop.create_task(
+                json_handler.run_periodic_updates()
+            )
+            _keepalive_tasks.add(_periodic_update_task)
+            _periodic_update_task.add_done_callback(_keepalive_tasks.discard)
+
         if debug_api:
             try:
                 debug_server = DebugHTTPServer(
-                    debug_interface, 
-                    debug_api_port, 
+                    debug_interface,
+                    debug_api_port,
                     "127.0.0.1",
                     config_manager=config_manager,
                     live_config=live_config_interface
@@ -448,18 +457,18 @@ def main(
             except ImportError as e:
                 logger.error(f"Failed to start debug API server: {e}")
                 logger.error("Install FastAPI and uvicorn: pip install fastapi uvicorn")
-        
-        # Textual Dashboard (Phase 2 test)  
+
+        # Textual Dashboard (Phase 2 test)
         if textual_dashboard:
             try:
                 logger.info("Starting Textual dashboard...")
                 textual_app = TextualDashboard(bus)
-                
+
                 # Run textual asynchronously
                 textual_dashboard_task = loop.create_task(textual_app.run_async())
-                
+
                 logger.info("Textual dashboard task created")
-                
+
             except Exception as e:
                 logger.error(f"Failed to start textual dashboard: {e}")
 
@@ -500,7 +509,7 @@ def main(
                     loop.run_until_complete(server_task)
                 except asyncio.CancelledError:
                     pass  # Expected
-        
+
         # Clean up debug server if running
         if debug_server_task and not debug_server_task.done():
             debug_server_task.cancel()
@@ -509,7 +518,7 @@ def main(
                     loop.run_until_complete(debug_server_task)
                 except asyncio.CancelledError:
                     pass  # Expected
-        
+
         # Clean up textual dashboard if running
         if 'textual_dashboard_task' in locals() and textual_dashboard_task and not textual_dashboard_task.done():
             textual_dashboard_task.cancel()
@@ -529,7 +538,7 @@ def main(
         if loop.is_running():
             loop.close()  # Close the loop
         logger.info("Simulator CLI finished.")
-    
+
     # Save configuration if requested
     if save_config and config_manager.current_config:
         success = config_manager.save_config(config_manager.current_config, save_config)
