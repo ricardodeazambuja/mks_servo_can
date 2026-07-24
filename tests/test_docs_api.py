@@ -109,9 +109,11 @@ def _receiver_types(tree, api):
     """
     Works out which variables in a block hold which library objects.
 
-    Prefers evidence over assumption: a block containing `axis = Axis(...)`
-    establishes the type directly, and only names with no such assignment fall
-    back to `ASSUMED_RECEIVERS`.
+    Prefers evidence over assumption, in both directions: a block containing
+    `axis = Axis(...)` establishes the type directly, and one containing
+    `controller = SomeClassDefinedRightHere()` withdraws the assumption, because
+    the block has said what the name holds and it is not a library object.
+    Names with no such assignment fall back to `ASSUMED_RECEIVERS`.
 
     Args:
         tree: The parsed block.
@@ -123,14 +125,20 @@ def _receiver_types(tree, api):
     types = {
         name: api[cls] for name, cls in ASSUMED_RECEIVERS.items() if cls in api
     }
+    locally_defined = {
+        node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+    }
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             func = node.value.func
             cls_name = func.id if isinstance(func, ast.Name) else None
-            if cls_name in api:
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        types[target.id] = api[cls_name]
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if cls_name in api:
+                    types[target.id] = api[cls_name]
+                elif cls_name in locally_defined:
+                    types.pop(target.id, None)
     return types
 
 

@@ -150,18 +150,25 @@ This guide provides solutions and suggestions for common issues encountered when
 
 ## General Debugging Tips
 
-* **Enable Logging:**
-    * The `mks-servo-can` library uses Python's `logging` module. Increase verbosity to see more details about CAN messages and internal operations:
-        ```python
-        import logging
-        logging.basicConfig(level=logging.DEBUG) 
-        # Or for specific library loggers:
-        # logging.getLogger("mks_servo_can.can_interface").setLevel(logging.DEBUG)
-        # logging.getLogger("mks_servo_can.axis").setLevel(logging.DEBUG)
-        ```
+**Enable logging.** The library logs through Python's `logging` module. Per-frame
+records are at `DEBUG` and lazily formatted, so turning them on costs nothing
+until you do:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+# Or narrow it to the part you are debugging:
+logging.getLogger("mks_servo_can.can_interface").setLevel(logging.DEBUG)
+logging.getLogger("mks_servo_can.axis").setLevel(logging.DEBUG)
+```
+
+`mks_servo_can.can_interface` at `DEBUG` prints every frame in and out, which is
+usually the fastest way to see what the motor actually replied.
+
 * **Simplify:** Start with the simplest possible setup (e.g., one motor, basic commands like `initialize()` and `enable_motor()`).
 * **Use Examples:** Refer to the scripts in the `examples/` directory.
-* **Check motor status:** After any failed operation or unexpected behavior, call `await axis.get_current_status()` to inspect the motor's current state and any error information.
+* **Check motor status:** After any failed operation or unexpected behavior, call `await axis.get_status_dict()` to inspect the motor's current state and any error information.
 * **Consult MKS Manual:** The official MKS SERVO42D/57D_CAN User Manual is the ultimate reference for motor parameters and error codes.
 
 If you encounter an issue not covered here, consider opening an issue on the project's GitHub repository with detailed information about your setup, code, and the problem observed.

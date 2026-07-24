@@ -12,7 +12,7 @@ The `MultiAxisController` class provides coordinated control of multiple motors,
 
 ```python
 import asyncio
-from mks_servo_can import CANInterface, Axis, MultiAxisController, exceptions
+from mks_servo_can import CANInterface, Axis, MultiAxisController, const, exceptions
 from mks_servo_can.kinematics import RotaryKinematics, LinearKinematics
 ```
 
@@ -27,12 +27,17 @@ async def create_multi_axis_setup():
     await can_interface.connect()
     
     # Create individual axes
-    axis_x = Axis(can_interface, motor_can_id=1, name="AxisX", 
-                  kinematics=LinearKinematics(steps_per_mm=100))
-    axis_y = Axis(can_interface, motor_can_id=2, name="AxisY", 
-                  kinematics=LinearKinematics(steps_per_mm=100))
-    axis_z = Axis(can_interface, motor_can_id=3, name="AxisZ", 
-                  kinematics=LinearKinematics(steps_per_mm=200))
+    # LinearKinematics is defined by the encoder resolution and the travel per
+    # output revolution (the leadscrew pitch), not by a steps-per-mm figure.
+    ballscrew = LinearKinematics(
+        steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, pitch=10.0
+    )
+    fine_pitch = LinearKinematics(
+        steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION, pitch=5.0
+    )
+    axis_x = Axis(can_interface, motor_can_id=1, name="AxisX", kinematics=ballscrew)
+    axis_y = Axis(can_interface, motor_can_id=2, name="AxisY", kinematics=ballscrew)
+    axis_z = Axis(can_interface, motor_can_id=3, name="AxisZ", kinematics=fine_pitch)
     
     # Create multi-axis controller
     controller = MultiAxisController(can_interface)
@@ -65,7 +70,7 @@ A key concept of the `MultiAxisController` is that it manages pre-initialized `A
 
 ```python
 # --- Continuing from the previous example ---
-# async def add_axes_to_controller_example(controller: MultiAxisController, can_if: CANInterface):
+async def add_axes_to_controller_example(controller: MultiAxisController, can_if: CANInterface):
     # Define configurations for your axes
     axis_configs = [
         {"can_id": 1, "name": "Axis_X", "kinematics": LinearKinematics(pitch=10.0, steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION)},
@@ -94,7 +99,7 @@ The controller provides methods to operate on all managed axes concurrently usin
 ### Initializing and Enabling All Axes
 
 ```python
-# async def initialize_and_enable_all_example(controller: MultiAxisController):
+async def initialize_and_enable_all_example(controller: MultiAxisController):
     print("Initializing all axes concurrently...")
     try:
         await controller.initialize_all_axes(calibrate=False, home=False, concurrent=True)
@@ -115,7 +120,7 @@ The controller provides methods to operate on all managed axes concurrently usin
 ### Disabling and Stopping All Axes
 
 ```python
-# async def disable_and_stop_all_example(controller: MultiAxisController):
+async def disable_and_stop_all_example(controller: MultiAxisController):
     # Stop any motion
     print("Stopping all axes...")
     await controller.stop_all_axes()
@@ -134,7 +139,7 @@ While the MKS motors do not support true path interpolation via a single command
 The primary method for coordinated movement is `move_all_to_positions_abs_user()`.
 
 ```python
-# async def coordinated_move_example(controller: MultiAxisController):
+async def coordinated_move_example(controller: MultiAxisController):
     # Define target positions for each axis by name
     target_positions = {
         "Axis_X": 100.0, # Target 100 mm for AxisX
@@ -166,7 +171,7 @@ The primary method for coordinated movement is `move_all_to_positions_abs_user()
 You can also initiate a move and continue with other tasks by setting `wait_for_all=False`.
 
 ```python
-# async def non_blocking_move_example(controller: MultiAxisController):
+async def non_blocking_move_example(controller: MultiAxisController):
     target_positions = {"Axis_X": 10.0, "Axis_Y": 5.0}
 
     # This call returns immediately after sending the move commands

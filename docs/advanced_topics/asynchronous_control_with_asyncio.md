@@ -12,13 +12,13 @@ Consider a simple synchronous example:
 # Synchronous Pseudocode - THIS IS NOT HOW THE LIBRARY WORKS
 def synchronous_control():
     print("Moving motor 1...")
-    motor1.move_absolute(180)  # This call BLOCKS for 5 seconds until the move is done
+    motor1.move_to_position_abs_user(180)  # This call BLOCKS for 5 s until the move is done
     
     # Nothing else can happen for those 5 seconds.
     # The UI is frozen, other motors can't be started, sensor data isn't processed.
     
     print("Motor 1 finished. Moving motor 2...")
-    motor2.move_absolute(90) # This also blocks.
+    motor2.move_to_position_abs_user(90) # This also blocks.
 ```
 
 This approach is inefficient and leads to unresponsive applications. asyncio solves this problem by using a cooperative multitasking model managed by an event loop.
@@ -80,9 +80,13 @@ After starting a non-blocking move, you might later need to check if it's finish
 ```python
 # ...following the non-blocking move example above...
 
-# Check current status to see if move is complete
-status = await axis.get_current_status()
-print(f"Motor status: {status}")
+# Check whether the library still has a move outstanding. This is a cheap,
+# synchronous check - it does not talk to the motor.
+print(f"Move complete: {axis.is_move_complete()}")
+
+# For a full snapshot, at the cost of a few CAN round trips:
+status = await axis.get_status_dict()
+print(f"Motor status: {status['motor_status_str']}")
 
 # Or check position to see if we've reached the target
 position = await axis.get_current_position_user()

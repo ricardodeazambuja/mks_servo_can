@@ -171,6 +171,6 @@ async def test_simulator_connection():
 ## Next Steps
 
 With the simulator running, proceed to:
-* [Connecting to Motors](./connecting.md) to learn how to establish connections
+* [Connecting to Motors](../user_guides/library/connecting.md) to learn how to establish connections
 * [Basic Motor Control](../user_guides/library/basic_control.md) to start controlling motors
 * [Movement Commands](../user_guides/library/movements.md) to learn about motor movements
