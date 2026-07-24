@@ -168,6 +168,12 @@ class Axis:
         self.default_accel_param = default_accel_param
 
         self._current_position_steps: Optional[int] = None # Raw encoder steps (16384/rev base for motor shaft)
+        # Whether _current_position_steps still reflects where the motor is.
+        # Dispatching a move invalidates it; only a read (or a zeroing) restores
+        # it. The "already at target" shortcut in _move_absolute_handler may only
+        # consult a fresh value - acting on a stale one silently skips a move and
+        # reports success. See _invalidate_position_cache().
+        self._position_cache_is_fresh: bool = False
         self._current_speed_rpm: Optional[int] = None
         self._is_enabled: bool = False
         self._is_homed: bool = False
@@ -427,6 +433,7 @@ class Axis:
                     if final_status == const.HOME_SUCCESS:
                         self._is_homed = True
                         self._current_position_steps = 0 # Typically homing sets zero
+                        self._position_cache_is_fresh = True
                         self._error_state = None
                         logger.info(f"Axis '{self.name}': Homing successful via async completion.")
                         return
@@ -441,6 +448,7 @@ class Axis:
             elif initial_status == const.HOME_SUCCESS: # Immediate success
                 self._is_homed = True
                 self._current_position_steps = 0
+                self._position_cache_is_fresh = True
                 self._error_state = None
                 logger.info(f"Axis '{self.name}': Homing successful (immediate).")
             else: # HOME_FAIL or other unexpected initial status
@@ -481,6 +489,7 @@ class Axis:
         logger.info(f"Axis '{self.name}': Setting current position as zero.")
         await self._low_level_api.set_current_axis_to_zero(self.can_id)
         self._current_position_steps = 0
+        self._position_cache_is_fresh = True
         self._is_homed = True # Setting zero often implies a homed state relative to this new zero
         self._error_state = None
 
@@ -734,6 +743,10 @@ class Axis:
         move_future.add_done_callback(self._swallow_unretrieved_exception)
         self._active_move_future = move_future
         self._pending_move_command = command_const
+        # The motor is about to move, so the cached position stops describing
+        # it. It is refreshed once the move completes; until then no shortcut
+        # may rely on it.
+        self._position_cache_is_fresh = False
 
         move_timeout = self._calculate_move_timeout(
             command_const, pulses_to_move_for_timeout, speed_param_for_calc
@@ -832,7 +845,14 @@ class Axis:
             if abs(relative_encoder_steps) < 1:
                 logger.info(f"Axis '{self.name}': Relative move of {distance} {self.kinematics.units} is effectively zero steps. No move needed.")
                 return
-            mks_speed = self.kinematics.user_speed_to_motor_speed(sp) if sp is not None else self.default_speed_param
+            # `speed`, when given, is in user units per second and has to be
+            # converted. `default_speed_param` is already an MKS parameter and
+            # must not be: converting it reads 500 as 500 deg/s and yields 83.
+            mks_speed = (
+                self.kinematics.user_speed_to_motor_speed(speed)
+                if speed is not None
+                else int(self.default_speed_param)
+            )
             cmd_func = partial(
                 self._low_level_api.run_position_mode_relative_axis,
                 self.can_id, mks_speed, ac, relative_encoder_steps,
@@ -895,7 +915,13 @@ class Axis:
         # 1. Convert target position to raw encoder steps
         if unit == 'user':
             target_encoder_steps = self.kinematics.user_to_steps(position)
-            mks_speed_param = self.kinematics.user_speed_to_motor_speed(sp) if sp is not None else self.default_speed_param
+            # See _move_relative_handler: an omitted speed falls back to the MKS
+            # parameter directly, only a caller-supplied speed is converted.
+            mks_speed_param = (
+                self.kinematics.user_speed_to_motor_speed(speed)
+                if speed is not None
+                else int(self.default_speed_param)
+            )
         elif unit == 'pulses':
             # Convert command microsteps to raw encoder steps for comparison
             target_encoder_steps = self._command_microsteps_to_raw_encoder_steps(int(position))
@@ -908,14 +934,18 @@ class Axis:
 
         # 2. Check whether a move is necessary, using the cached position.
         #    Polling the encoder here would add a full CAN round trip to the
-        #    latency of every absolute move. The cache is refreshed after each
-        #    move completes and by any explicit position read.
+        #    latency of every absolute move, so the shortcut is taken only when
+        #    the cache is known fresh. When it is not, the move is dispatched
+        #    unconditionally: sending it costs the same single round trip a read
+        #    would, and acting on a stale cache silently skips the move while
+        #    reporting success - which is what happens to the move back to a
+        #    position the axis last occupied.
         current_steps = self._current_position_steps
-        if current_steps is None:
-            current_steps = await self.get_current_position_steps()
-        if abs(target_encoder_steps - current_steps) < 2 or math.isclose(mks_speed_param, 0, abs_tol=0.1): # Tolerance for rounding
+        cache_usable = current_steps is not None and self._position_cache_is_fresh
+        already_there = cache_usable and abs(target_encoder_steps - current_steps) < 2 # Tolerance for rounding
+        if already_there or math.isclose(mks_speed_param, 0, abs_tol=0.1):
             logger.debug(
-                "Axis '%s': target %d already reached; no move needed.",
+                "Axis '%s': target %d already reached or speed is zero; no move needed.",
                 self.name,
                 target_encoder_steps,
             )
@@ -927,10 +957,14 @@ class Axis:
             self._low_level_api.run_position_mode_absolute_axis,
             self.can_id, mks_speed_param, ac, target_encoder_steps,
         )
+        # The distance only sizes the completion timeout. With no usable cache
+        # the worst case is the whole way from zero, which errs long - the right
+        # direction for a timeout.
+        distance_for_timeout = abs(target_encoder_steps - (current_steps or 0))
         await self._execute_move(
             cmd_func,
             const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
-            pulses_to_move_for_timeout=abs(target_encoder_steps - current_steps),
+            pulses_to_move_for_timeout=distance_for_timeout,
             speed_param_for_calc=mks_speed_param
         )
 
@@ -1157,6 +1191,9 @@ class Axis:
         if self._active_move_future and not self._active_move_future.done():
             self._active_move_future.cancel("Speed mode initiated, cancelling positional move future.")
         self._active_move_future = None
+        # Speed mode moves the shaft without a target, so nothing refreshes the
+        # cached position on its own.
+        self._position_cache_is_fresh = False
 
 
     async def stop_motor(self, deceleration_param: Optional[int] = None) -> None:
@@ -1197,6 +1234,8 @@ class Axis:
             if self._active_move_future and not self._active_move_future.done():
                  self._active_move_future.cancel("Motor stop initiated")
             self._active_move_future = None
+            # Wherever the motor coasted to, it is not where the cache says.
+            self._position_cache_is_fresh = False
 
 
     async def emergency_stop(self) -> None:
@@ -1216,6 +1255,7 @@ class Axis:
         if self._active_move_future and not self._active_move_future.done():
             self._active_move_future.cancel("Motor emergency stopped")
         self._active_move_future = None # Clear the future as the move is aborted
+        self._position_cache_is_fresh = False # Stopped somewhere unknown
 
     async def enable_motor(self) -> None:
         """
@@ -1331,11 +1371,9 @@ class Axis:
 
         This method actively queries the motor using the MKS command 0x31
         (Read Encoder Accumulated Value). The internal `_current_position_steps`
-        state of the axis object is updated with the result. This value represents
-        the raw encoder count (e.g., 16384 pulses per motor shaft revolution).
-        The method inverts the value read from `read_encoder_value_addition`
-        as per previous implementation convention.
-
+        state of the axis object is updated with the result and marked fresh.
+        This value represents the raw encoder count (e.g., 16384 pulses per motor
+        shaft revolution), sign included, exactly as the motor reports it.
 
         Returns:
             The current motor position as an integer number of encoder steps.
@@ -1346,6 +1384,7 @@ class Axis:
         """
         pos_steps = await self._low_level_api.read_encoder_value_addition(self.can_id) # type: ignore
         self._current_position_steps = pos_steps
+        self._position_cache_is_fresh = True
         return pos_steps
 
     async def get_current_position_user(self) -> float:

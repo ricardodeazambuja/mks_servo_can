@@ -678,17 +678,19 @@ class TestLowLevelAPIRunCommandsExtended:
     @pytest.mark.asyncio
     async def test_save_or_clean_speed_mode_params(self, low_level_api, mock_can_interface, save_action, action_code):
         # Tests the command 0xFF, which is used to save or clear parameters related to speed mode.
-        # This command has a peculiar response: it echoes the 'action_code' (0xC8 or 0xCA) instead of 0xFF.
+        # The motor echoes 0xFF and reports the outcome in the status byte; this test used to
+        # assert the opposite - that the 'action_code' (0xC8 or 0xCA) came back as the echo -
+        # which is why every call to this command timed out in practice (defect L2).
         can_id = 0x01
         command_code_sent = const.CMD_SAVE_CLEAN_SPEED_MODE_PARAMS # This is 0xFF.
-        expected_echoed_command_in_response = action_code # The motor echoes 0xC8 or 0xCA.
+        expected_echoed_command_in_response = command_code_sent # The motor echoes 0xFF.
 
         sent_data_list = [command_code_sent, action_code] # Sent data: [0xFF, action_code].
         sent_crc = calculate_crc(can_id, sent_data_list)
         expected_sent_bytes = bytes(sent_data_list + [sent_crc])
 
-        # Simulate the motor's response: echoed 'action_code' and success status.
-        response_payload_resp_list = [action_code, const.STATUS_SUCCESS]
+        # Simulate the motor's response: echoed 0xFF and success status.
+        response_payload_resp_list = [command_code_sent, const.STATUS_SUCCESS]
         response_crc_val = calculate_crc(can_id, response_payload_resp_list)
         mock_can_interface.send_and_wait_for_response.return_value = CanMessage(
             arbitration_id=can_id, data=bytes(response_payload_resp_list + [response_crc_val]), dlc=3
@@ -701,7 +703,7 @@ class TestLowLevelAPIRunCommandsExtended:
         args, _ = call_args_list[0]
         _assert_message_properties(args[0], can_id, expected_sent_bytes)
         assert args[1] == can_id # Expected response CAN ID.
-        # Verify that the LowLevelAPI correctly expects the 'action_code' to be echoed in the response, not 0xFF.
+        # Verify that the LowLevelAPI waits for 0xFF, the command byte the motor actually echoes.
         assert args[2] == expected_echoed_command_in_response
         assert args[3] == const.CAN_TIMEOUT_SECONDS
 

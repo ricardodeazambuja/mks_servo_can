@@ -58,12 +58,18 @@ the test could not see it.
 The simulator reports the event explicitly (`move_superseded` in `/status`'s
 `errors`), which is how the failure was made visible while it was being fixed.
 
-## L2. `save_or_clean_speed_mode_params` (0xFF) always times out
+## L2. `save_or_clean_speed_mode_params` (0xFF) always times out — **fixed**
 
-`_send_command_and_get_response` special-cases 0xFF to expect the echoed
+The special case is gone; `tests/integration/test_speed_mode_params.py` covers
+both sub-commands against the simulator. The unit test that existed had asserted
+the wrong expectation outright, so it had to be corrected too.
+
+The original finding, for reference:
+
+`_send_command_and_get_response` special-cased 0xFF to expect the echoed
 *sub-command* (0xC8/0xCA), but the motor echoes 0xFF — as the manual states and
-as the comment at `low_level_api.py:1984` already says, contradicting the code at
-line 144.
+as the comment above the status check in `save_or_clean_speed_mode_params`
+already said, contradicting the code.
 
 ```
 CommunicationError: Timeout waiting for response to command FF from CAN ID 001
@@ -72,15 +78,41 @@ CommunicationError: Timeout waiting for response to command FF from CAN ID 001
 
 The command has no test coverage at all.
 
-## L3. Default speed is interpreted in the wrong units
+## L3. Default speed is interpreted in the wrong units — **fixed**
+
+Both handlers now convert only a speed the caller actually supplied, and use
+`default_speed_param` as the MKS parameter it is otherwise.
+`tests/integration/test_default_speed.py` times a default-speed move against the
+same move at the speed that default is supposed to mean.
+
+The original finding, for reference:
 
 In `_move_absolute_handler` and `_move_relative_handler`, when `unit == 'user'`
-and no speed is given, `default_speed_param` (500, an MKS parameter meaning
-roughly 500 RPM) is passed through `kinematics.user_speed_to_motor_speed()`,
-which reads it as 500 deg/s and returns **83**. The guard `if sp is not None` is
-dead — `sp` is never `None`, so the documented fallback never runs. Any
-`move_to_position_abs_user()` without an explicit speed runs at a sixth of the
+and no speed was given, `default_speed_param` (500, an MKS parameter meaning
+roughly 500 RPM) was passed through `kinematics.user_speed_to_motor_speed()`,
+which read it as 500 deg/s and returned **83**. The guard `if sp is not None` was
+dead — `sp` is never `None`, so the documented fallback never ran. Any
+`move_to_position_abs_user()` without an explicit speed ran at a sixth of the
 documented default.
+
+## L8. An absolute move can be silently skipped against a stale position cache — **fixed**
+
+Found while building the test for L3, and not in the original review.
+
+`move_to_position_abs_*` short-circuits when the target is where the axis
+already is, using the cached position so the check costs no CAN traffic. But
+`wait=True` returns as soon as the completion frame resolves the move future,
+while the cache is refreshed a moment later in the watcher's `finally`. Commanding
+the starting position immediately after a move therefore compared the new target
+against a *pre-move* cache, found them equal, and returned success without
+sending anything. Reproduced with a 900° move followed by a move back to 0: the
+second call returned in 0.000 s with the axis still at 900°.
+
+The cache now carries a freshness flag. Dispatching a move, entering speed mode,
+stopping and emergency-stopping all clear it; a read or a zeroing sets it. The
+short-circuit consults the cache only while it is fresh, and otherwise simply
+dispatches the move — which costs the same single round trip an encoder read
+would, so the hidden pre-read that 0.3.0 removed does not come back.
 
 ## L4. A single bad frame kills the receive path
 

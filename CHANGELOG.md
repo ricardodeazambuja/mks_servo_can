@@ -24,6 +24,24 @@ Simulator observability, and the library defects that observability exposed.
   The pre-existing "coverage" mocked `expect_stale_notification` and asserted
   only that a credit was *requested*; `tests/integration/test_move_supersede.py`
   drives a real axis against the simulator instead.
+- **`save_or_clean_speed_mode_params` (0xFF) always timed out.** The transport
+  was told to wait for the *sub-command* (0xC8/0xCA) to come back, but the motor
+  echoes 0xFF and reports the outcome in the status byte — as the comment
+  directly above the status check already said. The command had no integration
+  coverage, and the unit test that existed asserted the wrong expectation.
+- **An absolute move could be silently skipped.** `wait=True` returns as soon as
+  the move future resolves, a moment before the cached position is refreshed, so
+  commanding the position the axis started from was compared against a pre-move
+  cache, matched, and returned success without sending anything. The cache now
+  tracks whether it is still fresh, and the "already at target" shortcut only
+  consults it while it is. When it is not, the move is dispatched rather than
+  preceded by an encoder read, so the hidden round trip removed in 0.3.0 stays
+  removed.
+- **A user-unit move with no speed ran at a sixth of its documented default.**
+  `default_speed_param` is an MKS parameter, but both move handlers converted it
+  as though it were a speed in user units — reading 500 as 500 deg/s and
+  producing 83. The `if sp is not None` guard meant to prevent this could never
+  fire, because `sp` had already been defaulted.
 
 - **`--json-output` crashed on startup** with
   `AttributeError: 'SimulatedMotor' object has no attribute 'name'`, and

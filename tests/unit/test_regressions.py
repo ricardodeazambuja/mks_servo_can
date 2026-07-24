@@ -203,12 +203,47 @@ async def test_c3_absolute_move_does_not_read_position_first(axis, mock_api):
 
 @pytest.mark.asyncio
 async def test_c3_absolute_move_to_current_position_is_a_noop(axis, mock_api):
-    """The 'already there' short-circuit must still work, from cache."""
-    axis._current_position_steps = axis.kinematics.user_to_steps(90.0)
+    """The 'already there' short-circuit must still work, from a fresh cache."""
+    steps = axis.kinematics.user_to_steps(90.0)
+    mock_api.read_encoder_value_addition.return_value = steps
+    await axis.get_current_position_steps()  # the read is what makes it fresh
+    mock_api.read_encoder_value_addition.reset_mock()
+
     await asyncio.wait_for(
         axis.move_to_position_abs_user(90.0, wait=False), timeout=NONBLOCKING_BUDGET_S
     )
     mock_api.run_position_mode_absolute_axis.assert_not_awaited()
+    assert mock_api.read_encoder_value_addition.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_absolute_move_is_dispatched_when_the_cache_is_stale(axis, mock_api):
+    """A stale cache must not be allowed to cancel a move.
+
+    Dispatching a move invalidates the cached position, and it stays invalid
+    until the completion watcher refreshes it. A caller who commands the
+    position the axis started from before that happens would otherwise hit the
+    short-circuit and get success without motion.
+    """
+    steps = axis.kinematics.user_to_steps(90.0)
+    mock_api.read_encoder_value_addition.return_value = steps
+    await axis.get_current_position_steps()
+
+    # Dispatch anything: the axis is now somewhere unknown.
+    await asyncio.wait_for(
+        axis.move_to_position_abs_user(180.0, wait=False), timeout=NONBLOCKING_BUDGET_S
+    )
+    mock_api.run_position_mode_absolute_axis.reset_mock()
+    mock_api.read_encoder_value_addition.reset_mock()
+
+    await asyncio.wait_for(
+        axis.move_to_position_abs_user(90.0, wait=False), timeout=NONBLOCKING_BUDGET_S
+    )
+    mock_api.run_position_mode_absolute_axis.assert_awaited_once()
+    assert mock_api.read_encoder_value_addition.call_count == 0, (
+        "the stale cache was refreshed with an encoder read instead of simply "
+        "dispatching the move, which is the round trip C3 removed"
+    )
 
 
 # --------------------------------------------------------------------------
