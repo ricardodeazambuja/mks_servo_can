@@ -130,7 +130,7 @@ mks_servo_can/
 │   ├── integration/                 # Against a live simulator
 │   ├── simulator_compliance/        # Wire-format conformance vs the manual
 │   ├── hil/                         # Hardware-in-the-loop; see tests/hil/
-│   └── fixtures/                    # manual_commands_v106.json + errata
+│   └── fixtures/                    # docs_known_issues.json (documentation ratchet)
 ├── examples/                        # Example scripts demonstrating library usage
 │   ├── camera_gimbal_tracker.py     # 3-axis gimbal tracking a fast target
 │   ├── single_axis_real_hw.py       # Basic single motor control with real hardware
@@ -532,10 +532,12 @@ index. Alongside it:
 * **Docstrings** within the source code, which carry the design rationale.
 * The **example scripts** in `examples/`.
 * The **"MKS SERVO42D/57D_CAN User Manual V1.0.6"**, obtained separately, for
-  specifics on CAN commands and motor behaviour. Note that
-  `tests/fixtures/manual_commands_v106.json` records an **errata** block: the
-  manual contradicts itself on sign convention, and the worked examples (CCW
-  positive) are the ones to trust.
+  specifics on CAN commands and motor behaviour. Its machine-readable
+  transcription ships with the library as
+  `mks_servo_can/data/manual_commands_v106.json`, reachable at runtime through
+  `mks_servo_can.load_manual_spec()`. It records an **errata** block: the manual
+  contradicts itself on sign convention, and the worked examples (CCW positive)
+  are the ones to trust.
 
 ## Development and Testing
 

@@ -37,6 +37,16 @@ Simulator observability, and the library defects that observability exposed.
   consults it while it is. When it is not, the move is dispatched rather than
   preceded by an encoder read, so the hidden round trip removed in 0.3.0 stays
   removed.
+- **An installed package had no command reference.** The manual's transcription
+  was read out of `tests/fixtures/`, which a wheel does not contain, so
+  `/commands` returned nothing and `available_commands` reported 0 for anyone
+  who installed rather than cloned. It now ships as package data at
+  `mks_servo_can/data/manual_commands_v106.json` and is read through
+  `mks_servo_can.load_manual_spec()`, which uses `importlib.resources` and so
+  works from a wheel, a zip import or a checkout.
+  The simulator's `debug_tools` had the same bug twice over — it also parsed the
+  command table as a list when it is a mapping keyed by hex code, so it had
+  always fallen back to a hard-coded table that misnames several commands.
 - **A `ServoStream.start()` that failed partway left motors mute.** Responses
   are disabled axis by axis; a failure after the first one meant `__aexit__`
   never ran and `stop()` early-returned, so those motors stayed silent for the

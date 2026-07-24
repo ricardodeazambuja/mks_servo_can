@@ -7,15 +7,13 @@ DLC values, and data field formats as specified in the manual.
 Updated to use shared simulator management fixtures.
 """
 
-import json
-from pathlib import Path
 
 import pytest
 
-# Load manual specifications
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
-with open(FIXTURES_DIR / "manual_commands_v106.json") as f:
-    MANUAL_SPEC = json.load(f)
+from mks_servo_can import load_manual_spec
+
+# The manual's transcription ships with the library as package data.
+MANUAL_SPEC = load_manual_spec()
 
 
 @pytest.mark.compliance

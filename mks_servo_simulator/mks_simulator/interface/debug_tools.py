@@ -5,11 +5,14 @@ Provides command injection, testing utilities, and debugging features.
 """
 
 import asyncio
-import json
+import logging
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+from mks_servo_can import get_manual_commands
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..virtual_can_bus import VirtualCANBus
@@ -82,40 +85,38 @@ class CommandInjector:
         self._setup_command_templates()
 
     def _load_command_specs(self):
-        """Load command specifications from the manual database"""
+        """
+        Loads command specifications from the manual's transcription.
+
+        The specification ships with the library as package data, so this works
+        from an installed wheel. It previously hunted for the file along three
+        relative paths under `tests/` - which an installed package does not have
+        - and then read `commands` as a list of dicts when it is a mapping keyed
+        by hex code, so every lookup failed and the hard-coded fallback below was
+        what actually ran. That fallback misnames several commands, so it is now
+        genuinely a last resort and says so when it is used.
+        """
         try:
-            # Look for the manual commands JSON file
-            possible_paths = [
-                Path("tests/fixtures/manual_commands_v106.json"),
-                Path("../tests/fixtures/manual_commands_v106.json"),
-                Path("../../tests/fixtures/manual_commands_v106.json")
-            ]
-
-            commands_file = None
-            for path in possible_paths:
-                if path.exists():
-                    commands_file = path
-                    break
-
-            if commands_file:
-                with open(commands_file) as f:
-                    data = json.load(f)
-
-                # Parse command specifications
-                for cmd_data in data.get('commands', []):
-                    code = cmd_data.get('code')
-                    if code is not None:
-                        self.command_specs[code] = CommandSpec(
-                            code=code,
-                            name=cmd_data.get('name', f'Command_{code:02X}'),
-                            description=cmd_data.get('description', ''),
-                            data_length=cmd_data.get('data_length', 0),
-                            response_length=cmd_data.get('response_length', 0),
-                            category=cmd_data.get('category', 'unknown'),
-                            parameters=cmd_data.get('parameters', [])
-                        )
-        except Exception:
-            # Fallback to basic command specs
+            commands = get_manual_commands()
+            for code_str, cmd_data in commands.items():
+                code = int(code_str, 16)
+                request = cmd_data.get("request", {})
+                response = cmd_data.get("response", {})
+                self.command_specs[code] = CommandSpec(
+                    code=code,
+                    name=cmd_data.get("name", f"Command_{code:02X}"),
+                    description=cmd_data.get("description", ""),
+                    data_length=request.get("dlc", 0),
+                    response_length=response.get("dlc", 0),
+                    category=cmd_data.get("category", "unknown"),
+                    parameters=request.get("parameters", []),
+                )
+        except (OSError, ValueError, KeyError, AttributeError) as exc:
+            logger.warning(
+                "Could not load the manual command specification (%s); falling "
+                "back to a small hard-coded table whose names are approximate.",
+                exc,
+            )
             self._setup_basic_command_specs()
 
     def _setup_basic_command_specs(self):

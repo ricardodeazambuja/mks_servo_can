@@ -7,19 +7,15 @@ specifications from the MKS SERVO42D/57D_CAN User Manual V1.0.6.
 Updated to use shared simulator management fixtures instead of direct imports.
 """
 
-import json
 import time
-from pathlib import Path
 from typing import List
 
 import pytest
 
-from mks_servo_can import exceptions
+from mks_servo_can import exceptions, load_manual_spec
 
-# Load manual command specifications
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
-with open(FIXTURES_DIR / "manual_commands_v106.json") as f:
-    MANUAL_SPEC = json.load(f)
+# The manual's transcription ships with the library as package data.
+MANUAL_SPEC = load_manual_spec()
 
 MANUAL_COMMANDS = MANUAL_SPEC["commands"]
 

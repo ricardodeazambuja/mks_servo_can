@@ -7,7 +7,7 @@ and the simulator would be wrong together.
 
 These tests instead assert on the raw CAN frames: the exact DLC, the CRC over
 the exact bytes, the command echo, the integer widths and byte order, and the
-sign conventions. The reference is tests/fixtures/manual_commands_v106.json,
+sign conventions. The reference is mks_servo_can/data/manual_commands_v106.json,
 which encodes the frame layouts from the MKS SERVO42D/57D_CAN user manual.
 
 What these tests can and cannot prove
@@ -18,12 +18,11 @@ were derived from the same manual, so a shared misreading stays invisible. The
 only cure is a captured candump from a real motor, which belongs in tests/hil/.
 Nothing here should be read as hardware validation.
 """
-import json
-import pathlib
 
 import pytest
 
 from mks_servo_can import constants as const
+from mks_servo_can import load_manual_spec
 from mks_servo_can.crc import calculate_crc, verify_crc
 
 try:
@@ -31,13 +30,9 @@ try:
 except ImportError:  # pragma: no cover - python-can is a hard dependency in CI
     CanMessage = None
 
-FIXTURE = json.loads(
-    (
-        pathlib.Path(__file__).resolve().parents[1]
-        / "fixtures"
-        / "manual_commands_v106.json"
-    ).read_text()
-)
+# Read from the library package, which ships the manual's transcription as
+# package data. Reading it out of tests/ meant an installed wheel had no copy.
+FIXTURE = load_manual_spec()
 MANUAL_COMMANDS = FIXTURE["commands"]
 
 pytestmark = pytest.mark.compliance

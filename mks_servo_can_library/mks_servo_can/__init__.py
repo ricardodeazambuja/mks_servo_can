@@ -63,6 +63,11 @@ from .kinematics import (
     RotaryKinematics,
 )
 from .low_level_api import LowLevelAPI
+from .manual_spec import (
+    get_manual_commands,
+    get_manual_errata,
+    load_manual_spec,
+)
 from .multi_axis_controller import MultiAxisController
 from .realtime import (
     AlphaBetaGammaTracker,
@@ -89,6 +94,11 @@ __all__ = [
 
     # Motion parameter model (speed/accel parameters <-> engineering units)
     "motor_profile",
+
+    # The manual's command table, shipped with the package
+    "load_manual_spec",
+    "get_manual_commands",
+    "get_manual_errata",
 
     # Fixed-rate streaming control, for tracking a moving reference
     "ServoStream",

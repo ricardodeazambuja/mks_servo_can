@@ -94,7 +94,7 @@ Three questions it settles, in descending value:
    confirm here.
 2. **Sign convention.** CCW-positive is currently an *inference* from the
    manual's worked examples; the manual's prose contradicts itself (recorded in
-   the `errata` block of `tests/fixtures/manual_commands_v106.json`). Every
+   the `errata` block of `mks_servo_can/data/manual_commands_v106.json`). Every
    conversion in `motor_profile.py` and every kinematics class rests on it.
 3. **Does CanRSP (0x8C) suppress the reply to 0x8C itself, and to reads?** The
    simulator says no — only sections 6.4–6.8 of the manual, i.e. the run
@@ -106,69 +106,83 @@ Three questions it settles, in descending value:
 
 ## Item 3 — Burn down the documentation debt (gate is in place)
 
-A mechanical check found **64 documentation problems**: references to methods and
+A mechanical check found **63 documentation problems**: references to methods and
 parameters that do not exist, code blocks that are not valid Python, and index
-links pointing at documents that were never written (27 of the 52 links in
-`docs/README.md` were dead). Examples:
+links pointing at documents that were never written.
 
-- `LinearKinematics(steps_per_mm=...)` — no such parameter
-- `RotaryKinematics(units=...)` — no such parameter; the third argument is
-  `degrees_per_output_revolution`, and `units` is hardcoded to `"deg"`
-- `axis.move_absolute()`, `axis.get_current_position()`, `axis.set_kinematics()`,
-  `axis.update_status()`, `axis.is_moving()`, `axis.get_error_description()` —
-  none exist
-- `CANInterface(enable_crc=...)`, `CANInterface(response_timeout_ms=...)`
-- `BaseKinematics` — the exported name is `Kinematics`
-- `docs/user_guides/library/reading_status.md` alone references seven
-  non-existent `Axis` methods
-
-**The gate now exists: `tests/test_docs_api.py`.** It extracts every
+**The gate exists: `tests/test_docs_api.py`.** It extracts every
 ```` ```python ```` block from `docs/**/*.md` and `README.md`, parses each with
 `ast`, and checks constructor keyword arguments, method names on known receiver
 variables, `from mks_servo_can import ...` names, and that internal Markdown
-links resolve.
-
-It is a **ratchet**, not a clean gate: the 64 known problems are listed in
+links resolve. It is a **ratchet**: the known problems live in
 `tests/fixtures/docs_known_issues.json`, a new finding fails the build, and a
 baseline entry that no longer occurs *also* fails the build with an instruction
-to delete it. So documentation cannot get worse, and the debt can only shrink.
+to delete it. Documentation cannot get worse, and the debt can only shrink.
 
-**The remaining work is to burn the baseline down.** Current contents:
+**Every API mismatch is now gone — 63 down to 26.** What was fixed:
 
-| kind | count |
-|---|---|
-| `dead-link` — index entries pointing at documents never written | 31 |
-| `bad-method` — methods that do not exist on `Axis`/`CANInterface`/… | 17 |
-| `bad-argument` — constructor parameters that do not exist | 7 |
-| `unparseable` — code blocks that are not valid Python | 7 |
-| `bad-import` — names not exported from the module they are imported from | 2 |
+| kind | was | now |
+|---|---|---|
+| `bad-method` — methods that do not exist | 17 | 0 |
+| `bad-argument` — constructor parameters that do not exist | 7 | 0 |
+| `unparseable` — code blocks that are not valid Python | 7 | 0 |
+| `bad-import` — names not exported where they are imported from | 2 | 0 |
+| `dead-link` — index entries pointing at documents never written | 30 | 26 |
+
+The checker gained one fix of its own: it inferred a variable's type from its
+name, so a document that defined its own class and called it `controller` was
+reported as calling three non-existent `MultiAxisController` methods. Evidence
+now overrides the assumption in both directions.
+
+**What remains is 26 documents that were never written**, all linked from
+`docs/README.md` and already marked *(planned)* there. Each is a decision rather
+than a repair — write the page or drop the entry:
+
+- **10 API-reference pages** (`api_reference/library/*.md`,
+  `api_reference/simulator/*.md`). These would duplicate docstrings that already
+  carry the design rationale. Either generate them from the source or drop the
+  entries and point at the modules.
+- **5 tutorials** (`single_axis_sim`, `single_axis_hw`, and three robot-model
+  examples). `examples/` already contains runnable scripts for most of this;
+  pointing at those is cheaper and cannot drift.
+- **4 development pages** (`setup`, `running_tests`, `contributing`,
+  `coding_standards`). Short, and the material is in `README.md` and
+  `pyproject.toml` already.
+- **3 simulator user guides** (`cli_options`, `logs`, `advanced_simulation`).
+  Derivable from `--help` and the debug API.
+- **2 appendices** (`glossary`, `mks_parameters`) and
+  `user_guides/library/movement.md`, which is a stale duplicate of
+  `movements.md`.
 
 Workflow: fix a file, run `pytest tests/test_docs_api.py`, delete the entries it
-reports as stale. The `dead-link` group is the largest but the cheapest to
-decide on — each is either a document worth writing or an index entry worth
-deleting.
+reports as stale.
 
 ---
 
-## Item 4 — Packaging: L7, then PyPI
+## Item 4 — Packaging: ~~L7~~, then PyPI
 
-**L7 first.** `mks_servo_simulator/mks_simulator/interface/llm_debug_interface.py`
-loads the command specification from `tests/fixtures/manual_commands_v106.json`
-(see `_MANUAL_SPEC_PATH`). An installed wheel has no `tests/` directory, so
-`/commands` and `available_commands` are empty for anyone who did not clone the
-repository. Move the specification into the library package alongside the
-constants it describes, and have both the tests and the simulator read it from
-there. Update `package_data`/`MANIFEST.in` accordingly.
-
-Consumers to update: `llm_debug_interface.py`, `virtual_can_bus.py` (imports
-`MANUAL_COMMANDS`), `tests/simulator_compliance/test_wire_format.py`,
-`test_can_frame_format.py`, `test_protocol_compliance.py`.
+**L7 is done.** The manual's command specification ships as package data at
+`mks_servo_can/data/manual_commands_v106.json` and is read through
+`mks_servo_can.manual_spec` (`load_manual_spec`, `get_manual_commands`,
+`get_manual_errata`) using `importlib.resources`, so it resolves from a wheel, a
+zip import or a checkout alike. The simulator's debug interface, its debug tools
+and the three conformance test modules all go through that loader.
+`tests/unit/test_manual_spec_packaging.py` fails if any module starts naming the
+file by path again, and the fix was checked by building a wheel, installing it
+into an empty virtualenv and loading all 18 commands with no repository present.
 
 **Then publish.** `pip install mks-servo-can` still fails; installation means
 cloning and two editable installs from subdirectories. `REVIEW_NOTES.md` Part 1
 ranks this as the largest remaining barrier to anyone else using the library.
-L7 is a prerequisite: the simulator wheel currently depends on a directory that
-is not shipped.
+Publishing needs credentials and a decision from the maintainer, so it is not
+something this work can complete on its own. What it needs first:
+
+- a `pyproject.toml` for each distribution, replacing the two `setup.py` files;
+- the version number in one place rather than parsed out of `__init__.py`;
+- a decision on whether the simulator stays a separate distribution or becomes
+  an extra of the library (it already hard-depends on it);
+- a CI job that builds both and runs the suite against the *installed* packages
+  rather than the source tree, which is what would have caught L7.
 
 ---
 

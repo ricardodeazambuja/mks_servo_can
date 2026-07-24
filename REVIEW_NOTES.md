@@ -5,8 +5,10 @@ been acted on** — see `CHANGELOG.md` for what changed and why. This file is ke
 for the design reasoning in Part 2, and for the outstanding items below.
 
 A second review on 2026-07-24, against `b28dded`, found the defects in Part 0.
-The simulator-side findings from that review have been fixed; the library-side
-ones are recorded here with reproductions and are not yet fixed.
+All of them have since been fixed, along with one more (L8) found while building
+a test for another. Each entry keeps its original reproduction, because the
+evidence is what makes the fix checkable; `docs/development/roadmap.md` says what
+remains.
 
 ---
 
@@ -174,14 +176,29 @@ not parse as Python (so the real count is higher). Examples:
 exported name is `Kinematics`). `docs/user_guides/library/reading_status.md`
 alone references seven non-existent `Axis` methods.
 
-## L7. MANUAL_SPEC_NOT_PACKAGED
+## L7. MANUAL_SPEC_NOT_PACKAGED - **fixed**
 
-`llm_debug_interface.py` loads the command specification from
+**Fixed.** The specification now ships as package data at
+`mks_servo_can/data/manual_commands_v106.json`, read through
+`mks_servo_can.manual_spec` with `importlib.resources` - so it works from a
+wheel, a zip import or a checkout. The simulator, the debug tools and the
+conformance tests all go through that one loader, and
+`tests/unit/test_manual_spec_packaging.py` fails if any module starts naming the
+file by path again. Verified by building a wheel, installing it into an empty
+virtualenv and loading all 18 commands with no repository present.
+
+`debug_tools.py` was found to have a second copy of the same bug on top of the
+first: it looked along three relative paths under `tests/` *and* read `commands`
+as a list when it is a mapping keyed by hex code, so it had always silently
+fallen back to a hard-coded table that misnames several commands - 0x80 as
+"Enable Motor" (it is calibrate) and 0xFD as absolute (it is relative).
+
+The original finding, for reference:
+
+`llm_debug_interface.py` loaded the command specification from
 `tests/fixtures/manual_commands_v106.json`. An installed wheel has no `tests/`
-directory, so `/commands` and `available_commands` are empty for anyone who did
-not clone the repository. The specification belongs in the library package
-alongside the constants it describes, with both the tests and the simulator
-reading it from there.
+directory, so `/commands` and `available_commands` were empty for anyone who did
+not clone the repository.
 
 ---
 

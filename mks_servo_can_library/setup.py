@@ -66,6 +66,11 @@ setup(
     packages=find_packages(
         where="."
     ),  # Finds mks_servo_can and mks_servo_can.kinematics
+    # The manual's command transcription ships inside the package: the simulator
+    # and the conformance tests both read it from there, and an installed wheel
+    # has no tests/ directory to fall back on.
+    package_data={"mks_servo_can": ["data/*.json"]},
+    include_package_data=True,
     # package_dir={'': '.'}, # Usually not needed if setup.py is in the
     # same dir as the main package folder
     classifiers=[

@@ -17,37 +17,21 @@ if TYPE_CHECKING:
     from ..motor_model import SimulatedMotor
     from ..virtual_can_bus import VirtualCANBus
 
-# Load manual command specifications for reference
-from pathlib import Path
+from mks_servo_can import get_manual_commands
 
 logger = logging.getLogger(__name__)
 
 # The command reference an agent consults to find out what it may send.
 #
-# The path here was off by one level and silently resolved to nothing, so
-# `available_commands` reported 0 and `get_available_commands()` returned an
-# empty list with a "not loaded" note that no caller surfaced. Both failures now
-# log a warning, because a debugging interface that quietly knows nothing is
-# worse than one that says so.
-#
-# This still reads out of tests/, which means an installed wheel finds no spec
-# at all. The fixture belongs in the library package alongside the constants it
-# describes; see MANUAL_SPEC_NOT_PACKAGED in REVIEW_NOTES.md.
-_MANUAL_SPEC_PATH = (
-    Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "manual_commands_v106.json"
-)
+# This comes from the library package, which ships the manual's transcription as
+# package data. It used to be read from tests/fixtures by path arithmetic that
+# was off by one level - so it silently resolved to nothing, `available_commands`
+# reported 0, and an installed wheel had no hope of finding it at all. A failure
+# here is logged rather than swallowed: a debugging interface that quietly knows
+# nothing is worse than one that says so.
 MANUAL_COMMANDS: Dict[str, Any] = {}
 try:
-    if _MANUAL_SPEC_PATH.exists():
-        with open(_MANUAL_SPEC_PATH) as f:
-            MANUAL_SPEC = json.load(f)
-        MANUAL_COMMANDS = MANUAL_SPEC["commands"]
-    else:
-        logger.warning(
-            "Manual command specification not found at %s; command reference "
-            "endpoints will be empty.",
-            _MANUAL_SPEC_PATH,
-        )
+    MANUAL_COMMANDS = get_manual_commands()
 except (OSError, ValueError, KeyError) as exc:
     logger.warning("Could not load manual command specification: %s", exc)
 
