@@ -44,11 +44,19 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 * **Hardware-less Development**: Test the `mks-servo-can` library without physical motors.
 * **Motor Behavior Modeling**: Simulates multiple MKS servo motors, responding to CAN commands by updating internal states (position, speed, etc.).
 * **Virtual CAN Bus**: Emulates CAN bus interactions, managing communication with the library via a TCP socket.
-* **Rich Interactive Dashboard**: Modern text-based interface with real-time motor status display.
-    * Live motor position, speed, encoder values, and status indicators.
-    * Interactive keyboard controls for motor selection and direct command injection.
-    * Performance monitoring with latency tracking, throughput metrics, and connection health.
-    * Color-coded status indicators and auto-refreshing displays.
+* **One state model, two views**: everything observable comes from
+  `SimulatedMotor.status_snapshot()`, so the human and machine surfaces cannot
+  report different things about the same motor.
+    * **Browser dashboard** (`--debug-api`, then `/dashboard`): motor table,
+      rolling position-versus-target plot, named command log, anomaly panel.
+      Self-contained — no CDN, works offline.
+    * **JSON on stdout** (`--json-output`): one object per line, for a program
+      or an agent to consume directly.
+    * **Terminal dashboard** (`--textual-dashboard`): motor table and command
+      log in a TUI, for when a browser is not available.
+* **Anomaly reporting**: surfaces protocol events a client cannot deduce from
+  the wire — notably a superseded move, whose abort frame is indistinguishable
+  from the acknowledgement of the command that superseded it.
 * **Configuration Management**: 
     * Save/load configuration profiles for different simulator setups.
     * Motor templates for quick motor configuration (SERVO42D, SERVO57D, high-precision, high-speed).
@@ -216,65 +224,79 @@ Using editable installs (`pip install -e .`) for both packages within the same v
 
 ### 1. Running the Simulator
 
-**Basic Simulator Usage:**
 ```bash
-# Start basic simulator with two motors
+# Two motors on CAN IDs 1 and 2, with 5 ms of simulated bus latency
 mks-servo-simulator --num-motors 2 --start-can-id 1 --latency-ms 5
 ```
 
-**Rich Interactive Dashboard:**
+The simulator listens for library connections on `localhost:6789` by default.
+`mks-servo-simulator --help` lists every option.
+
+#### Watching what it is doing
+
+There are two ways to observe a running simulator, and they render the *same*
+payload — `SimulatedMotor.status_snapshot()` — so a person and a program are
+never told different things about the same motor.
+
+**For a human — the browser dashboard:**
 ```bash
-# Start with interactive dashboard and real-time monitoring
-mks-servo-simulator --dashboard --num-motors 3 --refresh-rate 200
+mks-servo-simulator --debug-api --num-motors 3
+# then open http://127.0.0.1:8765/dashboard
 ```
-Interactive controls include:
-- **Arrow keys**: Select motors  
-- **Space**: Pause/resume updates
-- **h**: Show help  
-- **i**: Command injection mode
-- **p**: Configuration profiles
-- **l**: Live parameter adjustment
-- **+/-**: Adjust refresh rate
+Live motor table, a rolling plot of measured position against commanded target,
+the recent command log with commands resolved to their manual names, and an
+anomaly panel. The page is a single self-contained file with no CDN, no fonts
+and no external assets, so it works on a bench with no internet.
 
-**Debug API with Configuration Management:**
+**For a program — JSON on stdout:**
 ```bash
-# Start with HTTP API for programmatic access
-mks-servo-simulator --debug-api --dashboard --num-motors 2
-# API available at: http://localhost:8765/docs
-# Configuration endpoints: http://localhost:8765/config/*
-```
-
-**Configuration Profiles:**
-```bash
-# Load saved configuration profile
-mks-servo-simulator --config-profile my_setup
-
-# Save current configuration as profile
-mks-servo-simulator --save-config my_setup --num-motors 2
-
-# Use custom config directory
-mks-servo-simulator --config-dir ./my_configs --dashboard
-```
-
-**JSON Output for LLMs:**
-```bash
-# JSON output mode for Claude Code integration
 mks-servo-simulator --json-output --num-motors 2
 ```
+One JSON object per line, nothing else on stdout, so `json.loads` per line
+works. Each `status_update` carries every motor's full state.
 
-**Combined Features:**
+The same data is available over HTTP while `--debug-api` is running:
+
+| endpoint | purpose |
+|---|---|
+| `/status` | complete state: every motor, comms statistics, recent commands, anomalies |
+| `/motors/{id}` | one motor |
+| `/summary` | one-line text summary, for dropping into a prompt |
+| `/commands` | the command reference from the manual specification |
+| `/validate` | POST an expected state, get a pass/fail report |
+| `/health` | liveness and uptime |
+| `/docs` | interactive OpenAPI documentation |
+
+#### Anomalies
+
+The simulator reports protocol events a client cannot deduce from the wire. The
+one that matters most is a superseded move: re-targeting `0xF5` while a move is
+running makes the motor abort the old move, and the abort frame carries *the
+same command byte* as the acknowledgement of the command that superseded it. A
+client that does not distinguish them sees a move fail for no visible reason.
+The simulator knows which frame is which and says so, in `/status`'s `errors`
+array and in the dashboard's anomaly panel.
+
+#### Configuration profiles
+
 ```bash
-# Full-featured simulator with all capabilities
-mks-servo-simulator \
-  --dashboard \
-  --debug-api \
-  --num-motors 3 \
-  --refresh-rate 150 \
-  --latency-ms 2.5 \
-  --config-profile production
+# Save the current configuration, then start from it later
+mks-servo-simulator --save-config my_setup --num-motors 2
+mks-servo-simulator --config-profile my_setup
+
+# Keep profiles somewhere other than ~/.mks_simulator_config
+mks-servo-simulator --config-dir ./my_configs --config-profile my_setup
 ```
 
-The simulator will listen for connections from the library (default: `localhost:6789`). Use `mks-servo-simulator --help` for all options.
+#### Terminal dashboard
+
+```bash
+mks-servo-simulator --textual-dashboard --num-motors 3
+```
+A Textual TUI showing a motor table and command log. Keys: `q`/`escape` quit,
+`r` refresh, `p` pause, up/down select a motor. It runs on the simulator's own
+event loop and so competes with the motor integration for scheduling; prefer
+the browser dashboard when timing fidelity matters.
 
 ### 2. Using the Library
 

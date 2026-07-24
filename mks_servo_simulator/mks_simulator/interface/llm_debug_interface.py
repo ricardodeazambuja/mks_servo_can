@@ -7,30 +7,49 @@ analyze mks-servo-can based applications.
 """
 
 import json
+import logging
 import time
 from collections import deque
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from ..motor_model import MotorModel
+    from ..motor_model import SimulatedMotor
     from ..virtual_can_bus import VirtualCANBus
 
 # Load manual command specifications for reference
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
+# The command reference an agent consults to find out what it may send.
+#
+# The path here was off by one level and silently resolved to nothing, so
+# `available_commands` reported 0 and `get_available_commands()` returned an
+# empty list with a "not loaded" note that no caller surfaced. Both failures now
+# log a warning, because a debugging interface that quietly knows nothing is
+# worse than one that says so.
+#
+# This still reads out of tests/, which means an installed wheel finds no spec
+# at all. The fixture belongs in the library package alongside the constants it
+# describes; see MANUAL_SPEC_NOT_PACKAGED in REVIEW_NOTES.md.
+_MANUAL_SPEC_PATH = (
+    Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "manual_commands_v106.json"
+)
+MANUAL_COMMANDS: Dict[str, Any] = {}
 try:
-    # Try to load command specifications
-    test_dir = Path(__file__).parent.parent.parent.parent.parent
-    fixtures_path = test_dir / "tests" / "fixtures" / "manual_commands_v106.json"
-    if fixtures_path.exists():
-        with open(fixtures_path) as f:
+    if _MANUAL_SPEC_PATH.exists():
+        with open(_MANUAL_SPEC_PATH) as f:
             MANUAL_SPEC = json.load(f)
         MANUAL_COMMANDS = MANUAL_SPEC["commands"]
     else:
-        MANUAL_COMMANDS = {}
-except Exception:
-    MANUAL_COMMANDS = {}
+        logger.warning(
+            "Manual command specification not found at %s; command reference "
+            "endpoints will be empty.",
+            _MANUAL_SPEC_PATH,
+        )
+except (OSError, ValueError, KeyError) as exc:
+    logger.warning("Could not load manual command specification: %s", exc)
 
 
 @dataclass
@@ -68,12 +87,12 @@ class LLMDebugInterface:
     - State validation capabilities
     """
 
-    def __init__(self, motors: Dict[int, 'MotorModel'], can_bus: 'VirtualCANBus'):
+    def __init__(self, motors: Dict[int, 'SimulatedMotor'], can_bus: 'VirtualCANBus'):
         """
         Initialize LLM debug interface.
-        
+
         Args:
-            motors: Dictionary of motor ID to MotorModel instances
+            motors: Dictionary of motor ID to SimulatedMotor instances
             can_bus: VirtualCANBus instance managing communication
         """
         self.motors = motors
@@ -128,34 +147,24 @@ class LLMDebugInterface:
             "available_commands": len(MANUAL_COMMANDS)
         }
 
-    def _get_motor_status(self, motor: 'MotorModel') -> Dict[str, Any]:
-        """Get detailed status for a specific motor"""
-        return {
-            "can_id": motor.can_id,
-            "name": motor.name, # Added line
-            "enabled": getattr(motor, 'enabled', True),
-            "current_position": getattr(motor, 'encoder_position', 0),
-            "current_angle_degrees": getattr(motor, 'current_angle', 0.0),
-            "target_position": getattr(motor, 'target_position', 0),
-            "current_speed_rpm": getattr(motor, 'current_speed', 0.0),
-            "target_speed_rpm": getattr(motor, 'target_speed', 0.0),
-            "last_command": {
-                "type": getattr(motor, 'last_command_type', None),
-                "timestamp": getattr(motor, 'last_command_time', 0),
-                "parameters": getattr(motor, 'last_command_params', {})
-            },
-            "status_flags": {
-                "homing": getattr(motor, 'is_homing', False),
-                "moving": getattr(motor, 'is_moving', False),
-                "error": getattr(motor, 'has_error', False),
-                "stalled": getattr(motor, 'is_stalled', False)
-            },
-            "performance": {
-                "load_percentage": getattr(motor, 'load_percentage', 0),
-                "temperature_c": getattr(motor, 'temperature', 25),
-                "total_commands": getattr(motor, 'total_commands', 0)
-            }
-        }
+    def _get_motor_status(self, motor: 'SimulatedMotor') -> Dict[str, Any]:
+        """
+        Renders one motor's state for reporting.
+
+        Deliberately a one-line delegation to `SimulatedMotor.status_snapshot()`.
+        This method used to assemble the dictionary itself from sixteen
+        attribute names the motor did not have, every one of them defaulted, so
+        it reported zeros for a motor that was moving. Keeping it this thin is
+        what stops that from recurring: there is no longer anywhere here for a
+        wrong field name to hide.
+
+        Args:
+            motor: The motor to describe.
+
+        Returns:
+            The motor's snapshot as a flat, JSON-serialisable dictionary.
+        """
+        return motor.status_snapshot().as_dict()
 
     def get_motor_status(self, motor_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -399,7 +408,11 @@ class LLMDebugInterface:
     def get_debug_summary(self) -> str:
         """
         Get a concise debug summary suitable for LLM context.
-        
+
+        One line per motor, in degrees rather than raw counts, because the
+        question being answered is almost always "is it where I asked it to
+        be" and counts make that arithmetic the reader's problem.
+
         Returns:
             String summary of current system state
         """
@@ -407,10 +420,16 @@ class LLMDebugInterface:
 
         motor_summaries = []
         for motor_id, motor_status in status["motors"].items():
-            pos = motor_status["current_position"]
-            enabled = motor_status["enabled"]
-            moving = motor_status["status_flags"]["moving"]
-            motor_summaries.append(f"Motor {motor_id}: pos={pos}, {'enabled' if enabled else 'disabled'}, {'moving' if moving else 'stopped'}")
+            state = "enabled" if motor_status["enabled"] else "disabled"
+            motion = "moving" if motor_status["moving"] else "stopped"
+            summary = (
+                f"Motor {motor_id}: {motor_status['position_degrees']:.2f}deg "
+                f"{state}, {motion}"
+            )
+            target = motor_status["target_position_degrees"]
+            if target is not None:
+                summary += f", target {target:.2f}deg"
+            motor_summaries.append(summary)
 
         recent_commands = len(self.command_history)
         recent_errors = len(self.recent_errors)

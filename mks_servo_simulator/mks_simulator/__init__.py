@@ -18,4 +18,7 @@ __all__ = [
 "run_simulator_cli",
 ]
 
-print("MKS Servo CAN Simulator Package Initialized")
+# Nothing is printed on import. A banner here went to stdout, which in
+# --json-output mode is the machine-readable event stream: any consumer doing
+# json.loads() per line hit a decode error on the very first one. Importing a
+# library should be silent regardless; here it is also a correctness matter.

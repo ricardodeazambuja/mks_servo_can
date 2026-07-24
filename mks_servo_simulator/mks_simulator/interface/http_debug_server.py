@@ -15,7 +15,7 @@ try:
     import uvicorn
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import HTMLResponse, JSONResponse
     from pydantic import BaseModel, Field  # Added
     FASTAPI_AVAILABLE = True
 except ImportError:
@@ -34,6 +34,7 @@ except ImportError:
     from typing import Any, Dict, List, Optional
 
 
+from .dashboard_page import DASHBOARD_HTML
 from .llm_debug_interface import LLMDebugInterface
 
 
@@ -104,7 +105,25 @@ class DebugHTTPServer:
     
     def _setup_routes(self):
         """Setup API routes"""
-        
+
+        @self.app.get(
+            "/dashboard",
+            summary="Human-facing dashboard",
+            response_class=HTMLResponse,
+            include_in_schema=False,
+        )
+        async def dashboard():
+            """
+            Serve the browser dashboard.
+
+            The page is static; everything it shows it fetches from `/status`,
+            which is the same endpoint an agent polls. Keeping the human view
+            and the machine view on one payload is what stops them drifting
+            apart - the previous arrangement had four separate renderings of
+            motor state and three of them were wrong.
+            """
+            return HTMLResponse(DASHBOARD_HTML)
+
         @self.app.get("/", summary="API information")
         async def root():
             """Get API information and available endpoints"""
@@ -113,6 +132,7 @@ class DebugHTTPServer:
                 "version": "1.1.0",
                 "description": "Provides programmatic access to simulator state and command injection for LLM debugging",
                 "endpoints": {
+                    "/dashboard": "Human-facing browser dashboard",
                     "/status": "Get complete system status",
                     "/motors/{motor_id}": "Get specific motor status",
                     "/history": "Get command execution history",
@@ -239,7 +259,11 @@ class DebugHTTPServer:
                 "status": "healthy",
                 "uptime": status["uptime_seconds"],
                 "motors_count": len(status["motors"]),
-            "total_commands_processed": status["communication"]["total_messages_sent"]
+                # get_system_status() emits "total_messages"; this read used
+                # "total_messages_sent" and raised KeyError, so the health check
+                # was the one endpoint guaranteed to report the service as
+                # unhealthy.
+                "total_commands_processed": status["communication"]["total_messages"],
             }
         
         @self.app.get("/export", summary="Export status to JSON")

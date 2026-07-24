@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 # motor does before it looks at the command byte.
 from mks_servo_can.crc import calculate_crc, verify_crc
 
+from .interface.llm_debug_interface import MANUAL_COMMANDS
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,10 +79,33 @@ class VirtualCANBus:
                 f"Motor with CAN ID {motor.can_id} already exists on virtual bus. Overwriting."
             )
         self.simulated_motors[motor.can_id] = motor
+        motor.set_anomaly_sink(self._record_anomaly)
         logger.info(
             f"Added simulated motor with CAN ID {motor.can_id:03X} to virtual bus."
         )
-        # self._loop.create_task(motor.start()) # Start motor's internal simulation loop
+
+    def _record_anomaly(
+        self, motor_id: int, anomaly_type: str, description: str, context: Dict
+    ) -> None:
+        """
+        Forwards a motor-reported protocol anomaly to the debug interface.
+
+        Resolved at call time rather than wired at construction, because the
+        debug interface is attached to the bus after the motors are added.
+
+        Args:
+            motor_id: CAN ID of the motor reporting the anomaly.
+            anomaly_type: Short category, e.g. "move_superseded".
+            description: Human-readable explanation.
+            context: Structured detail for a machine reader.
+        """
+        if self.debug_interface:
+            self.debug_interface.record_error(
+                motor_id=motor_id,
+                error_type=anomaly_type,
+                description=description,
+                context=context,
+            )
 
     async def start_all_motors(self):
         """
@@ -313,12 +338,16 @@ class VirtualCANBus:
 
             # Debug interface recording
             if self.debug_interface:
-                # Get command name from manual or use hex code
-                command_name = f"0x{command_code:02X}"
-                if hasattr(self.debug_interface, 'MANUAL_COMMANDS'):
-                    manual_cmds = getattr(self.debug_interface, 'MANUAL_COMMANDS', {})
-                    if f"0x{command_code:02X}" in manual_cmds:
-                        command_name = manual_cmds[f"0x{command_code:02X}"].get('name', command_name)
+                # Resolve the command's name from the manual specification.
+                # This used to test hasattr(self.debug_interface,
+                # 'MANUAL_COMMANDS'); MANUAL_COMMANDS is a module-level global,
+                # not an instance attribute, so the test was always false and
+                # every command in the history was labelled with its own hex
+                # code. The whole point of the lookup is to give a reader
+                # "move_absolute_axis" instead of "0xF5".
+                command_name = MANUAL_COMMANDS.get(
+                    f"0x{command_code:02X}", {}
+                ).get("name", f"0x{command_code:02X}")
 
                 # Create parameters dict from command data
                 parameters = {

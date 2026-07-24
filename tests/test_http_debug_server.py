@@ -89,11 +89,16 @@ if FASTAPI_AVAILABLE:
 
         @patch('mks_servo_simulator.mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_system_status')
         def test_health_endpoint(self, mock_get_system_status):
-            # Configure the mock to return necessary data for the /health endpoint
+            # The communication key is "total_messages". This mock previously
+            # supplied "total_messages_sent", which get_system_status has never
+            # emitted - so the test asserted a green /health while the real
+            # endpoint raised KeyError and returned HTTP 500. Stubs of an
+            # internal interface have to use that interface's real schema or
+            # they test nothing.
             mock_get_system_status.return_value = {
                 "uptime_seconds": 123.45,
                 "motors": {1: "dummy_motor_data"}, # For len(status["motors"])
-                "communication": {"total_messages_sent": 10, "total_messages_received": 5}
+                "communication": {"total_messages": 10, "messages_per_second": 1.0}
             }
             response = self.client.get("/health")
             self.assertEqual(response.status_code, 200)
@@ -359,6 +364,106 @@ if FASTAPI_AVAILABLE:
             parameter_name = "some_param"
             response = self.client.post(f"/config/parameters/{parameter_name}", json={}) # Missing 'value'
             self.assertEqual(response.status_code, 422) # Should be 422 due to Pydantic
+
+
+    class TestEndpointsAgainstRealMotors(unittest.TestCase):
+        """
+        Serve the API from a real debug interface over real motors.
+
+        Everything above stubs `get_system_status`, which means the endpoints
+        are only ever exercised against a hand-written payload. That is how
+        `/status` and `/health` both shipped returning HTTP 500 - one read
+        `motor.name`, which `SimulatedMotor` does not have, and the other read a
+        communication key that `get_system_status` does not emit - while the
+        suite stayed green.
+
+        These tests stub nothing between the HTTP layer and the motor.
+        """
+
+        def setUp(self):
+            import asyncio
+
+            from mks_servo_simulator.mks_simulator.motor_model import SimulatedMotor
+            from mks_servo_simulator.mks_simulator.virtual_can_bus import (
+                VirtualCANBus as RealVirtualCANBus,
+            )
+
+            self.loop = asyncio.new_event_loop()
+            self.bus = RealVirtualCANBus(self.loop)
+            motor = SimulatedMotor(can_id=1, loop=self.loop)
+            motor.is_enabled = True
+            motor.position_steps = 4096.0
+            self.bus.add_motor(motor)
+
+            self.interface = LLMDebugInterface(
+                motors=self.bus.simulated_motors, can_bus=self.bus
+            )
+            self.bus.debug_interface = self.interface
+            self.server = DebugHTTPServer(debug_interface=self.interface)
+            self.client = TestClient(self.server.app)
+
+        def tearDown(self):
+            self.loop.close()
+
+        def test_status_returns_real_motor_state(self):
+            response = self.client.get("/status")
+            self.assertEqual(response.status_code, 200, response.text)
+            motor = response.json()["motors"]["1"]
+            self.assertEqual(motor["can_id"], 1)
+            self.assertEqual(motor["position_steps"], 4096.0)
+            self.assertAlmostEqual(motor["position_degrees"], 90.0)
+            self.assertTrue(motor["enabled"])
+
+        def test_health_returns_200(self):
+            response = self.client.get("/health")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["status"], "healthy")
+            self.assertEqual(response.json()["motors_count"], 1)
+
+        def test_motor_endpoint_returns_200(self):
+            response = self.client.get("/motors/1")
+            self.assertEqual(response.status_code, 200, response.text)
+
+        def test_summary_returns_200(self):
+            response = self.client.get("/summary")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn("Motor 1", response.json()["summary"])
+
+        def test_dashboard_is_served_and_self_contained(self):
+            """
+            The dashboard must render offline.
+
+            A CAN bench is frequently a machine with no internet, so a page
+            that reaches for a CDN is a page that shows a blank screen exactly
+            when it is needed.
+            """
+            import re
+
+            response = self.client.get("/dashboard")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn("text/html", response.headers["content-type"])
+            body = response.text
+            self.assertIn("MKS Servo Simulator", body)
+
+            # Look for things the browser would actually fetch, rather than any
+            # occurrence of "http" - an SVG xmlns is a namespace identifier, not
+            # a request, and matching on the bare scheme would flag it.
+            fetches = re.findall(
+                r'(?:src|href)\s*=\s*["\'](?!data:|#)([^"\']+)', body
+            ) + re.findall(r'url\(\s*["\']?(?!data:)([^)"\']+)', body)
+            remote = [u for u in fetches if u.startswith(("http://", "https://", "//"))]
+            self.assertEqual(
+                remote, [], f"dashboard fetches external resources: {remote}"
+            )
+
+        def test_dashboard_reads_the_same_endpoint_agents_use(self):
+            """
+            The human view must be built on /status, not a parallel schema.
+
+            Two renderings of the same state is how they came to disagree in
+            the first place.
+            """
+            self.assertIn('fetch("status"', self.client.get("/dashboard").text)
 
 
 # Tests for JSONOutputHandler (can be in the same file or a new one)

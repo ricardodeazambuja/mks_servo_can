@@ -40,6 +40,27 @@ except ImportError as exc:
         MOTOR_TYPE_SERVO57D = "SERVO57D"
 
 
+def _degrees_to_steps(degrees: Optional[float], steps_per_rev: int) -> Optional[int]:
+    """
+    Converts a configuration profile's angle into encoder counts.
+
+    Profiles state positions and limits in degrees; `SimulatedMotor` works in
+    encoder counts. Keeping the conversion in one named place stops the two
+    from being wired together directly, which would read a +/-360 degree limit
+    as +/-360 counts - under eight degrees.
+
+    Args:
+        degrees: Angle in degrees, or None.
+        steps_per_rev: The motor's encoder counts per revolution.
+
+    Returns:
+        The equivalent count, or None if `degrees` was None.
+    """
+    if degrees is None:
+        return None
+    return int(round(degrees * steps_per_rev / 360.0))
+
+
 async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, textual_dashboard_task=None, performance_monitor=None):
     """Graceful shutdown for the simulator."""
     logger.info(f"Received exit signal {sig.name}...")
@@ -171,7 +192,10 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
 @click.option(
     "--debug-api",
     is_flag=True,
-    help="Enable HTTP debug API server for programmatic access.",
+    help=(
+        "Enable the HTTP debug API. Serves the browser dashboard at "
+        "/dashboard and the same state as JSON at /status."
+    ),
 )
 @click.option(
     "--debug-api-port",
@@ -364,15 +388,36 @@ def main(
             if motor_config.motor_type.upper() == "GENERIC":
                 sim_motor_type_str = lib_const.MOTOR_TYPE_SERVO42D
 
+            # Only the fields SimulatedMotor actually models are passed here.
+            # This branch previously forwarded max_current, max_speed and
+            # initial_position as constructor arguments; none of the three
+            # exist on SimulatedMotor, so --config-profile raised TypeError on
+            # every invocation. max_speed has no equivalent at all - a real
+            # motor's speed ceiling comes from its work mode, not from a
+            # per-motor limit - so it is deliberately not mapped.
+            #
+            # MotorConfig expresses positions in degrees (its limits default to
+            # +/-360) while SimulatedMotor takes encoder counts, so the two
+            # cannot be connected directly: -360 passed through unconverted
+            # would mean a limit of 7.9 degrees.
+            steps_per_rev = motor_config.steps_per_rev
+            position_limits = motor_config.position_limits or {}
             motor = SimulatedMotor(
                 can_id=motor_config.can_id,
                 loop=loop,
                 motor_type=sim_motor_type_str,
-                steps_per_rev_encoder=motor_config.steps_per_rev,
-                max_current=motor_config.max_current,
-                max_speed=motor_config.max_speed,
-                initial_position=motor_config.initial_position,
+                initial_pos_steps=(
+                    _degrees_to_steps(motor_config.initial_position, steps_per_rev) or 0
+                ),
+                steps_per_rev_encoder=steps_per_rev,
+                min_pos_limit_steps=_degrees_to_steps(
+                    position_limits.get("min"), steps_per_rev
+                ),
+                max_pos_limit_steps=_degrees_to_steps(
+                    position_limits.get("max"), steps_per_rev
+                ),
             )
+            motor.working_current_ma = motor_config.max_current
 
             if motor_config.enable_on_start:
                 motor.is_enabled = True
@@ -452,6 +497,14 @@ def main(
                 )
                 debug_server_task = loop.create_task(debug_server.start_server())
                 logger.info(f"Debug API server starting on http://127.0.0.1:{debug_api_port}")
+                logger.info(
+                    "Dashboard (for humans): http://127.0.0.1:%d/dashboard",
+                    debug_api_port,
+                )
+                logger.info(
+                    "Status JSON (for agents): http://127.0.0.1:%d/status",
+                    debug_api_port,
+                )
                 logger.info(f"API documentation available at http://127.0.0.1:{debug_api_port}/docs")
                 logger.info("Configuration management endpoints available at /config/*")
             except ImportError as e:

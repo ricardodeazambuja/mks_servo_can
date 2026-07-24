@@ -4,6 +4,121 @@ Review dated 2026-07-24, against commit `e4f11df`. **Most of Part 1 has since
 been acted on** — see `CHANGELOG.md` for what changed and why. This file is kept
 for the design reasoning in Part 2, and for the outstanding items below.
 
+A second review on 2026-07-24, against `b28dded`, found the defects in Part 0.
+The simulator-side findings from that review have been fixed; the library-side
+ones are recorded here with reproductions and are not yet fixed.
+
+---
+
+# Part 0 — Second review: open library defects
+
+Each of these was reproduced against the simulator, not inferred. None is
+currently covered by a test.
+
+## L1. Re-targeting a move in flight always fails *(critical)*
+
+`CANInterface.expect_stale_notification` discards frames by **arrival order**,
+but the motor emits the new command's acknowledgement *before* the superseded
+move's abort frame. So the credit swallows the acknowledgement and the abort is
+read as the reply:
+
+```
+rx ID=001 CMD=F5 Data=f501f7   → discarded as "stale"  (status 01 = STARTING: the real ack)
+rx ID=001 CMD=F5 Data=f500f6   → resolves the ack future (status 00 = FAIL: the old move's abort)
+MotorError: Motor run command F5 ... failed to start (status 0x00)
+```
+
+Reproduce: enable a motor, dispatch a long move with `wait=False`, then dispatch
+a second move before it completes. Every retarget raises.
+
+This is the behaviour the whole streaming design rests on. `ServoStream` is
+unaffected because it never waits for acknowledgements, but every `Axis`-level
+retarget fails.
+
+The mirror-image failure is just as bad: if real hardware emits *no* abort frame,
+the credit never expires and swallows the next legitimate response instead.
+Nothing calls `clear_stale_notifications` automatically.
+
+**Fix direction.** Match the credit on the frame's *status byte* rather than on
+arrival order — the abort carries `POS_RUN_FAIL`/`POS_RUN_COMPLETE`, the
+acknowledgement carries `POS_RUN_STARTING` — and give credits a deadline so an
+abort that never arrives cannot poison a later reply. Test it against the
+simulator; `tests/unit/test_regressions.py` currently asserts only that the
+credit is *requested*, using a `MagicMock`, which is why this shipped.
+
+The simulator now reports this event explicitly (`move_superseded` in
+`/status`'s `errors`), so the failure is visible while it is being fixed.
+
+## L2. `save_or_clean_speed_mode_params` (0xFF) always times out
+
+`_send_command_and_get_response` special-cases 0xFF to expect the echoed
+*sub-command* (0xC8/0xCA), but the motor echoes 0xFF — as the manual states and
+as the comment at `low_level_api.py:1984` already says, contradicting the code at
+line 144.
+
+```
+CommunicationError: Timeout waiting for response to command FF from CAN ID 001
+(expected echoed cmd code C8). Sent: ffc8c8
+```
+
+The command has no test coverage at all.
+
+## L3. Default speed is interpreted in the wrong units
+
+In `_move_absolute_handler` and `_move_relative_handler`, when `unit == 'user'`
+and no speed is given, `default_speed_param` (500, an MKS parameter meaning
+roughly 500 RPM) is passed through `kinematics.user_speed_to_motor_speed()`,
+which reads it as 500 deg/s and returns **83**. The guard `if sp is not None` is
+dead — `sp` is never `None`, so the documented fallback never runs. Any
+`move_to_position_abs_user()` without an explicit speed runs at a sixth of the
+documented default.
+
+## L4. A single bad frame kills the receive path
+
+In `_listen_for_messages_hw` and `_listen_for_messages_sim`, an exception raised
+by `_process_received_message` escapes the per-message `try` and is caught by the
+outer `except Exception`, which ends the listener task. One malformed frame or
+one raising handler silently stops all reception for the rest of the session.
+
+## L5. Smaller items
+
+- **`ServoStream.start()` is not atomic.** If it fails after disabling responses
+  on some axes, `__aexit__` never runs and `stop()` early-returns on
+  `_running == False`, leaving those motors with responses disabled.
+- **`ServoStream._run_feedback` toggles `0x8C` around every read** — three round
+  trips per axis per poll instead of one, and unnecessary: by the repo's own
+  reading of the manual (`SUPPRESSIBLE_RESPONSE_COMMANDS`), `0x31` is not
+  suppressible and always answers.
+- **`can.interface.Bus(bustype=...)`** is deprecated in python-can 4 and removed
+  in 5; the argument is now `interface`.
+- **Stale docstrings.** `get_current_position_steps` claims it inverts the value
+  it reads (it does not); `move_to_position_abs_pulses` claims it emulates
+  absolute motion via 0xFD (it uses 0xF5).
+- **Per-frame `logger.info` with eager f-strings** remains in
+  `run_position_mode_relative_pulses`, `run_speed_mode`, `stop_speed_mode`,
+  `run_position_mode_relative_axis` and others. Only the 0xF5 path was converted
+  to lazy `debug`.
+
+## L6. Documentation does not match the API
+
+A mechanical check of the code blocks in `docs/` and `README.md` found **26
+references to things that do not exist** across 12 files, plus 7 blocks that do
+not parse as Python (so the real count is higher). Examples:
+`LinearKinematics(steps_per_mm=)`, `RotaryKinematics(units=)`,
+`axis.move_absolute()`, `axis.get_current_position()`, `axis.set_kinematics()`,
+`axis.update_status()`, `CANInterface(enable_crc=)`, and `BaseKinematics` (the
+exported name is `Kinematics`). `docs/user_guides/library/reading_status.md`
+alone references seven non-existent `Axis` methods.
+
+## L7. MANUAL_SPEC_NOT_PACKAGED
+
+`llm_debug_interface.py` loads the command specification from
+`tests/fixtures/manual_commands_v106.json`. An installed wheel has no `tests/`
+directory, so `/commands` and `available_commands` are empty for anyone who did
+not clone the repository. The specification belongs in the library package
+alongside the constants it describes, with both the tests and the simulator
+reading it from there.
+
 ---
 
 # Part 1 — Repository Review: what remains

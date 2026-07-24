@@ -6,6 +6,7 @@ import asyncio
 import logging
 import struct
 import time
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("SimulatedMotor") # Changed from __name__ for clarity if file is moved/copied
@@ -41,6 +42,9 @@ SUPPRESSIBLE_RESPONSE_COMMANDS = frozenset(
 )
 SIM_MAX_SPEED_PARAM = 3000 # Used for RPM conversion, matches VFOC for SR_VFOC
 SIM_MAX_ACCEL_PARAM = 255
+
+# Degrees of shaft rotation per revolution, for reporting angles.
+_DEGREES_PER_REV = 360.0
 
 
 def mks_speed_param_to_rpm(param: int, mode: int = const.MODE_SR_VFOC) -> float:
@@ -86,6 +90,105 @@ def mks_accel_param_to_rpm_per_sec_sq(
     return _profile.accel_param_to_rpm_per_second(
         max(0, min(int(param), SIM_MAX_ACCEL_PARAM))
     )
+
+
+@dataclass(frozen=True)
+class MotorSnapshot:
+    """
+    A complete, consistent reading of one simulated motor's state.
+
+    This is the *only* supported way to observe a `SimulatedMotor` from
+    outside. Every reporting surface - the JSON event stream, the HTTP debug
+    API, the browser dashboard - renders this and nothing else.
+
+    That rule exists because the alternative was tried and failed. Each surface
+    used to reach into the motor for whatever attribute names it assumed
+    existed, and none of them matched: the debug interface read `enabled`,
+    `encoder_position`, `current_speed` and thirteen other names the motor has
+    never had. Because those reads were wrapped in `getattr(..., default)`, the
+    mismatch did not raise - it reported zeros. The one field without a default,
+    `name`, turned the whole endpoint into an HTTP 500. Routing every observer
+    through one frozen dataclass makes that class of drift impossible: a renamed
+    attribute breaks this file loudly, in one place, instead of silently
+    degrading every report.
+
+    Angles are derived from the motor's own encoder resolution rather than
+    assumed, so a motor configured with a non-standard `steps_per_rev_encoder`
+    still reports truthfully.
+
+    Attributes:
+        can_id: The ID the motor was created with, and the one it answers on.
+        listening_can_id: The ID it currently listens on, which differs from
+            `can_id` after a successful 0x8B.
+        motor_type: The modelled hardware variant, e.g. "SERVO42D".
+        enabled: Whether the servo loop is engaged.
+        calibrated / homed: Encoder calibration and homing state.
+        status_code: Raw MKS status byte, as command 0xF1 would report it.
+        status_text: Human-readable rendering of `status_code`.
+        position_steps: Current position in raw encoder counts. Fractional
+            because the simulation integrates continuously.
+        position_degrees: `position_steps` expressed as shaft rotation.
+        target_position_steps: Target of the move in flight, or None when no
+            positional move is active.
+        target_position_degrees: `target_position_steps` in degrees, or None.
+        position_error_steps: Signed distance still to travel, or None.
+        current_rpm / target_rpm: Present and commanded shaft speed. Signed;
+            positive is counter-clockwise.
+        speed_deg_per_s: `current_rpm` expressed as shaft angular rate.
+        moving: True when the shaft is turning.
+        work_mode / work_mode_name: The 0x82 work mode.
+        microsteps: Subdivision setting, as set by 0x84.
+        steps_per_rev_encoder: Encoder counts per shaft revolution.
+        working_current_ma: Configured phase current.
+        holding_current_percent: Holding current as a percentage of working
+            current, decoded from the 0x9B register code.
+        stalled: The rotor is stalled right now.
+        protected: Stall or position-error protection has latched.
+        responses_enabled: CanRSP - whether run commands are acknowledged.
+        active_notifications_enabled: CanACT - whether asynchronous completion
+            frames are emitted.
+        accel_param: The acceleration parameter of the most recent move.
+        accel_deg_per_s2: `accel_param` converted to engineering units.
+    """
+
+    can_id: int
+    listening_can_id: int
+    motor_type: str
+    enabled: bool
+    calibrated: bool
+    homed: bool
+    status_code: int
+    status_text: str
+    position_steps: float
+    position_degrees: float
+    target_position_steps: Optional[float]
+    target_position_degrees: Optional[float]
+    position_error_steps: Optional[float]
+    current_rpm: float
+    target_rpm: float
+    speed_deg_per_s: float
+    moving: bool
+    work_mode: int
+    work_mode_name: str
+    microsteps: int
+    steps_per_rev_encoder: int
+    working_current_ma: int
+    holding_current_percent: int
+    stalled: bool
+    protected: bool
+    responses_enabled: bool
+    active_notifications_enabled: bool
+    accel_param: int
+    accel_deg_per_s2: float
+
+    def as_dict(self) -> Dict[str, Any]:
+        """
+        Returns the snapshot as a plain JSON-serialisable dictionary.
+
+        Returns:
+            A mapping of field name to value, with no nesting.
+        """
+        return asdict(self)
 
 
 class SimulatedMotor:
@@ -148,6 +251,11 @@ class SimulatedMotor:
         self._send_completion_callback: Optional[
             Callable[[int, bytes], asyncio.Task]
         ] = None
+        # Set by VirtualCANBus. Lets the motor surface protocol-level events
+        # that a client cannot see for itself - see report_anomaly().
+        self._anomaly_sink: Optional[
+            Callable[[int, str, str, Dict[str, Any]], None]
+        ] = None
 
         # Parameters for command conversion
         self.base_motor_steps_per_rev = base_motor_steps_per_rev
@@ -208,6 +316,50 @@ class SimulatedMotor:
         logger.info(
             f"SimulatedMotor CAN ID {self.can_id:03X} initialized. Pos: {self.position_steps} steps."
         )
+
+    def set_anomaly_sink(
+        self, sink: Optional[Callable[[int, str, str, Dict[str, Any]], None]]
+    ) -> None:
+        """
+        Registers where this motor reports protocol anomalies.
+
+        Args:
+            sink: Called as `sink(motor_id, type, description, context)`, or
+                None to disable reporting.
+        """
+        self._anomaly_sink = sink
+
+    def report_anomaly(
+        self, anomaly_type: str, description: str, **context: Any
+    ) -> None:
+        """
+        Records something the client would otherwise have no way to observe.
+
+        The motivating case is a superseded move. When a new positional command
+        arrives while one is still running, the motor abandons the old move and
+        emits a failure frame for it - and because the MKS protocol reuses one
+        command byte for both acknowledgements and completions, that frame is
+        indistinguishable on the wire from the acknowledgement of the command
+        that superseded it. A client that mismatches the two sees a move fail
+        for no visible reason.
+
+        The simulator knows exactly which frame is which, so it says so here.
+        That turns "my moves randomly fail" into a labelled event with the
+        superseding target attached, which is the difference between a
+        debugging tool and a black box.
+
+        Args:
+            anomaly_type: Short category, e.g. "move_superseded".
+            description: Human-readable explanation.
+            **context: Structured detail for a machine reader.
+        """
+        logger.debug(
+            "Motor %s: anomaly %s - %s", self.original_can_id, anomaly_type, description
+        )
+        if self._anomaly_sink is not None:
+            self._anomaly_sink(
+                self.original_can_id, anomaly_type, description, dict(context)
+            )
 
     def _command_microsteps_to_raw_encoder_steps(self, command_microsteps: float) -> float:
         """Converts command microsteps to equivalent raw encoder steps."""
@@ -437,6 +589,22 @@ class SimulatedMotor:
         # (Existing _handle_positional_move logic - largely unchanged but uses original_can_id for logging)
         if self._current_move_task and not self._current_move_task.done():
             logger.warning(f"Motor {self.original_can_id}: Cancelling previous move for new one.")
+            self.report_anomaly(
+                "move_superseded",
+                (
+                    f"A move to {self.target_position_steps} was abandoned because a "
+                    f"new command retargeted to {target_pos_abs_steps:.0f}. The "
+                    f"abort frame for the old move carries command byte "
+                    f"0x{(self._current_move_command_code or 0):02X}, the same byte "
+                    "as the acknowledgement of the new one - a client that does "
+                    "not distinguish them will see the new move fail."
+                ),
+                superseded_command=self._current_move_command_code,
+                superseded_target_steps=self.target_position_steps,
+                new_command=command_code,
+                new_target_steps=target_pos_abs_steps,
+                position_steps=self.position_steps,
+            )
             await self._send_completion_if_callback(self._current_move_command_code, const.POS_RUN_FAIL)
             self._current_move_task.cancel("Superseded by new move command")
 
@@ -981,6 +1149,69 @@ class SimulatedMotor:
                 logger.error(f"SimulatedMotor {self.original_can_id} update task error during stop: {e}")
         self.is_running_task = None
         logger.info(f"SimulatedMotor {self.original_can_id} update task stopped.")
+
+    def status_snapshot(self) -> MotorSnapshot:
+        """
+        Captures the motor's complete observable state.
+
+        Every value is read from a real attribute of this object; nothing is
+        defaulted or invented. See `MotorSnapshot` for why that guarantee is
+        stated so emphatically.
+
+        The read is synchronous and non-blocking, so it is safe to call from a
+        request handler or a render loop at any rate without perturbing the
+        simulation.
+
+        Returns:
+            A frozen `MotorSnapshot` describing this motor right now.
+        """
+        degrees_per_step = (
+            _DEGREES_PER_REV / self.steps_per_rev_encoder
+            if self.steps_per_rev_encoder
+            else 0.0
+        )
+        target_steps = self.target_position_steps
+        return MotorSnapshot(
+            can_id=self.original_can_id,
+            listening_can_id=self.can_id,
+            motor_type=self.motor_type,
+            enabled=self.is_enabled,
+            calibrated=self.is_calibrated,
+            homed=self.is_homed,
+            status_code=self.motor_status_code,
+            status_text=const.MOTOR_STATUS_MAP.get(
+                self.motor_status_code, f"Unknown ({self.motor_status_code})"
+            ),
+            position_steps=self.position_steps,
+            position_degrees=self.position_steps * degrees_per_step,
+            target_position_steps=target_steps,
+            target_position_degrees=(
+                None if target_steps is None else target_steps * degrees_per_step
+            ),
+            position_error_steps=(
+                None if target_steps is None else target_steps - self.position_steps
+            ),
+            current_rpm=self.current_rpm,
+            target_rpm=self.target_rpm,
+            speed_deg_per_s=(self.current_rpm / 60.0) * _DEGREES_PER_REV,
+            moving=self.current_rpm != 0.0,
+            work_mode=self.work_mode,
+            work_mode_name=self.work_mode_str,
+            microsteps=self.microsteps,
+            steps_per_rev_encoder=self.steps_per_rev_encoder,
+            working_current_ma=self.working_current_ma,
+            # The 0x9B register holds a code, not a percentage: 0 means 10%,
+            # rising in 10-point steps to 90% at code 8.
+            holding_current_percent=(self.holding_current_percentage_code + 1) * 10,
+            stalled=self.is_stalled,
+            protected=self.is_protected_by_stall or self.is_protected_by_pos_error,
+            responses_enabled=self.slave_respond_enabled,
+            active_notifications_enabled=self.slave_active_initiation_enabled,
+            accel_param=self.target_accel_mks,
+            accel_deg_per_s2=_profile.accel_param_to_deg_per_s2(
+                max(0, min(int(self.target_accel_mks), SIM_MAX_ACCEL_PARAM))
+            ),
+        )
 
     @property
     def kinematics_units(self) -> str:

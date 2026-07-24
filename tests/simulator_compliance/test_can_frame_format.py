@@ -217,8 +217,11 @@ class TestCommandCodeMapping:
 
         expected_commands = [
             "0x30", "0x31", "0x32", "0x34", "0x35", "0x36",
-            "0x3B", "0x3D", "0x3E", "0x41", "0x80", "0x92",
-            "0xF4", "0xF5", "0xF7", "0xFE"
+            "0x3B", "0x3D", "0x3E", "0x41", "0x80", "0x91", "0x92",
+            # The four motion commands, which the specification previously
+            # confused with each other: F4/F5 act on the axis in raw encoder
+            # counts, FD/FE act on pulses in command microsteps.
+            "0xF4", "0xF5", "0xF7", "0xFD", "0xFE"
         ]
 
         for expected_cmd in expected_commands:

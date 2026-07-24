@@ -182,9 +182,9 @@
       ]
     },
     "0x3B": {
-      "name": "go_home",
-      "category": "motion",
-      "description": "Execute homing sequence",
+      "name": "read_power_on_zero_status",
+      "category": "status",
+      "description": "Read the status of the go-back-to-zero-on-power-on function",
       "request": {
         "dlc": 2,
         "format": "CAN_ID | 2 | 0x3B | CRC",
@@ -203,7 +203,11 @@
         "0": "going to zero",
         "1": "go back to zero success",
         "2": "go back to zero fail"
-      }
+      },
+      "notes": [
+        "This is a status read, not a command to home the motor",
+        "Homing is commanded with 0x91"
+      ]
     },
     "0x3D": {
       "name": "release_protection",
@@ -297,6 +301,34 @@
         "Referenced as example in manual CRC calculation"
       ]
     },
+    "0x91": {
+      "name": "go_home",
+      "category": "motion",
+      "description": "Execute the homing sequence",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x91 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x91 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "home fail",
+        "1": "home start",
+        "2": "home success"
+      },
+      "notes": [
+        "Answers 'home start' immediately, then emits a second frame with the same command byte carrying 'home success' or 'home fail'",
+        "Homing parameters are configured with 0x90"
+      ]
+    },
     "0x92": {
       "name": "set_position_zero",
       "category": "configuration",
@@ -321,22 +353,27 @@
       ]
     },
     "0xF4": {
-      "name": "move_relative_pulses",
+      "name": "move_relative_axis",
       "category": "motion",
-      "description": "Move relative by pulses",
+      "description": "Relative motion by axis, in raw encoder counts",
       "request": {
         "dlc": 8,
-        "format": "CAN_ID | 8 | 0xF4 | pulses(int32) | speed(uint16) | CRC",
+        "format": "CAN_ID | 8 | 0xF4 | speed(uint16) | acc(uint8) | relAxis(int24) | CRC",
         "parameters": [
-          {
-            "name": "pulses",
-            "type": "int32",
-            "description": "Number of pulses to move (signed)"
-          },
           {
             "name": "speed",
             "type": "uint16",
-            "description": "Movement speed"
+            "description": "Speed parameter 0-3000, big-endian"
+          },
+          {
+            "name": "acc",
+            "type": "uint8",
+            "description": "Acceleration parameter 0-255"
+          },
+          {
+            "name": "relAxis",
+            "type": "int24",
+            "description": "Signed distance in raw encoder counts, big-endian"
           }
         ]
       },
@@ -349,28 +386,40 @@
           "byte2": "crc"
         }
       },
+      "status_codes": {
+        "0": "run fail",
+        "1": "run starting",
+        "2": "run complete",
+        "3": "run stopped by end limit"
+      },
       "notes": [
-        "Moves motor relative to current position",
-        "Positive pulses = clockwise, negative = counter-clockwise"
+        "Counts are raw encoder units (16384 per motor revolution), not microsteps",
+        "Stop is encoded as this command with speed and relAxis both zero",
+        "Counter-clockwise is positive; see the errata block"
       ]
     },
     "0xF5": {
-      "name": "move_absolute_pulses",
+      "name": "move_absolute_axis",
       "category": "motion",
-      "description": "Move absolute by pulses",
+      "description": "Absolute motion by axis, in raw encoder counts",
       "request": {
         "dlc": 8,
-        "format": "CAN_ID | 8 | 0xF5 | position(int32) | speed(uint16) | CRC",
+        "format": "CAN_ID | 8 | 0xF5 | speed(uint16) | acc(uint8) | absAxis(int24) | CRC",
         "parameters": [
-          {
-            "name": "position",
-            "type": "int32",
-            "description": "Absolute position in pulses"
-          },
           {
             "name": "speed",
             "type": "uint16",
-            "description": "Movement speed"
+            "description": "Speed parameter 0-3000, big-endian"
+          },
+          {
+            "name": "acc",
+            "type": "uint8",
+            "description": "Acceleration parameter 0-255"
+          },
+          {
+            "name": "absAxis",
+            "type": "int24",
+            "description": "Signed target in raw encoder counts, big-endian"
           }
         ]
       },
@@ -383,10 +432,18 @@
           "byte2": "crc"
         }
       },
+      "status_codes": {
+        "0": "run fail",
+        "1": "run starting",
+        "2": "run complete",
+        "3": "run stopped by end limit"
+      },
       "notes": [
-        "Moves motor to absolute position",
-        "Bug fixed in V1.0.4",
-        "Supports real-time data update as of V1.0.5"
+        "Counts are raw encoder units (16384 per motor revolution), not microsteps",
+        "Supports real-time data update as of V1.0.5: a new target may be sent while a move is in progress, which re-plans rather than queueing",
+        "Re-targeting mid-move makes the motor emit a 'run fail' frame for the superseded move, carrying the same command byte as the acknowledgement of the new one",
+        "Stop is encoded as this command with speed and absAxis both zero",
+        "Bug fixed in V1.0.4"
       ]
     },
     "0xF7": {
@@ -412,23 +469,78 @@
         "Immediately stops motor movement"
       ]
     },
-    "0xFE": {
-      "name": "move_absolute_pulses_enhanced",
+    "0xFD": {
+      "name": "move_relative_pulses",
       "category": "motion",
-      "description": "Enhanced absolute motion by pulses",
+      "description": "Relative motion by pulses, in command microsteps",
       "request": {
         "dlc": 8,
-        "format": "CAN_ID | 8 | 0xFE | position(int32) | speed(uint16) | CRC",
+        "format": "CAN_ID | 8 | 0xFD | dir+speed_high(uint8) | speed_low(uint8) | acc(uint8) | pulses(uint24) | CRC",
         "parameters": [
           {
-            "name": "position",
-            "type": "int32",
-            "description": "Absolute position in pulses"
+            "name": "dir_speed_high",
+            "type": "uint8",
+            "description": "bit7 = direction (0 CCW, 1 CW), bits 3:0 = speed high nibble"
           },
+          {
+            "name": "speed_low",
+            "type": "uint8",
+            "description": "Speed parameter low byte"
+          },
+          {
+            "name": "acc",
+            "type": "uint8",
+            "description": "Acceleration parameter 0-255"
+          },
+          {
+            "name": "pulses",
+            "type": "uint24",
+            "description": "Magnitude in command microsteps, big-endian; sign is in dir"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xFD | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "run fail",
+        "1": "run starting",
+        "2": "run complete",
+        "3": "run stopped by end limit"
+      },
+      "notes": [
+        "Pulses are command microsteps (base steps x MSTEP), not raw encoder counts",
+        "Direction is a flag, not the sign of the pulse count"
+      ]
+    },
+    "0xFE": {
+      "name": "move_absolute_pulses",
+      "category": "motion",
+      "description": "Absolute motion by pulses, in command microsteps",
+      "request": {
+        "dlc": 8,
+        "format": "CAN_ID | 8 | 0xFE | speed(uint16) | acc(uint8) | absPulses(int24) | CRC",
+        "parameters": [
           {
             "name": "speed",
             "type": "uint16",
-            "description": "Movement speed"
+            "description": "Speed parameter 0-3000, big-endian"
+          },
+          {
+            "name": "acc",
+            "type": "uint8",
+            "description": "Acceleration parameter 0-255"
+          },
+          {
+            "name": "absPulses",
+            "type": "int24",
+            "description": "Signed target in command microsteps, big-endian"
           }
         ]
       },
@@ -441,9 +553,15 @@
           "byte2": "crc"
         }
       },
+      "status_codes": {
+        "0": "run fail",
+        "1": "run starting",
+        "2": "run complete",
+        "3": "run stopped by end limit"
+      },
       "notes": [
-        "Added in firmware V1.0.4",
-        "Enhanced version of 0xF5 command with additional features"
+        "Pulses are command microsteps (base steps x MSTEP), not raw encoder counts",
+        "Stop is encoded as this command with speed and absPulses both zero"
       ]
     }
   },
@@ -477,6 +595,7 @@
     ]
   },
   "errata": {
-    "sign_convention": "Counter-clockwise is positive for both encoder accumulation (0x31/0x35) and reported speed (0x32). The prose summaries above the 0x31 and 0x35 worked examples in manual V1.0.6 state the reverse; they are wrong, as shown by the examples immediately below them and by the 0x32 note."
+    "sign_convention": "Counter-clockwise is positive for both encoder accumulation (0x31/0x35) and reported speed (0x32). The prose summaries above the 0x31 and 0x35 worked examples in manual V1.0.6 state the reverse; they are wrong, as shown by the examples immediately below them and by the 0x32 note.",
+    "command_naming": "Commands 0xF4 and 0xF5 act on the axis (raw encoder counts); 0xFD and 0xFE act on pulses (command microsteps). Earlier revisions of this fixture named 0xF4/0xF5 as pulse commands and gave them a pulses(int32)|speed(uint16) layout, which matches no command in the manual. It also mapped 0x3B to go_home; 0x3B reads the power-on zero status and 0x91 commands homing."
   }
 }

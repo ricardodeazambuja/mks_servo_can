@@ -4,6 +4,86 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [semantic](https://semver.org/).
 
+## [Unreleased]
+
+Simulator observability. The simulator had four independent renderings of motor
+state and three of them were wrong; this replaces all four with one.
+
+### Fixed
+
+- **`--json-output` crashed on startup** with
+  `AttributeError: 'SimulatedMotor' object has no attribute 'name'`, and
+  `/status` and `/health` both returned HTTP 500 for the same reason.
+  `llm_debug_interface` read **sixteen** attributes the motor has never had —
+  `enabled`, `encoder_position`, `current_speed`, `is_moving` and the rest. All
+  but `name` were wrapped in `getattr(..., default)`, so they did not raise;
+  they reported zeros for a moving motor. The tests passed throughout because
+  they built `MagicMock(spec=SimulatedMotor)` and then *assigned* the
+  fictitious attributes, teaching the mock the API the code wished for.
+- **`--config-profile` crashed** with `TypeError: SimulatedMotor.__init__() got
+  an unexpected keyword argument 'max_current'`. The profile path forwarded
+  three arguments the motor model does not accept. `max_current` and
+  `initial_position` now map onto the attributes that do exist; `max_speed` is
+  not mapped, because a real motor's speed ceiling comes from its work mode.
+- **`/health` raised `KeyError`** reading `total_messages_sent`, a key
+  `get_system_status()` has never emitted. The health check was the one endpoint
+  guaranteed to report the service as unhealthy.
+- **Importing the package printed a banner to stdout**, which in
+  `--json-output` mode is the machine-readable event stream — the first line a
+  consumer read was not JSON.
+- **The manual command specification never loaded.** Its path was off by one
+  directory, so `/commands` returned nothing and `available_commands` reported
+  0, silently. Both the load failure and its cause are now logged.
+- **Command names never resolved** in the history: the lookup tested
+  `hasattr(debug_interface, 'MANUAL_COMMANDS')`, but that is a module-level
+  global, so every command was labelled with its own hex code.
+- **The manual specification had the wrong opcodes for the motion commands.**
+  `0x3B` was named `go_home` (it reads the power-on zero status; homing is
+  `0x91`, which was absent). `0xF4`/`0xF5` were named as *pulse* commands with a
+  `pulses(int32)|speed(uint16)` layout matching no command in the manual — they
+  act on the axis, in raw encoder counts, with
+  `speed(uint16)|acc(uint8)|value(int24)`. `0xFD` was missing and `0xFE` was
+  named `move_absolute_pulses_enhanced`, which is not a command.
+  `tests/simulator_compliance/` had inherited the same errors, so it reported
+  compliance for `0x3B`, `0xF4` and `0xF5` while actually sending `0x91`, `0xFD`
+  and `0xFE` — the two axis commands the streaming API depends on had no
+  coverage at all.
+- **`record_error` had no callers anywhere**, so the `errors` array was
+  permanently empty and every error display was decorative.
+
+### Added
+
+- **`SimulatedMotor.status_snapshot()`** returning a frozen `MotorSnapshot` —
+  now the only supported way to observe a motor. Every reporting surface renders
+  this and nothing else, which is what makes the drift above impossible to
+  repeat. Angles derive from the motor's own encoder resolution rather than an
+  assumed 16384.
+- **A browser dashboard** at `/dashboard` when `--debug-api` is running: motor
+  table, rolling plot of measured position against commanded target, named
+  command log, and anomaly panel. One self-contained file — no CDN, no fonts, no
+  external assets — so it works on a bench with no internet. It renders
+  `/status`, the same payload an agent polls, so the human and machine views
+  cannot disagree.
+- **Anomaly reporting.** `SimulatedMotor.report_anomaly()` surfaces protocol
+  events a client cannot deduce from the wire. The first is `move_superseded`:
+  re-targeting `0xF5` mid-move makes the motor abort the old move with a frame
+  carrying the same command byte as the acknowledgement of the new one, so the
+  client sees an inexplicable failure. The simulator now names it and attaches
+  both targets.
+- Tests that would have caught all of the above: `test_motor_snapshot.py`
+  (drives real motors and asserts the snapshot tracks them), `test_simulator_cli.py`
+  (runs the real console script in a subprocess), and `TestEndpointsAgainstRealMotors`
+  (serves the API from real motors with nothing stubbed in between).
+  `test_llm_debug_interface.py` was rewritten against real motors.
+
+### Known issues
+
+Four library defects found in the same review are documented with reproductions
+in `REVIEW_NOTES.md` Part 0 and are **not yet fixed**. The most serious, L1, is
+that re-targeting a move in flight always raises a spurious `MotorError`,
+because the stale-frame filter discards by arrival order and the acknowledgement
+arrives before the abort.
+
 ## [0.3.0] - 2026-07-24
 
 A correctness and real-time capability release. Several defects fixed here made

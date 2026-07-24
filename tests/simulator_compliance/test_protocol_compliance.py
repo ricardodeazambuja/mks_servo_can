@@ -117,10 +117,10 @@ class TestManualProtocolCompliance:
 
     @pytest.mark.asyncio
     async def test_home_command_manual(self, compliance_api):
-        """Test home command per manual specification (0x3B)"""
+        """Test home command per manual specification (0x91)"""
         api = compliance_api
 
-        # Test command 0x3B (go home)
+        # Test command 0x91 (go home)
         try:
             status = await api.go_home(can_id=1)
 
@@ -129,7 +129,7 @@ class TestManualProtocolCompliance:
             assert status in [0, 1, 2], f"Invalid home status code: {status}"
 
         except Exception as e:
-            pytest.fail(f"Command 0x3B (go_home) failed: {e}")
+            pytest.fail(f"Command 0x91 (go_home) failed: {e}")
 
     @pytest.mark.asyncio
     async def test_protection_commands_manual(self, compliance_api):
@@ -233,15 +233,24 @@ class TestManualProtocolCompliance:
             "0x34": lambda: api.read_io_status(can_id=1),
             "0x35": lambda: api.read_raw_encoder_value_addition(can_id=1),
             "0x36": lambda: api.write_io_port(can_id=1, out1_value=0, out1_mask_action=1),
-            "0x3B": lambda: api.go_home(can_id=1),
+            # Each entry must call the method that emits *this* opcode. Three
+            # of these previously did not: "0x3B" called go_home (which sends
+            # 0x91), "0xF4" called the relative-pulses method (0xFD) and "0xF5"
+            # called the absolute-pulses method (0xFE). The suite therefore
+            # reported compliance for 0x3B, 0xF4 and 0xF5 while never sending
+            # any of them - including the two axis commands the streaming API
+            # is built on.
+            "0x3B": lambda: api.read_power_on_zero_status(can_id=1),
             "0x3D": lambda: api.release_stall_protection(can_id=1),
             "0x3E": lambda: api.read_motor_protection_state(can_id=1),
             "0x41": lambda: api.restart_motor(can_id=1),
             "0x80": lambda: api.calibrate_encoder(can_id=1),
+            "0x91": lambda: api.go_home(can_id=1),
             "0x92": lambda: api.set_current_axis_to_zero(can_id=1),
-            "0xF4": lambda: api.run_position_mode_relative_pulses(can_id=1, pulses=100, ccw_direction=False, speed=500, acceleration=100),
-            "0xF5": lambda: api.run_position_mode_absolute_pulses(can_id=1, speed=500, acceleration=100, absolute_pulses=1000),
+            "0xF4": lambda: api.run_position_mode_relative_axis(can_id=1, speed=500, acceleration=100, relative_axis=1000),
+            "0xF5": lambda: api.run_position_mode_absolute_axis(can_id=1, speed=500, acceleration=100, absolute_axis=1000),
             "0xF7": lambda: api.emergency_stop(can_id=1),
+            "0xFD": lambda: api.run_position_mode_relative_pulses(can_id=1, pulses=100, ccw_direction=False, speed=500, acceleration=100),
             "0xFE": lambda: api.run_position_mode_absolute_pulses(can_id=1, speed=500, acceleration=100, absolute_pulses=1500),
         }
 
@@ -353,15 +362,24 @@ class TestCommandResponseMapping:
             "0x34": lambda: api.read_io_status(can_id=1),
             "0x35": lambda: api.read_raw_encoder_value_addition(can_id=1),
             "0x36": lambda: api.write_io_port(can_id=1, out1_value=0, out1_mask_action=1),
-            "0x3B": lambda: api.go_home(can_id=1),
+            # Each entry must call the method that emits *this* opcode. Three
+            # of these previously did not: "0x3B" called go_home (which sends
+            # 0x91), "0xF4" called the relative-pulses method (0xFD) and "0xF5"
+            # called the absolute-pulses method (0xFE). The suite therefore
+            # reported compliance for 0x3B, 0xF4 and 0xF5 while never sending
+            # any of them - including the two axis commands the streaming API
+            # is built on.
+            "0x3B": lambda: api.read_power_on_zero_status(can_id=1),
             "0x3D": lambda: api.release_stall_protection(can_id=1),
             "0x3E": lambda: api.read_motor_protection_state(can_id=1),
             "0x41": lambda: api.restart_motor(can_id=1),
             "0x80": lambda: api.calibrate_encoder(can_id=1),
+            "0x91": lambda: api.go_home(can_id=1),
             "0x92": lambda: api.set_current_axis_to_zero(can_id=1),
-            "0xF4": lambda: api.run_position_mode_relative_pulses(can_id=1, pulses=100, ccw_direction=False, speed=500, acceleration=100),
-            "0xF5": lambda: api.run_position_mode_absolute_pulses(can_id=1, speed=500, acceleration=100, absolute_pulses=1000),
+            "0xF4": lambda: api.run_position_mode_relative_axis(can_id=1, speed=500, acceleration=100, relative_axis=1000),
+            "0xF5": lambda: api.run_position_mode_absolute_axis(can_id=1, speed=500, acceleration=100, absolute_axis=1000),
             "0xF7": lambda: api.emergency_stop(can_id=1),
+            "0xFD": lambda: api.run_position_mode_relative_pulses(can_id=1, pulses=100, ccw_direction=False, speed=500, acceleration=100),
             "0xFE": lambda: api.run_position_mode_absolute_pulses(can_id=1, speed=500, acceleration=100, absolute_pulses=1500),
         }
 
@@ -382,9 +400,9 @@ class TestCommandResponseMapping:
                 assert isinstance(result, dict), "0x34 should return dict"
             elif cmd_code in ["0x3D", "0x3E"]:
                 assert isinstance(result, bool), f"{cmd_code} should return bool"
-            elif cmd_code in ["0x3B"]:
+            elif cmd_code in ["0x3B", "0x91"]:
                 assert isinstance(result, int), f"{cmd_code} should return status int"
-            elif cmd_code in ["0xF4", "0xF5", "0xFE"]:
+            elif cmd_code in ["0xF4", "0xF5", "0xFD", "0xFE"]:
                 assert isinstance(result, int), f"{cmd_code} should return status int"
             elif cmd_code in ["0x36", "0x41", "0x80", "0x92", "0xF7"]:
                 # These commands may return various types or None
@@ -392,7 +410,7 @@ class TestCommandResponseMapping:
 
         except Exception as e:
             # Motion commands might fail due to motor state, which is acceptable for testing command implementation
-            if cmd_code in ["0xF4", "0xF5", "0xFE"] and ("Motor run command" in str(e) or "failed to start" in str(e)):
+            if cmd_code in ["0xF4", "0xF5", "0xFD", "0xFE"] and ("Motor run command" in str(e) or "failed to start" in str(e)):
                 pass  # Command is implemented, just motor state issue
             else:
                 pytest.fail(f"Command {cmd_code} ({cmd_spec['name']}) failed: {e}")
