@@ -37,6 +37,12 @@ Simulator observability, and the library defects that observability exposed.
   consults it while it is. When it is not, the move is dispatched rather than
   preceded by an encoder read, so the hidden round trip removed in 0.3.0 stays
   removed.
+- **One bad frame stopped all reception for the rest of the session.** An
+  exception raised while processing a single message escaped the per-message
+  `try` in both listeners and ended the listener task; every command afterwards
+  failed with a timeout, far from the cause. Reachable rather than theoretical:
+  the predicate `Axis.home_axis` registers reads `data[1]` and raises on a
+  one-byte frame.
 - **A user-unit move with no speed ran at a sixth of its documented default.**
   `default_speed_param` is an MKS parameter, but both move handlers converted it
   as though it were a speed in user units — reading 500 as 500 deg/s and

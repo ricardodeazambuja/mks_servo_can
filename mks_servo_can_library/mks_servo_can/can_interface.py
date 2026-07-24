@@ -592,9 +592,23 @@ class CANInterface:
             while self._is_listening:
                 try:
                     msg = await asyncio.wait_for(self._message_queue.get(), timeout=1.0)
-                    if msg:
-                        await self._process_received_message(msg)
-                    self._message_queue.task_done()
+                    try:
+                        if msg:
+                            await self._process_received_message(msg)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc: # pylint: disable=broad-except
+                        # One frame the library cannot make sense of must not end
+                        # reception for the rest of the session.
+                        logger.error(
+                            "Hardware listener: dropping frame that could not be "
+                            "processed (%s): %s",
+                            msg,
+                            exc,
+                            exc_info=True,
+                        )
+                    finally:
+                        self._message_queue.task_done()
                 except asyncio.TimeoutError:
                     # This is normal if no messages are received within the timeout
                     if not self._is_listening: # Check if we should break
@@ -638,12 +652,25 @@ class CANInterface:
                     if not line_bytes:
                         logger.info("Simulator connection closed by peer (empty read).")
                         break
-                    line_str = line_bytes.decode().strip()
-                    if line_str:
-                        logger.debug("CANInterface: rx sim %s", line_str)
-                        msg = self._sim_protocol_to_can_message(line_str)
-                        if msg:
-                            await self._process_received_message(msg)
+                    try:
+                        line_str = line_bytes.decode().strip()
+                        if line_str:
+                            logger.debug("CANInterface: rx sim %s", line_str)
+                            msg = self._sim_protocol_to_can_message(line_str)
+                            if msg:
+                                await self._process_received_message(msg)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc: # pylint: disable=broad-except
+                        # One frame the library cannot make sense of must not end
+                        # reception for the rest of the session.
+                        logger.error(
+                            "Simulator listener: dropping line that could not be "
+                            "processed (%r): %s",
+                            line_bytes,
+                            exc,
+                            exc_info=True,
+                        )
                 except asyncio.TimeoutError:
                     if not self._is_listening: break
                     continue

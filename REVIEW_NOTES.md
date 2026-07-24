@@ -114,12 +114,22 @@ short-circuit consults the cache only while it is fresh, and otherwise simply
 dispatches the move — which costs the same single round trip an encoder read
 would, so the hidden pre-read that 0.3.0 removed does not come back.
 
-## L4. A single bad frame kills the receive path
+## L4. A single bad frame kills the receive path — **fixed**
+
+Both listeners now catch per message, log the frame, and carry on;
+`tests/unit/test_can_interface_listener.py` drives the real listeners over a real
+`StreamReader` and a real `Queue`.
+
+The original finding, for reference:
 
 In `_listen_for_messages_hw` and `_listen_for_messages_sim`, an exception raised
-by `_process_received_message` escapes the per-message `try` and is caught by the
-outer `except Exception`, which ends the listener task. One malformed frame or
-one raising handler silently stops all reception for the rest of the session.
+by `_process_received_message` escaped the per-message `try` and was caught by
+the outer `except Exception`, which ends the listener task. One malformed frame
+or one raising handler silently stopped all reception for the rest of the
+session, and every later command then failed with a timeout, far from the cause.
+
+It was reachable rather than theoretical: the homing predicate registered by
+`Axis.home_axis` reads `data[1]` and raises `IndexError` on a one-byte frame.
 
 ## L5. Smaller items
 
