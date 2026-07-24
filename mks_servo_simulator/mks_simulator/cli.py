@@ -5,6 +5,7 @@ Uses 'click' for CLI argument parsing and command structure.
 import asyncio
 import logging
 import signal
+import threading
 from typing import Optional
 
 import click  # Ensure 'click' is in your requirements for the simulator
@@ -61,7 +62,7 @@ def _degrees_to_steps(degrees: Optional[float], steps_per_rev: int) -> Optional[
     return int(round(degrees * steps_per_rev / 360.0))
 
 
-async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, textual_dashboard_task=None, performance_monitor=None):
+async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, textual_app=None, performance_monitor=None):
     """Graceful shutdown for the simulator."""
     logger.info(f"Received exit signal {sig.name}...")
     logger.info("Shutting down simulated motors...")
@@ -88,15 +89,14 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
         except Exception as e:
             logger.error(f"Error during debug server shutdown: {e}")
 
-    if textual_dashboard_task and not textual_dashboard_task.done():
-        logger.info("Cancelling Textual dashboard task...")
-        textual_dashboard_task.cancel()
+    if textual_app is not None:
+        # The dashboard owns a loop on another thread, so it has to be asked to
+        # exit from that thread rather than cancelled from this one.
+        logger.info("Asking the Textual dashboard to exit...")
         try:
-            await textual_dashboard_task
-        except asyncio.CancelledError:
-            logger.info("Textual dashboard task cancelled successfully.")
+            textual_app.call_from_thread(textual_app.exit)
         except Exception as e:
-            logger.error(f"Error during Textual dashboard task shutdown: {e}")
+            logger.debug("Textual dashboard did not exit cleanly: %s", e)
 
     if performance_monitor:
         logger.info("Stopping performance monitor...")
@@ -207,7 +207,10 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
 @click.option(
     "--textual-dashboard",
     is_flag=True,
-    help="Enable Textual TUI dashboard (experimental).",
+    help=(
+        "Enable the Textual TUI dashboard (legacy; prefer --debug-api, which "
+        "serves the browser dashboard at /dashboard)."
+    ),
 )
 @click.option(
     "--refresh-rate",
@@ -371,7 +374,7 @@ def main(
     debug_server: Optional[DebugHTTPServer] = None
     debug_server_task: Optional[asyncio.Task] = None
     json_handler: Optional[JSONOutputHandler] = None
-    textual_dashboard_task: Optional[asyncio.Task] = None # Initialize textual_dashboard_task
+    textual_app: Optional[TextualDashboard] = None
 
     # Create motors based on configuration
     if config_profile and config_manager.current_config:
@@ -511,16 +514,26 @@ def main(
                 logger.error(f"Failed to start debug API server: {e}")
                 logger.error("Install FastAPI and uvicorn: pip install fastapi uvicorn")
 
-        # Textual Dashboard (Phase 2 test)
+        # Textual dashboard. Legacy: the browser dashboard at /dashboard is the
+        # supported human surface, and --json-output the machine one.
         if textual_dashboard:
             try:
                 logger.info("Starting Textual dashboard...")
                 textual_app = TextualDashboard(bus)
 
-                # Run textual asynchronously
-                textual_dashboard_task = loop.create_task(textual_app.run_async())
+                # On its own thread, with its own event loop. Sharing the
+                # simulator's loop put the TUI's render and input handling in
+                # direct competition with the 10 ms motor integration tick, so
+                # the thing being measured was slowed down by the act of
+                # watching it.
+                textual_thread = threading.Thread(
+                    target=textual_app.run,
+                    name="textual-dashboard",
+                    daemon=True,
+                )
+                textual_thread.start()
 
-                logger.info("Textual dashboard task created")
+                logger.info("Textual dashboard started on its own thread")
 
             except Exception as e:
                 logger.error(f"Failed to start textual dashboard: {e}")
@@ -536,7 +549,7 @@ def main(
         loop.add_signal_handler(
             s,
             lambda s=s: asyncio.create_task(
-                shutdown(s, loop, server_task, bus, debug_server_task, json_handler, textual_dashboard_task if 'textual_dashboard_task' in locals() else None, performance_monitor if 'performance_monitor' in locals() else None)
+                shutdown(s, loop, server_task, bus, debug_server_task, json_handler, textual_app, performance_monitor if 'performance_monitor' in locals() else None)
             ),
         )
 
@@ -572,14 +585,14 @@ def main(
                 except asyncio.CancelledError:
                     pass  # Expected
 
-        # Clean up textual dashboard if running
-        if 'textual_dashboard_task' in locals() and textual_dashboard_task and not textual_dashboard_task.done():
-            textual_dashboard_task.cancel()
-            if loop.is_running():
-                try:
-                    loop.run_until_complete(textual_dashboard_task)
-                except asyncio.CancelledError:
-                    pass # Expected
+        # Clean up the textual dashboard if running. Its thread is a daemon, so
+        # it cannot hold the process open; this just gives it the chance to
+        # restore the terminal.
+        if textual_app is not None:
+            try:
+                textual_app.call_from_thread(textual_app.exit)
+            except Exception:
+                pass
 
         # Final cleanup for motors if shutdown wasn't fully completed by signal
         if (

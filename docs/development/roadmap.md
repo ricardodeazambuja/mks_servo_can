@@ -186,16 +186,23 @@ something this work can complete on its own. What it needs first:
 
 ---
 
-## Item 5 — Two loose ends from the simulator work
+## Item 5 — Two loose ends from the simulator work — **done**
 
-- **`textual_dashboard.py` is the only surface not on the snapshot.** It reads
-  motor attributes directly. It happens to read the *right* ones today, but that
-  is exactly the arrangement that produced the drift just removed from the other
-  three surfaces. Either migrate it to `SimulatedMotor.status_snapshot()` or
-  retire it in favour of the browser dashboard at `/dashboard`.
-- **`--textual-dashboard` runs on the simulator's own event loop.** In `cli.py`,
-  `loop.create_task(textual_app.run_async())` puts the TUI in direct competition
-  with the 10 ms motor integration tick. If the TUI stays, move it off.
+- **`textual_dashboard.py` now renders `MotorSnapshot`** like every other
+  surface. It was the last one reading motor attributes directly; it happened to
+  read the right ones, but that is exactly the arrangement that produced the
+  drift removed from the other three. The row and detail renderers are plain
+  functions (`motor_row`, `motor_details`), so they are tested against a real
+  `SimulatedMotor` without standing up a terminal.
+- **The TUI runs on its own thread**, with its own event loop. It used to be
+  scheduled with `loop.create_task(textual_app.run_async())` on the simulator's
+  loop, where terminal rendering and input handling competed with the 10 ms
+  motor integration tick — watching the simulation slowed it down. Shutdown asks
+  it to exit through `call_from_thread` rather than cancelling a task.
+
+Both are gated by `tests/test_textual_dashboard.py`, and the flag's help now says
+the TUI is legacy: the browser dashboard under `--debug-api` is the supported
+human surface.
 
 ---
 

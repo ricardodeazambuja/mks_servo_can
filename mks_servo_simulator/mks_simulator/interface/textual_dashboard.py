@@ -1,11 +1,15 @@
 """
 Textual-based dashboard for MKS servo simulator.
-Enhanced version with auto-refresh and improved layout.
+
+Legacy. The supported human-facing surface is the browser dashboard served at
+`/dashboard` under `--debug-api`; the machine-facing one is `--json-output`.
+This is kept for terminal-only use and renders `MotorSnapshot` like every other
+surface, so it cannot drift away from what the motors are actually doing.
 """
 
 import itertools
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from rich.markup import escape
 from rich.text import Text
@@ -13,12 +17,79 @@ from textual.app import App, ComposeResult
 from textual.timer import Timer
 from textual.widgets import DataTable, Footer, Header, Static
 
-from mks_servo_can import constants as const
-
 if TYPE_CHECKING:
-    from ..motor_model import SimulatedMotor  # Added import
+    from ..motor_model import MotorSnapshot, SimulatedMotor  # Added import
     from ..virtual_can_bus import VirtualCANBus
     from .llm_debug_interface import LLMDebugInterface  # Add this
+
+
+def motor_row(snapshot: "MotorSnapshot") -> Tuple[str, ...]:
+    """
+    Renders one motor's snapshot as a table row.
+
+    Kept out of the widget so it can be tested against a real motor without
+    standing up a terminal application.
+
+    Args:
+        snapshot: The motor's state, from `SimulatedMotor.status_snapshot()`.
+
+    Returns:
+        The row's cells, in the order the table declares its columns.
+    """
+    target = (
+        f"{snapshot.target_position_degrees:.1f} deg"
+        if snapshot.target_position_degrees is not None
+        else "None"
+    )
+    return (
+        str(snapshot.can_id),
+        snapshot.status_text,
+        f"{snapshot.position_degrees:.1f} deg",
+        f"{snapshot.current_rpm:.1f} RPM",
+        target,
+        f"{snapshot.speed_deg_per_s:.1f} deg/s",
+        snapshot.work_mode_name,
+        str(snapshot.microsteps),
+        "Yes" if snapshot.enabled else "No",
+    )
+
+
+def motor_details(snapshot: "MotorSnapshot") -> List[str]:
+    """
+    Renders one motor's snapshot as the detail pane's lines.
+
+    Args:
+        snapshot: The motor's state, from `SimulatedMotor.status_snapshot()`.
+
+    Returns:
+        The lines to display, with Rich markup.
+    """
+    position_error = (
+        f"{snapshot.position_error_steps} steps"
+        if snapshot.position_error_steps is not None
+        else "n/a"
+    )
+    target_steps = (
+        snapshot.target_position_steps
+        if snapshot.target_position_steps is not None
+        else "None"
+    )
+    return [
+        f"[bold]Motor ID {snapshot.can_id}[/bold] ({snapshot.motor_type})",
+        f"  Enabled: {'Yes' if snapshot.enabled else 'No'}",
+        f"  Work Mode: {snapshot.work_mode_name}",
+        f"  Microsteps: {snapshot.microsteps}",
+        f"  Position: {snapshot.position_steps:.1f} steps "
+        f"({snapshot.position_degrees:.1f} deg)",
+        f"  Target Pos: {target_steps} steps",
+        f"  Position error: {position_error}",
+        f"  Speed (RPM): {snapshot.current_rpm:.1f}",
+        f"  Speed: {snapshot.speed_deg_per_s:.1f} deg/s",
+        f"  Target RPM: {snapshot.target_rpm:.1f}",
+        f"  Calibrated: {'Yes' if snapshot.calibrated else 'No'}",
+        f"  Homed: {'Yes' if snapshot.homed else 'No'}",
+        f"  Responses enabled: {'Yes' if snapshot.responses_enabled else 'No'}",
+    ]
 
 
 class MotorStatusWidget(Static):
@@ -49,53 +120,12 @@ class MotorStatusWidget(Static):
             table.clear()
 
             if self.virtual_can_bus and hasattr(self.virtual_can_bus, 'simulated_motors') and self.virtual_can_bus.simulated_motors:
-                # Real data from virtual CAN bus
+                # Every reporting surface renders MotorSnapshot and nothing else.
+                # Reading motor attributes directly here is what let three other
+                # surfaces drift into showing zeros for a moving motor.
                 for motor_id, motor in sorted(self.virtual_can_bus.simulated_motors.items()):
                     try:
-                        # Get motor status text
-                        status_map = {
-                            const.MOTOR_STATUS_QUERY_FAIL: "Error/Query Fail",
-                            const.MOTOR_STATUS_STOPPED: "Stopped",
-                            const.MOTOR_STATUS_SPEED_UP: "Accelerating",
-                            const.MOTOR_STATUS_SPEED_DOWN: "Decelerating", # Could also be "Stopping"
-                            const.MOTOR_STATUS_FULL_SPEED: "Running",      # Was "Full Speed"
-                            const.MOTOR_STATUS_HOMING: "Homing",
-                            const.MOTOR_STATUS_CALIBRATING: "Calibrating"
-                        }
-                        status = status_map.get(getattr(motor, 'motor_status_code', const.MOTOR_STATUS_QUERY_FAIL), "Unknown Status")
-
-                        # Position in degrees with safe defaults
-                        position_steps = getattr(motor, 'position_steps', 0)
-                        steps_per_rev = getattr(motor, 'steps_per_rev_encoder', 1)
-                        pos_degrees = (position_steps / steps_per_rev) * 360 # This is a simplification if units change
-                        units = getattr(motor, 'kinematics_units', 'N/A')
-                        position = f"{pos_degrees:.1f} {units}"
-
-                        # Speed in RPM
-                        current_rpm = getattr(motor, 'current_rpm', 0.0)
-                        speed = f"{current_rpm:.1f} RPM" # This is motor RPM, not user speed
-
-                        # User velocity
-                        user_velocity = getattr(motor, 'current_speed_user_units_per_sec', 0.0)
-                        velocity_str = f"{user_velocity:.1f} {units}/s"
-
-                        # Target position
-                        target_position_steps = getattr(motor, 'target_position_steps', None)
-                        if target_position_steps is not None:
-                            target_degrees = (target_position_steps / steps_per_rev) * 360 # Simplification
-                            target = f"{target_degrees:.1f} {units}"
-                        else:
-                            target = "None"
-
-                        # Enabled status
-                        is_enabled = getattr(motor, 'is_enabled', False)
-                        enabled = "Yes" if is_enabled else "No"
-
-                        # Work Mode and Microsteps
-                        work_mode_str = getattr(motor, 'work_mode_str', 'N/A')
-                        microsteps_val = getattr(motor, 'microsteps', 'N/A')
-
-                        table.add_row(str(motor_id), status, position, speed, target, velocity_str, work_mode_str, str(microsteps_val), enabled)
+                        table.add_row(*motor_row(motor.status_snapshot()))
                     except Exception:
                         # Handle individual motor errors gracefully
                         table.add_row(str(motor_id), "Error", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A")
@@ -145,8 +175,11 @@ class SystemInfoWidget(Static):
                     motor_count = len(self.virtual_can_bus.simulated_motors)
                     client_count = len(self.virtual_can_bus.clients)
                     # Check if any motors are enabled
-                    enabled_motors = sum(1 for motor in self.virtual_can_bus.simulated_motors.values()
-                                       if getattr(motor, 'is_enabled', False))
+                    enabled_motors = sum(
+                        1
+                        for motor in self.virtual_can_bus.simulated_motors.values()
+                        if motor.status_snapshot().enabled
+                    )
                     connection_status = "Connected"
                 except Exception as e:
                     motor_count = 0
@@ -191,21 +224,7 @@ class DetailedMotorViewWidget(Static):
         """Update the displayed motor details."""
         self.selected_motor = motor
         if motor:
-            details = []
-            details.append(f"[bold]Motor ID {getattr(motor, 'can_id', 'N/A')}[/bold] ({getattr(motor, 'motor_type', 'N/A')})")
-            details.append(f"  Enabled: {'Yes' if getattr(motor, 'is_enabled', False) else 'No'}")
-            details.append(f"  Work Mode: {getattr(motor, 'work_mode_str', 'N/A')}")
-            details.append(f"  Microsteps: {getattr(motor, 'microsteps', 'N/A')}")
-            units = getattr(motor, 'kinematics_units', 'N/A')
-            details.append(f"  Position: {getattr(motor, 'position_steps', 0.0):.1f} steps ({ (getattr(motor, 'position_steps', 0.0) / getattr(motor, 'steps_per_rev_encoder', 1)) * 360:.1f} {units})")
-            details.append(f"  Target Pos: {getattr(motor, 'target_position_steps', 'None')} steps")
-            details.append(f"  Speed (RPM): {getattr(motor, 'current_rpm', 0.0):.1f}")
-            details.append(f"  Speed (User): {getattr(motor, 'current_speed_user_units_per_sec', 0.0):.1f} {units}/s")
-            details.append(f"  Target RPM: {getattr(motor, 'target_rpm', 0.0):.1f}")
-            details.append(f"  Calibrated: {'Yes' if getattr(motor, 'is_calibrated', False) else 'No'}")
-            details.append(f"  Homed: {'Yes' if getattr(motor, 'is_homed', False) else 'No'}")
-
-            self.update("\n".join(details))
+            self.update("\n".join(motor_details(motor.status_snapshot())))
         else:
             self.update("Select a motor (Up/Down)")
 
