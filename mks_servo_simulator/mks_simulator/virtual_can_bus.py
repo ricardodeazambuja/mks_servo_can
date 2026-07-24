@@ -15,13 +15,10 @@ if TYPE_CHECKING:
     from .interface.llm_debug_interface import LLMDebugInterface
     from .interface.performance_monitor import PerformanceMonitor
 
-# CRC and constants might be needed if we re-validate here, but motor_model handles it.
-try:
-    from mks_servo_can import constants as const  # For potential use
-    from mks_servo_can.crc import \
-        calculate_crc  # For potential use
-except ImportError:
-    pass  # Handled in motor_model for its own needs
+# Incoming frames are checksum-validated here, at the bus, exactly as a real
+# motor does before it looks at the command byte.
+from mks_servo_can import constants as const
+from mks_servo_can.crc import calculate_crc, verify_crc
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +57,11 @@ class VirtualCANBus:
         self._client_counter = 0
         self._client_ids: Dict[Tuple[asyncio.StreamWriter, asyncio.StreamReader], str] = {}
         
+        # Frames dropped because their checksum did not validate. Surfaced by the
+        # debug interface so a CRC bug shows up as a visible counter rather than
+        # as unexplained timeouts.
+        self.crc_errors = 0
+
         # Alias for compatibility with LLMDebugInterface
         self.motors = self.simulated_motors
 
@@ -199,11 +201,38 @@ class VirtualCANBus:
                 )
                 return
 
+            if len(full_payload_bytes) < 2:
+                # A valid frame is at least a command byte plus its checksum.
+                logger.warning(
+                    "Frame for ID %03X is too short to contain a CRC: %s",
+                    target_can_id,
+                    full_payload_bytes.hex(),
+                )
+                return
+
+            # Validate the checksum and drop the frame if it is wrong. Real
+            # motors do this silently, and a simulator that accepts corrupt
+            # frames would let a CRC bug in the library go unnoticed - the two
+            # would simply agree on the wrong bytes.
+            if not verify_crc(target_can_id, list(full_payload_bytes)):
+                expected = calculate_crc(
+                    target_can_id, list(full_payload_bytes[:-1])
+                )
+                logger.warning(
+                    "Dropping frame for ID %03X with bad CRC: got %02X, "
+                    "expected %02X (payload %s)",
+                    target_can_id,
+                    full_payload_bytes[-1],
+                    expected,
+                    full_payload_bytes.hex(),
+                )
+                self.crc_errors += 1
+                return
+
             command_code = full_payload_bytes[0]
             command_data_bytes = full_payload_bytes[
                 1:-1
             ]  # Data between command code and CRC
-            # Received CRC is full_payload_bytes[-1], motor model can re-verify if needed
 
         except (ValueError, IndexError) as e:
             logger.error(

@@ -392,3 +392,17 @@ requires_simulator = pytest.mark.skipif(
     ).returncode != 0,
     reason="mks-servo-simulator not available"
 )
+
+
+def pytest_addoption(parser):
+    """Registers the hardware-in-the-loop trace recording option."""
+    parser.addoption(
+        "--hil-record",
+        action="store",
+        default=None,
+        help=(
+            "Path to write a hardware reference trace to. Used by "
+            "tests/hil/test_hardware_conformance.py::test_record_hardware_trace "
+            "to capture ground truth the simulator can then be replayed against."
+        ),
+    )

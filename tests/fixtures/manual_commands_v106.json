@@ -36,14 +36,20 @@
       "examples": [
         {
           "description": "Current carry|value is 0x3FF0, after one turn CCW becomes 0x13FF0",
-          "initial_state": {"carry": 0, "value": 16368},
-          "after_ccw_turn": {"carry": 1, "value": 16368}
+          "initial_state": {
+            "carry": 0,
+            "value": 16368
+          },
+          "after_ccw_turn": {
+            "carry": 1,
+            "value": 16368
+          }
         }
       ]
     },
     "0x31": {
       "name": "read_encoder_addition",
-      "category": "status", 
+      "category": "status",
       "description": "Read encoder value in addition format",
       "request": {
         "dlc": 2,
@@ -60,8 +66,9 @@
         }
       },
       "notes": [
-        "After one turn clockwise, value += 0x4000",
-        "After one turn CCW, value -= 0x4000"
+        "After one turn CCW, the value += 0x4000",
+        "After one turn CW, the value -= 0x4000",
+        "Manual V1.0.6 is self-contradictory here: the prose summary states the opposite, but the worked example ('current value 0x3FF0, after one turn CCW the value(+0x4000) is 0x7FF0') and the sign note on 0x32 both give CCW positive. The examples are taken as authoritative."
       ],
       "examples": [
         {
@@ -91,8 +98,9 @@
       },
       "notes": [
         "Speed is returned in RPM (revolutions per minute)",
-        "Positive values indicate clockwise rotation",
-        "Negative values indicate counter-clockwise rotation"
+        "Positive values indicate counter-clockwise (CCW) rotation",
+        "Negative values indicate clockwise (CW) rotation",
+        "Manual V1.0.6, command 0x32: 'if it run CCW, the speed > 0 (RPM); if it run CW, the speed < 0 (RPM)'"
       ]
     },
     "0x34": {
@@ -108,7 +116,7 @@
         "dlc": 3,
         "format": "CAN_ID | 3 | 0x34 | status(uint8) | CRC",
         "fields": {
-          "byte0": "command_echo", 
+          "byte0": "command_echo",
           "byte1": "io_status_uint8",
           "byte2": "crc"
         }
@@ -132,11 +140,14 @@
         "format": "CAN_ID | 4 | 0x35 | raw_data(uint16) | CRC",
         "fields": {
           "byte0": "command_echo",
-          "bytes1-2": "raw_encoder_uint16", 
+          "bytes1-2": "raw_encoder_uint16",
           "byte3": "crc"
         }
       },
       "notes": [
+        "After one turn CCW, the value += 0x4000",
+        "After one turn CW, the value -= 0x4000",
+        "Manual V1.0.6 is self-contradictory here: the prose summary states the opposite, but the worked example ('current value 0x3FF0, after one turn CCW the value(+0x4000) is 0x7FF0') and the sign note on 0x32 both give CCW positive. The examples are taken as authoritative.",
         "Returns unprocessed encoder data",
         "Added in firmware V1.0.6"
       ]
@@ -149,7 +160,11 @@
         "dlc": 3,
         "format": "CAN_ID | 3 | 0x36 | value(uint8) | CRC",
         "parameters": [
-          {"name": "value", "type": "uint8", "description": "Value to write to IO port"}
+          {
+            "name": "value",
+            "type": "uint8",
+            "description": "Value to write to IO port"
+          }
         ]
       },
       "response": {
@@ -186,7 +201,7 @@
       },
       "status_codes": {
         "0": "going to zero",
-        "1": "go back to zero success", 
+        "1": "go back to zero success",
         "2": "go back to zero fail"
       }
     },
@@ -204,7 +219,7 @@
         "format": "CAN_ID | 3 | 0x3D | status(uint8) | CRC",
         "fields": {
           "byte0": "command_echo",
-          "byte1": "status_uint8", 
+          "byte1": "status_uint8",
           "byte2": "crc"
         }
       },
@@ -219,7 +234,7 @@
       "description": "Read motor shaft protection state",
       "request": {
         "dlc": 2,
-        "format": "CAN_ID | 2 | 0x3E | CRC", 
+        "format": "CAN_ID | 2 | 0x3E | CRC",
         "parameters": []
       },
       "response": {
@@ -238,7 +253,7 @@
     },
     "0x41": {
       "name": "restart_motor",
-      "category": "control", 
+      "category": "control",
       "description": "Restart motor command",
       "request": {
         "dlc": 2,
@@ -296,7 +311,7 @@
         "format": "CAN_ID | 3 | 0x92 | status(uint8) | CRC",
         "fields": {
           "byte0": "command_echo",
-          "byte1": "status_uint8", 
+          "byte1": "status_uint8",
           "byte2": "crc"
         }
       },
@@ -313,8 +328,16 @@
         "dlc": 8,
         "format": "CAN_ID | 8 | 0xF4 | pulses(int32) | speed(uint16) | CRC",
         "parameters": [
-          {"name": "pulses", "type": "int32", "description": "Number of pulses to move (signed)"},
-          {"name": "speed", "type": "uint16", "description": "Movement speed"}
+          {
+            "name": "pulses",
+            "type": "int32",
+            "description": "Number of pulses to move (signed)"
+          },
+          {
+            "name": "speed",
+            "type": "uint16",
+            "description": "Movement speed"
+          }
         ]
       },
       "response": {
@@ -333,21 +356,29 @@
     },
     "0xF5": {
       "name": "move_absolute_pulses",
-      "category": "motion", 
+      "category": "motion",
       "description": "Move absolute by pulses",
       "request": {
         "dlc": 8,
         "format": "CAN_ID | 8 | 0xF5 | position(int32) | speed(uint16) | CRC",
         "parameters": [
-          {"name": "position", "type": "int32", "description": "Absolute position in pulses"},
-          {"name": "speed", "type": "uint16", "description": "Movement speed"}
+          {
+            "name": "position",
+            "type": "int32",
+            "description": "Absolute position in pulses"
+          },
+          {
+            "name": "speed",
+            "type": "uint16",
+            "description": "Movement speed"
+          }
         ]
       },
       "response": {
         "dlc": 3,
         "format": "CAN_ID | 3 | 0xF5 | status(uint8) | CRC",
         "fields": {
-          "byte0": "command_echo", 
+          "byte0": "command_echo",
           "byte1": "status_uint8",
           "byte2": "crc"
         }
@@ -389,8 +420,16 @@
         "dlc": 8,
         "format": "CAN_ID | 8 | 0xFE | position(int32) | speed(uint16) | CRC",
         "parameters": [
-          {"name": "position", "type": "int32", "description": "Absolute position in pulses"},
-          {"name": "speed", "type": "uint16", "description": "Movement speed"}
+          {
+            "name": "position",
+            "type": "int32",
+            "description": "Absolute position in pulses"
+          },
+          {
+            "name": "speed",
+            "type": "uint16",
+            "description": "Movement speed"
+          }
         ]
       },
       "response": {
@@ -415,10 +454,29 @@
     "configuration": "Commands for motor setup, calibration, and parameter setting"
   },
   "firmware_history": {
-    "1.0.6": ["0x35", "0x36", "0x41"],
-    "1.0.5": ["0x94"],
-    "1.0.4": ["0xF7", "0xFE"],
-    "1.0.3": ["0x9A", "0x8F", "0x34"],
-    "1.0.1": ["0x92", "0x8D"]
+    "1.0.6": [
+      "0x35",
+      "0x36",
+      "0x41"
+    ],
+    "1.0.5": [
+      "0x94"
+    ],
+    "1.0.4": [
+      "0xF7",
+      "0xFE"
+    ],
+    "1.0.3": [
+      "0x9A",
+      "0x8F",
+      "0x34"
+    ],
+    "1.0.1": [
+      "0x92",
+      "0x8D"
+    ]
+  },
+  "errata": {
+    "sign_convention": "Counter-clockwise is positive for both encoder accumulation (0x31/0x35) and reported speed (0x32). The prose summaries above the 0x31 and 0x35 worked examples in manual V1.0.6 state the reverse; they are wrong, as shown by the examples immediately below them and by the 0x32 note."
   }
 }
