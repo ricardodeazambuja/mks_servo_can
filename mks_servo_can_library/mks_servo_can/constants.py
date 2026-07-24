@@ -8,6 +8,13 @@ derived from the MKS SERVO42D/57D_CAN User Manual.
 CAN_DEFAULT_BITRATE = 500000  # 500K bps
 CAN_TIMEOUT_SECONDS = 1.0  # Default timeout for CAN operations
 
+# How long a stale-notification credit stays valid; see
+# CANInterface.expect_stale_notification(). The credit exists to absorb the abort
+# frame of a superseded move, which the motor emits within one round trip of the
+# command that superseded it. Should a motor turn out never to emit that frame,
+# the credit has to expire on its own or it swallows a later, legitimate reply.
+STALE_NOTIFICATION_TTL_SECONDS = 1.0
+
 # CAN IDs
 BROADCAST_ADDRESS = 0x00
 DEFAULT_CAN_ID = 0x01
@@ -201,6 +208,15 @@ POS_RUN_FAIL = 0x00
 POS_RUN_STARTING = 0x01
 POS_RUN_COMPLETE = 0x02
 POS_RUN_END_LIMIT_STOPPED = 0x03
+
+# Status bytes an *asynchronous* move notification can carry. A run command's
+# reply reuses its command byte for both the immediate acknowledgement and the
+# later completion/abort frame, so the status byte is the only thing telling
+# them apart: an acknowledgement is POS_RUN_STARTING and a notification is one
+# of these.
+ASYNC_MOVE_NOTIFICATION_STATUSES = frozenset(
+    (POS_RUN_FAIL, POS_RUN_COMPLETE, POS_RUN_END_LIMIT_STOPPED)
+)
 
 # Home Status (for CMD_GO_HOME 0x91)
 HOME_FAIL = 0x00

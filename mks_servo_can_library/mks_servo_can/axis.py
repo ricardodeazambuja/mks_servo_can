@@ -559,9 +559,11 @@ class Axis:
 
         Cancels the background completion watcher and tells the transport to
         expect one stale asynchronous notification for the abandoned move. MKS
-        motors emit a completion/abort frame for a superseded move that is
-        otherwise indistinguishable from the acknowledgement of the *new*
-        command, because both carry the same command byte.
+        motors emit a completion/abort frame for a superseded move that carries
+        the same command byte as the acknowledgement of the *new* command, so
+        the credit is registered against the status bytes an abort can carry -
+        never `POS_RUN_STARTING`, which is what an acknowledgement carries and
+        which arrives first.
 
         Args:
             reason: Human-readable explanation, used for logging and to annotate
@@ -578,7 +580,9 @@ class Axis:
             previous.cancel(reason)
             if self._pending_move_command is not None:
                 self._can_if.expect_stale_notification(
-                    self.can_id, self._pending_move_command
+                    self.can_id,
+                    self._pending_move_command,
+                    statuses=const.ASYNC_MOVE_NOTIFICATION_STATUSES,
                 )
         self._pending_move_command = None
 

@@ -6,10 +6,24 @@ versioning is [semantic](https://semver.org/).
 
 ## [Unreleased]
 
-Simulator observability. The simulator had four independent renderings of motor
-state and three of them were wrong; this replaces all four with one.
+Simulator observability, and the library defects that observability exposed.
 
 ### Fixed
+
+- **Re-targeting a move in flight always raised a spurious `MotorError`.**
+  Dispatching a move with `wait=False` and then dispatching another before it
+  completed failed every single time — the behaviour the whole streaming design
+  rests on. The stale-frame filter discarded by *arrival order*, but the motor
+  emits the new command's acknowledgement (`POS_RUN_STARTING`) **before** the
+  superseded move's abort (`POS_RUN_FAIL`), so the credit ate the
+  acknowledgement and the abort resolved its future. A credit is now scoped to
+  the status bytes an asynchronous notification can carry, so it cannot claim an
+  acknowledgement, and it expires after `STALE_NOTIFICATION_TTL_SECONDS`, so a
+  motor that emits no abort frame at all cannot poison a later reply — correct
+  whichever way the hardware behaves, which is still unrecorded.
+  The pre-existing "coverage" mocked `expect_stale_notification` and asserted
+  only that a credit was *requested*; `tests/integration/test_move_supersede.py`
+  drives a real axis against the simulator instead.
 
 - **`--json-output` crashed on startup** with
   `AttributeError: 'SimulatedMotor' object has no attribute 'name'`, and

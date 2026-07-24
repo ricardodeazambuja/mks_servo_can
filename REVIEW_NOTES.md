@@ -12,12 +12,24 @@ ones are recorded here with reproductions and are not yet fixed.
 
 # Part 0 — Second review: open library defects
 
-Each of these was reproduced against the simulator, not inferred. None is
-currently covered by a test.
+Each of these was reproduced against the simulator, not inferred. None was
+covered by a test when it was found; each entry says whether it has since been
+fixed.
 
-## L1. Re-targeting a move in flight always fails *(critical)*
+## L1. Re-targeting a move in flight always fails *(critical)* — **fixed**
 
-`CANInterface.expect_stale_notification` discards frames by **arrival order**,
+Fixed in `can_interface.py` and `axis.py`, with
+`tests/integration/test_move_supersede.py` covering both halves. A credit is now
+a `_StaleCredit(statuses, expires_at)`: it only claims frames whose status byte
+is one of `const.ASYNC_MOVE_NOTIFICATION_STATUSES`, so it can never consume the
+acknowledgement, and it expires after
+`const.STALE_NOTIFICATION_TTL_SECONDS`, so a motor that emits no abort at all
+cannot poison a later reply. That form is correct under either answer to
+question 1 of the hardware trace, which is still unrecorded.
+
+The original finding, for reference:
+
+`CANInterface.expect_stale_notification` discarded frames by **arrival order**,
 but the motor emits the new command's acknowledgement *before* the superseded
 move's abort frame. So the credit swallows the acknowledgement and the abort is
 read as the reply:
@@ -39,15 +51,12 @@ The mirror-image failure is just as bad: if real hardware emits *no* abort frame
 the credit never expires and swallows the next legitimate response instead.
 Nothing calls `clear_stale_notifications` automatically.
 
-**Fix direction.** Match the credit on the frame's *status byte* rather than on
-arrival order — the abort carries `POS_RUN_FAIL`/`POS_RUN_COMPLETE`, the
-acknowledgement carries `POS_RUN_STARTING` — and give credits a deadline so an
-abort that never arrives cannot poison a later reply. Test it against the
-simulator; `tests/unit/test_regressions.py` currently asserts only that the
-credit is *requested*, using a `MagicMock`, which is why this shipped.
+`tests/unit/test_regressions.py` asserted only that the credit was *requested*,
+using a `MagicMock`, which is why this shipped: the bug was 100% reproducible and
+the test could not see it.
 
-The simulator now reports this event explicitly (`move_superseded` in
-`/status`'s `errors`), so the failure is visible while it is being fixed.
+The simulator reports the event explicitly (`move_superseded` in `/status`'s
+`errors`), which is how the failure was made visible while it was being fixed.
 
 ## L2. `save_or_clean_speed_mode_params` (0xFF) always times out
 

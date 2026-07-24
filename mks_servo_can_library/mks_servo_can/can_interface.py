@@ -6,7 +6,8 @@ and provides a "virtual" backend for the simulator.
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple  # Added Tuple
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple  # Added Tuple
 
 try:
     import can
@@ -131,10 +132,49 @@ except ImportError:
             pass
 
 
-from .constants import CAN_DEFAULT_BITRATE, CAN_TIMEOUT_SECONDS
+from .constants import (
+    ASYNC_MOVE_NOTIFICATION_STATUSES,
+    CAN_DEFAULT_BITRATE,
+    CAN_TIMEOUT_SECONDS,
+    STALE_NOTIFICATION_TTL_SECONDS,
+)
 from .exceptions import CANError, CommunicationError, ConfigurationError, SimulatorError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _StaleCredit:
+    """
+    Permission to discard one unsolicited frame.
+
+    Attributes:
+        statuses: Status bytes (the second data byte) this credit will consume.
+            `None` matches any frame, including one carrying no status byte.
+            Restricting this is what stops a credit registered for a superseded
+            move's abort from eating the acknowledgement of the move that
+            superseded it - the two carry the same command byte and differ only
+            here.
+        expires_at: `time.monotonic()` value past which the credit is dropped
+            unused, so a frame that never arrives cannot poison a later reply.
+    """
+
+    statuses: Optional[frozenset]
+    expires_at: float
+
+    def matches(self, status: Optional[int]) -> bool:
+        """
+        Reports whether this credit will consume a frame with `status`.
+
+        Args:
+            status: The frame's status byte, or None if it carries none.
+
+        Returns:
+            True if the frame should be discarded against this credit.
+        """
+        if self.statuses is None:
+            return True
+        return status is not None and status in self.statuses
 
 
 class AsyncioCanListener(can.Listener if CAN_AVAILABLE else object): # type: ignore[misc] # if can is dummy
@@ -238,13 +278,13 @@ class CANInterface:
         ] = {}  # (can_id, command_code) -> list of (Future, Predicate)
         self._is_listening = False
         self._listener_task: Optional[asyncio.Task] = None
-        # (can_id, command_code) -> number of unsolicited notification frames to
-        # discard before matching anything to a response future. MKS motors emit
-        # a completion/abort frame for a superseded move that carries the same
-        # command byte as the acknowledgement of the command that superseded it,
-        # so without this the two are indistinguishable. See
-        # Axis._supersede_active_move().
-        self._stale_notifications: Dict[Tuple[int, int], int] = {}
+        # (can_id, command_code) -> outstanding credits for unsolicited
+        # notification frames to discard before matching anything to a response
+        # future. MKS motors emit a completion/abort frame for a superseded move
+        # that carries the same command byte as the acknowledgement of the
+        # command that superseded it, so without this the two are
+        # indistinguishable. See Axis._supersede_active_move().
+        self._stale_notifications: Dict[Tuple[int, int], List[_StaleCredit]] = {}
 
         # For Notifier-based hardware listening
         self._message_queue: Optional[asyncio.Queue] = None
@@ -645,18 +685,9 @@ class CANInterface:
         cmd_code = msg.data[0] if msg.data else None
         key_tuple = (msg.arbitration_id, cmd_code)
 
-        # Discard exactly one frame per outstanding stale-notification credit.
-        pending_stale = self._stale_notifications.get(key_tuple, 0)
-        if pending_stale > 0:
-            if pending_stale == 1:
-                del self._stale_notifications[key_tuple]
-            else:
-                self._stale_notifications[key_tuple] = pending_stale - 1
-            logger.debug(
-                "CANInterface: discarded stale notification for ID=%03X CMD=%02X",
-                msg.arbitration_id,
-                cmd_code if cmd_code is not None else 0,
-            )
+        # Discard one frame per outstanding stale-notification credit that the
+        # frame's status byte matches.
+        if self._consume_stale_credit(key_tuple, msg):
             return
 
         futures_for_key = self._response_futures.get(key_tuple, [])
@@ -783,7 +814,68 @@ class CANInterface:
         logger.debug(f"Created future for CAN ID {can_id:03X}, CMD {command_code:02X}{' with predicate' if response_predicate else ''}. Total waiters for key: {len(self._response_futures[key_tuple])}")
         return future
 
-    def expect_stale_notification(self, can_id: int, command_code: int, count: int = 1) -> None:
+    def _consume_stale_credit(
+        self, key_tuple: Tuple[int, Optional[int]], msg: can.Message # type: ignore[name-defined]
+    ) -> bool:
+        """
+        Discards a frame if an outstanding credit claims it.
+
+        Expired credits are dropped here rather than by a timer, so no
+        bookkeeping runs when nothing is being received.
+
+        Args:
+            key_tuple: `(can_id, command_code)` of the received frame.
+            msg: The frame itself, whose status byte selects among credits.
+
+        Returns:
+            True if the frame was consumed as stale and must not be processed
+            further.
+        """
+        credits_for_key = self._stale_notifications.get(key_tuple)
+        if not credits_for_key:
+            return False
+
+        now = time.monotonic()
+        live = [credit for credit in credits_for_key if credit.expires_at > now]
+        if len(live) != len(credits_for_key):
+            logger.debug(
+                "CANInterface: dropped %d expired stale credit(s) for ID=%03X CMD=%02X",
+                len(credits_for_key) - len(live),
+                key_tuple[0],
+                key_tuple[1] if key_tuple[1] is not None else 0,
+            )
+
+        status = msg.data[1] if msg.data is not None and len(msg.data) >= 2 else None
+        match_index = next(
+            (i for i, credit in enumerate(live) if credit.matches(status)), None
+        )
+        if match_index is not None:
+            live.pop(match_index)
+
+        if live:
+            self._stale_notifications[key_tuple] = live
+        else:
+            self._stale_notifications.pop(key_tuple, None)
+
+        if match_index is None:
+            return False
+
+        logger.debug(
+            "CANInterface: discarded stale notification for ID=%03X CMD=%02X status=%s",
+            key_tuple[0],
+            key_tuple[1] if key_tuple[1] is not None else 0,
+            f"{status:02X}" if status is not None else "N/A",
+        )
+        return True
+
+    def expect_stale_notification(
+        self,
+        can_id: int,
+        command_code: int,
+        count: int = 1,
+        statuses: Optional[Iterable[int]] = ASYNC_MOVE_NOTIFICATION_STATUSES,
+        ttl_seconds: float = STALE_NOTIFICATION_TTL_SECONDS,
+    ) -> None:
         """
         Arranges for the next unsolicited frame(s) matching a key to be discarded.
 
@@ -791,9 +883,14 @@ class CANInterface:
         acknowledgement of a command and the asynchronous completion (or abort)
         notification of the move that command started. When a move is superseded,
         the motor emits an abort frame for the old move whose content is
-        indistinguishable from the acknowledgement of the new one. Left alone,
-        that frame resolves the new command's response future and the caller sees
-        a spurious failure.
+        indistinguishable - by command byte - from the acknowledgement of the new
+        one. Left alone, that frame resolves the new command's response future
+        and the caller sees a spurious failure.
+
+        Discarding by arrival order alone does not work, because the
+        acknowledgement arrives *first*: the credit eats it and the abort
+        resolves its future instead. `statuses` is what keeps the credit off the
+        acknowledgement.
 
         Callers that knowingly abandon a move should register the resulting
         orphan frame here so the transport drops it instead of misattributing it.
@@ -802,14 +899,30 @@ class CANInterface:
             can_id: CAN ID of the motor that will emit the stale frame.
             command_code: Command byte the stale frame will carry.
             count: How many frames to discard. Defaults to 1.
+            statuses: Status bytes the stale frame may carry. Defaults to the
+                asynchronous move notifications, which excludes the
+                acknowledgement. Pass None to claim any frame with this key,
+                which is only safe when no other frame with that key can arrive.
+            ttl_seconds: How long the credit remains valid. A credit for a frame
+                the motor never sends must expire, or it swallows a later,
+                legitimate response.
         """
         key = (can_id, command_code)
-        self._stale_notifications[key] = self._stale_notifications.get(key, 0) + count
+        expires_at = time.monotonic() + ttl_seconds
+        allowed = frozenset(statuses) if statuses is not None else None
+        outstanding = self._stale_notifications.setdefault(key, [])
+        outstanding.extend(
+            _StaleCredit(statuses=allowed, expires_at=expires_at)
+            for _ in range(count)
+        )
         logger.debug(
-            "CANInterface: expecting %d stale notification(s) for ID=%03X CMD=%02X",
-            self._stale_notifications[key],
+            "CANInterface: expecting %d stale notification(s) for ID=%03X CMD=%02X "
+            "(statuses=%s, ttl=%.2fs)",
+            len(outstanding),
             can_id,
             command_code,
+            sorted(allowed) if allowed is not None else "any",
+            ttl_seconds,
         )
 
     def clear_stale_notifications(self, can_id: Optional[int] = None) -> None:
