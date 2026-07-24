@@ -99,7 +99,12 @@ one raising handler silently stops all reception for the rest of the session.
   `run_position_mode_relative_axis` and others. Only the 0xF5 path was converted
   to lazy `debug`.
 
-## L6. Documentation does not match the API
+## L6. Documentation does not match the API *(now gated, debt outstanding)*
+
+`tests/test_docs_api.py` now enforces this, as a ratchet over
+`tests/fixtures/docs_known_issues.json`: new problems fail the build and the
+baseline can only shrink. The findings below remain to be burned down — see
+`docs/development/roadmap.md` item 3 for the workflow.
 
 A mechanical check of the code blocks in `docs/` and `README.md` found **26
 references to things that do not exist** across 12 files, plus 7 blocks that do

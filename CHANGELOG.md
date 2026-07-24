@@ -76,13 +76,32 @@ state and three of them were wrong; this replaces all four with one.
   (serves the API from real motors with nothing stubbed in between).
   `test_llm_debug_interface.py` was rewritten against real motors.
 
+### Documentation
+
+- **`tests/test_docs_api.py` gates the documentation against the code.** Every
+  Python block in `docs/` and `README.md` is parsed and its method names,
+  constructor arguments and imports checked against the real package; internal
+  links must resolve. None of this had ever been verified, and it had drifted
+  badly — 26 references to things that do not exist, 7 blocks that are not valid
+  Python, and 27 of the 52 links in the documentation index pointing at
+  documents that were never written.
+  It is a ratchet rather than a clean gate: the 63 known problems live in
+  `tests/fixtures/docs_known_issues.json`, a new finding fails the build, and a
+  baseline entry that no longer occurs also fails, with an instruction to delete
+  it. So the documentation cannot get worse and the debt can only shrink.
+- **The documentation index no longer advertises documents that do not exist.**
+  Entries with no file behind them are marked *(planned)*, and the index says so.
+- **Added `docs/development/roadmap.md`** — the open defects, the order to
+  address them in, and how to verify each. `docs/README.md` had reserved a link
+  for this since the beginning; it was one of the 27 dead ones.
+
 ### Known issues
 
 Four library defects found in the same review are documented with reproductions
 in `REVIEW_NOTES.md` Part 0 and are **not yet fixed**. The most serious, L1, is
 that re-targeting a move in flight always raises a spurious `MotorError`,
 because the stale-frame filter discards by arrival order and the acknowledgement
-arrives before the abort.
+arrives before the abort. `docs/development/roadmap.md` sequences the work.
 
 ## [0.3.0] - 2026-07-24
 

@@ -564,6 +564,25 @@ pytest tests/integration # Requires the simulator to be running for some tests
 ```
 (HIL tests require physical hardware and are typically run manually or in a dedicated CI environment.)
 
+### Documentation checks
+
+`tests/test_docs_api.py` parses every Python block in `docs/` and this README and
+checks that the methods, constructor arguments and imports they reference
+actually exist, and that internal links resolve. It runs as part of `pytest`.
+
+It is a **ratchet**: pre-existing problems are listed in
+`tests/fixtures/docs_known_issues.json`, and the test fails if a *new* one
+appears — so the documentation cannot drift further from the code. It also fails
+if a baseline entry no longer occurs, telling you to delete it, so the list can
+only shrink.
+
+If you fix a documentation problem, run the test and remove the entries it
+reports as stale. If you hit a failure for something you just wrote, fix the
+documentation rather than adding it to the baseline.
+
+See `docs/development/roadmap.md` for what is known to be stale and the order the
+remaining work is planned in.
+
 ## Contributing
 
 Contributions are welcome! Please follow these general guidelines:
