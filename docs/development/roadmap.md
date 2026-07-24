@@ -45,122 +45,30 @@ Fixtures for driving the simulator from a test live in `tests/conftest.py`
 
 ---
 
-## Item 1 — Fix the four library defects (highest priority)
+## Item 1 — Fix the library defects — **done**
 
-All four are reproducible against the simulator and none is currently covered.
-Full detail with reproductions is in `REVIEW_NOTES.md` Part 0.
+L1–L5 are fixed, each with a test that fails against the code as it was, and
+each verified by mutation: the fix is undone, the test is confirmed to fail, and
+the file is restored. `REVIEW_NOTES.md` Part 0 carries the detail; the tests are
 
-### 1a. L1: re-targeting a move in flight always fails — **critical**
+| defect | fixed in | covered by |
+|---|---|---|
+| L1 re-targeting a move in flight always failed | `can_interface.py`, `axis.py` | `tests/integration/test_move_supersede.py` |
+| L2 `save_or_clean_speed_mode_params` always timed out | `low_level_api.py` | `tests/integration/test_speed_mode_params.py` |
+| L3 default speed read as user units | `axis.py` | `tests/integration/test_default_speed.py` |
+| L4 one bad frame killed the receive path | `can_interface.py` | `tests/unit/test_can_interface_listener.py` |
+| L5 stream start atomicity, feedback cost, small items | `realtime.py`, `axis.py`, `low_level_api.py`, `can_interface.py` | `tests/integration/test_stream_start_atomicity.py`, `tests/integration/test_stream_feedback_cost.py`, `tests/unit/test_regressions.py` |
+| L8 absolute move skipped against a stale position cache | `axis.py` | `tests/integration/test_default_speed.py`, `tests/unit/test_regressions.py` |
 
-**Symptom.** Dispatch a move with `wait=False`, then dispatch another before it
-completes. The second raises
-`MotorError: Motor run command F5 ... failed to start (status 0x00)`. Every
-retarget fails. This is the behaviour the whole streaming design rests on.
+L8 was not in the original review. It surfaced while building the test for L3:
+`wait=True` returns as soon as the completion frame resolves the move future,
+one step before the cached position is refreshed, so commanding the position the
+axis started from hit the "already at target" shortcut against a pre-move cache
+and returned success without sending anything.
 
-**Cause.** `CANInterface._process_received_message` discards stale frames by
-**arrival order**: `expect_stale_notification` registers a credit, and the next
-frame matching `(can_id, command_code)` is dropped unconditionally. But the
-motor sends the new command's acknowledgement *before* the superseded move's
-abort frame, so the credit eats the acknowledgement and the abort resolves the
-acknowledgement's future:
-
-```
-rx ID=001 CMD=F5 Data=f501f7   → discarded as "stale"   (status 01 = POS_RUN_STARTING, the real ack)
-rx ID=001 CMD=F5 Data=f500f6   → resolves the ack future (status 00 = POS_RUN_FAIL, the old move's abort)
-```
-
-The credit is registered by `Axis._supersede_active_move`, which runs at the top
-of `_execute_move` before the new command is even sent.
-
-**Second failure mode, equally important.** If real hardware emits *no* abort
-frame, the credit never expires and swallows the next legitimate response
-instead. Nothing calls `clear_stale_notifications` automatically.
-
-**Fix direction.** Match the credit on the frame's **status byte**, not on
-arrival order — an abort carries `POS_RUN_FAIL` or `POS_RUN_COMPLETE`, an
-acknowledgement carries `POS_RUN_STARTING` — and give every credit a deadline so
-an abort that never arrives cannot poison a later reply. This is the only form
-that is correct under *both* hypotheses about the hardware, which matters
-because which one is true is still unknown (see Item 2).
-
-**Verify.** Integration test against the simulator: enable a motor, dispatch a
-long slow move with `wait=False`, dispatch a second move before it completes,
-assert the second is accepted and runs to its target. Then the inverse: simulate
-a motor that emits no abort frame and assert the following command's reply is
-not swallowed.
-
-The simulator now reports this event as a `move_superseded` anomaly in
-`/status`'s `errors` array, so the failure is directly observable while working
-on it. A driver that provokes it: retarget three axes every 150 ms at
-`speed_param=40`.
-
-### 1b. L2: `save_or_clean_speed_mode_params` (0xFF) always times out
-
-`LowLevelAPI._send_command_and_get_response` special-cases
-`CMD_SAVE_CLEAN_SPEED_MODE_PARAMS` to expect the echoed *sub-command*
-(0xC8/0xCA). The motor echoes 0xFF. The comment above the status check inside
-`save_or_clean_speed_mode_params` already says the response's `data[0]` is 0xFF,
-contradicting the special case.
-
-```
-CommunicationError: Timeout waiting for response to command FF from CAN ID 001
-(expected echoed cmd code C8). Sent: ffc8c8
-```
-
-Remove the special case for 0xFF (keep the one for
-`CMD_READ_SYSTEM_PARAMETER_PREFIX`, which is correct). The command has no test
-coverage at all — add one.
-
-### 1c. L3: default speed is interpreted in the wrong units
-
-In `Axis._move_absolute_handler` and `Axis._move_relative_handler`, the
-`unit == 'user'` branch does:
-
-```python
-sp = speed if speed is not None else self.default_speed_param   # 500, an MKS parameter
-mks_speed_param = self.kinematics.user_speed_to_motor_speed(sp) if sp is not None else self.default_speed_param
-```
-
-`sp` is never `None`, so the documented fallback is dead code and the MKS
-parameter 500 is read as 500 deg/s, converting to **83**. Any
-`move_to_position_abs_user()` or `move_relative_user()` without an explicit
-speed runs at a sixth of the documented default.
-
-Fix so an omitted speed uses `default_speed_param` directly as an MKS parameter,
-and only converts when the caller actually supplied user units.
-
-### 1d. L4: a single bad frame kills the receive path
-
-In `CANInterface._listen_for_messages_hw` and `_listen_for_messages_sim`, an
-exception raised by `_process_received_message` escapes the per-message `try`
-and is caught by the outer `except Exception`, which ends the listener task.
-One malformed frame or one raising handler silently stops all reception for the
-rest of the session.
-
-Catch per message, log, and continue.
-
-### 1e. L5: smaller items, same pass
-
-- **`ServoStream.start()` is not atomic.** If it fails after disabling responses
-  on some axes, `__aexit__` never runs and `stop()` early-returns on
-  `_running == False`, leaving those motors with responses disabled.
-- **`ServoStream._run_feedback` toggles 0x8C around every read** — three round
-  trips per axis per poll instead of one, and unnecessary: by the repo's own
-  reading of the manual (`SUPPRESSIBLE_RESPONSE_COMMANDS` in
-  `motor_model.py`), 0x31 is not suppressible and always answers. Remove the
-  toggling. **But see Item 2** — this reading is unconfirmed against hardware.
-- **`can.interface.Bus(bustype=...)`** in `CANInterface.connect` is deprecated in
-  python-can 4 and removed in 5; the argument is now `interface`.
-- **Stale docstrings.** `Axis.get_current_position_steps` claims it inverts the
-  value it reads (it does not). `Axis.move_to_position_abs_pulses` claims it
-  emulates absolute motion via 0xFD (it uses 0xF5).
-- **Per-frame `logger.info` with eager f-strings** remains in
-  `run_position_mode_relative_pulses`, `run_speed_mode`, `stop_speed_mode`,
-  `run_position_mode_relative_axis` and others in `low_level_api.py`. Only the
-  0xF5 path was converted to lazy `debug`. Convert the rest.
-
-**Expected side effect of Item 1:** `can_interface.py` currently sits at 47%
-coverage and is where most of this lives.
+Two of these are written to be correct under either answer to a question only
+the hardware trace can settle — L1's credit expiry, and the removal of CanRSP
+toggling from the feedback path. See Item 2, which is now the head of the list.
 
 ---
 
@@ -317,18 +225,20 @@ matters.
 
 ## Suggested sequencing
 
-1. **Items 1 and 2 in parallel.** The library fixes do not block on hardware, and
-   the trace is asynchronous on bench time. Fix L1 defensively so it is correct
-   either way, then confirm with the trace.
+1. ~~**Items 1 and 2 in parallel.**~~ Item 1 is done; **Item 2 is now the head of
+   the list** and needs only bench time.
 2. **Items 3 and 4 together** as a release-readiness pass.
 3. **Items 5, 6, 7** as capacity allows.
 
-## Definition of done for Item 1
+## Definition of done — the standard Item 1 was held to
 
-- All four defects fixed, each with an integration test against the simulator
-  (not a mock) that fails against the current code.
-- `pytest -q` green in random order.
-- `ruff check .` clean.
-- `REVIEW_NOTES.md` Part 0 updated to reflect what was fixed.
-- `CHANGELOG.md` updated under `[Unreleased]`, which already carries a
-  "Known issues" section pointing at these; remove the entries as they are fixed.
+Reuse this for the items below:
+
+- Each defect fixed with a test that fails against the code as it was, driving
+  the simulator or real objects rather than a mock.
+- Each test verified by mutation: undo the fix, confirm the test fails, confirm
+  the mutation actually landed on disk, restore. A test that passes under
+  mutation is not a test.
+- `pytest -q` green in random order, and `ruff check .` clean.
+- `REVIEW_NOTES.md` Part 0 updated to say what was fixed and how it is covered.
+- `CHANGELOG.md` updated under `[Unreleased]`.

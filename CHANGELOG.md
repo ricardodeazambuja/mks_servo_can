@@ -155,11 +155,19 @@ Simulator observability, and the library defects that observability exposed.
 
 ### Known issues
 
-Four library defects found in the same review are documented with reproductions
-in `REVIEW_NOTES.md` Part 0 and are **not yet fixed**. The most serious, L1, is
-that re-targeting a move in flight always raises a spurious `MotorError`,
-because the stale-frame filter discards by arrival order and the acknowledgement
-arrives before the abort. `docs/development/roadmap.md` sequences the work.
+The library defects found in the same review (L1–L5 in `REVIEW_NOTES.md`
+Part 0) are all fixed above. Two things remain open:
+
+- **No hardware trace has been recorded.** The simulator is validated against
+  the *manual*, and the library was written from the same reading, so a shared
+  misreading is invisible to every test here. Three questions turn on it: does
+  0xF5 emit an abort frame when re-targeted mid-move, is the sign convention
+  really CCW-positive, and does CanRSP suppress replies to reads as well as to
+  the run commands. The fixes above are written to be correct under either
+  answer to the first and third. See `docs/development/roadmap.md` item 2.
+- **Documentation debt.** 63 known problems remain in
+  `tests/fixtures/docs_known_issues.json`. The gate stops it growing; burning it
+  down is item 3.
 
 ## [0.3.0] - 2026-07-24
 
