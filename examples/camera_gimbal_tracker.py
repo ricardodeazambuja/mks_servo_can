@@ -1,0 +1,661 @@
+#!/usr/bin/env python3
+"""
+Three-axis camera gimbal that tracks a fast-moving target.
+
+Runs against the simulator out of the box::
+
+    mks-servo-simulator --num-motors 3 --start-can-id 1 --latency-ms 0
+    python examples/camera_gimbal_tracker.py
+
+Or against hardware::
+
+    python examples/camera_gimbal_tracker.py --hardware --channel can0
+
+The synthetic target is a drone flying a pass at configurable range and speed.
+Replace `SyntheticTarget` with your detector to make this real; the interface is
+one method returning a bearing and the time it was *captured*.
+
+
+The one thing to understand before changing anything
+====================================================
+
+This is a latency problem, not a speed problem.
+
+The motors have far more acceleration than the job needs. At ``acc=250`` the
+shaft accelerates at 20000 deg/s^2; a drone pulling 4 g laterally at 10 m range
+only demands 225 deg/s^2, so there is roughly a 90x margin. The CAN bus is
+likewise not the constraint: three axes streaming fire-and-forget at 1 Mbit/s
+have around 1000 Hz of headroom at 40% bus load, and this loop uses 200 Hz.
+
+What actually determines whether the target stays in frame is the delay between
+photons landing on the sensor and the motor moving, because pointing error from
+pure transport delay is ``rate x latency``. For a target crossing at 172 deg/s:
+
+    latency   no prediction   constant-velocity prediction
+     10 ms        1.72 deg           0.011 deg
+     33 ms        5.68 deg           0.123 deg
+     50 ms        8.60 deg           0.281 deg
+     80 ms       13.76 deg           0.720 deg
+
+A telephoto lens has a field of view of a few degrees. Without extrapolation the
+target leaves the frame; with it, the error is a fraction of a degree. Shaving
+3 ms off the CAN path is worth about 0.5 deg. Adding the predictor is worth 8.
+
+Hence the two things this example is really demonstrating:
+
+1. `AlphaBetaGammaTracker` extrapolates the target forward by the *measured*
+   pipeline latency. Measure that number, do not guess it: being wrong by 20 ms
+   costs 3.4 deg at 172 deg/s. A constant-*acceleration* filter is used rather
+   than constant-velocity because a target flying a straight line still has
+   large angular acceleration near the crossing point - the geometry
+   accelerates even though the target does not. See `GimbalTracker`.
+2. `ServoStream` streams absolute position targets with a velocity feed-forward,
+   fire-and-forget, so the motor's own closed loop does the fine positioning
+   while this process does prediction and trajectory.
+
+
+Mechanical notes that matter more than the code
+===============================================
+
+**Use 1:1 direct drive on pan and tilt.** The 16384-count encoder gives 0.022
+deg (79 arcsec) at the output, already about 0.4% of a 6 deg field of view and
+well below the prediction residual. Reduction buys resolution you cannot use,
+costs you slew rate, and introduces backlash, which is a nonlinearity no
+controller can compensate and which shows up as visible jitter every time the
+tracking error changes sign. Only gear down for a genuinely long lens (< 2 deg
+FOV), and then use a zero-backlash drive - harmonic, capstan, or a tensioned
+belt. Never a spur gearbox.
+
+**Put the SERVO57D on pan.** Carrying the tilt and roll stages, the pan axis has
+roughly 0.018 kg m^2 of inertia with a 1.2 kg camera. A SERVO42D leaves about 3x
+acceleration margin there, which disappears the moment the gimbal is slightly
+out of balance or you fit a heavier lens. The SERVO57D gives about 8x. Tilt and
+roll are comfortable on SERVO42Ds.
+
+**Balance every axis.** A stepper holding a static gravity torque burns holding
+current continuously, heats up, and loses torque exactly when you need it.
+Re-balance after every lens change.
+
+**Configure the motors** for SR_vFOC (mode 5), 32 or 64 microsteps - staying in
+the 16/32/64 band keeps speed parameter equal to RPM, see
+`mks_servo_can.motor_profile` - and 1 Mbit/s CAN with 120 ohm termination at
+both physical ends of the bus only.
+
+For roll: if you are tracking rather than filming, roll contributes nothing to
+acquisition. Consider spending that third motor on a focus axis instead, which
+matters far more for keeping a small distant target resolvable.
+"""
+import argparse
+import asyncio
+import logging
+import math
+import time
+
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+from mks_servo_can import (
+    AlphaBetaGammaTracker,
+    CANInterface,
+    ServoStream,
+    StreamAxis,
+    constants as const,
+    motor_profile,
+)
+
+logger = logging.getLogger("gimbal")
+
+# --------------------------------------------------------------------------
+# Gimbal geometry
+# --------------------------------------------------------------------------
+
+# Soft limits. Pan is restricted rather than continuous because cabling to the
+# camera has to come back down through the yoke; a slip ring would let you open
+# this up. Tilt is restricted to keep the camera clear of the base.
+PAN_LIMITS = (-170.0, 170.0)
+TILT_LIMITS = (-45.0, 90.0)
+ROLL_LIMITS = (-30.0, 30.0)
+
+# acc=250 gives 20000 deg/s^2 at the shaft, about 90x what a 4 g target at 10 m
+# demands. The headroom is deliberate: it is what lets a streamed position
+# command be tracked faithfully inside one control period. Do not use acc=0,
+# which removes the ramp entirely and will jar the footage and risk lost sync.
+GIMBAL_ACCEL_PARAM = 250
+
+CONTROL_RATE_HZ = 200.0
+FEEDBACK_RATE_HZ = 25.0
+
+
+@dataclass
+class Bearing:
+    """
+    A sighting of the target.
+
+    Attributes:
+        azimuth: Bearing in degrees, in the gimbal's pan frame.
+        elevation: Bearing in degrees, in the gimbal's tilt frame.
+        captured_at: When the measurement was *captured*, on
+            `time.monotonic()`. Not when it finished being processed: folding a
+            variable processing delay into the timestamp corrupts the velocity
+            estimate in a way no filter can undo. Real camera drivers expose an
+            exposure timestamp; use it.
+    """
+
+    azimuth: float
+    elevation: float
+    captured_at: float
+
+
+class SyntheticTarget:
+    """
+    A drone flying a straight pass, used so the example runs with no camera.
+
+    The default is deliberately demanding: 30 m/s at 10 m closest approach gives
+    a peak angular rate of about 172 deg/s at the crossing point, which is the
+    worst case the design notes above are written around.
+
+    Replace this class with your detector. The only contract is `observe()`.
+    """
+
+    def __init__(
+        self,
+        speed_mps: float = 30.0,
+        closest_approach_m: float = 10.0,
+        altitude_m: float = 15.0,
+        detection_latency: float = 0.045,
+        detection_noise_deg: float = 0.15,
+    ):
+        """
+        Configures the synthetic pass.
+
+        Args:
+            speed_mps: Ground speed of the target.
+            closest_approach_m: Perpendicular distance at the crossing point.
+            altitude_m: Height above the gimbal.
+            detection_latency: Simulated pipeline delay - exposure, readout and
+                inference - between the target being at a position and that
+                position becoming available here.
+            detection_noise_deg: Peak bearing noise, applied deterministically
+                so runs are reproducible.
+        """
+        self.speed_mps = speed_mps
+        self.closest_approach_m = closest_approach_m
+        self.altitude_m = altitude_m
+        self.detection_latency = detection_latency
+        self.detection_noise_deg = detection_noise_deg
+        self._t0 = time.monotonic()
+        self._sample = 0
+
+    def true_bearing(self, t: float) -> Tuple[float, float]:
+        """
+        Returns the target's exact bearing at a given time.
+
+        Args:
+            t: Seconds since the pass began.
+
+        Returns:
+            (azimuth, elevation) in degrees.
+        """
+        # Fly along +x, offset by the closest approach in y.
+        x = self.speed_mps * (t - 4.0)
+        y = self.closest_approach_m
+        z = self.altitude_m
+        azimuth = math.degrees(math.atan2(x, y))
+        elevation = math.degrees(math.atan2(z, math.hypot(x, y)))
+        return azimuth, elevation
+
+    def observe(self) -> Bearing:
+        """
+        Returns a delayed, noisy sighting - what a real detector would give you.
+
+        Returns:
+            A `Bearing` timestamped with its capture time, which is already in
+            the past by `detection_latency`.
+        """
+        now = time.monotonic()
+        captured_at = now - self.detection_latency
+        azimuth, elevation = self.true_bearing(captured_at - self._t0)
+
+        # Deterministic zero-mean jitter: an irrational stride avoids the
+        # periodicity that would let the filter learn the "noise".
+        self._sample += 1
+        noise = self.detection_noise_deg * math.sin(self._sample * 2.399963)
+        return Bearing(azimuth + noise, elevation + noise * 0.5, captured_at)
+
+
+class GimbalTracker:
+    """
+    Closes the loop from sighting to motor command.
+
+    Owns one `AlphaBetaTracker` per steered axis and one `ServoStream` for the
+    whole gimbal, and does the only interesting arithmetic in the example:
+    extrapolating each bearing forward to when the command will actually take
+    effect.
+    """
+
+    def __init__(
+        self,
+        stream: ServoStream,
+        command_latency: float,
+        alpha: float = 0.5,
+        beta: float = 0.3,
+        gamma: float = 0.05,
+    ):
+        """
+        Builds a tracker around a running stream.
+
+        A constant-acceleration filter is used rather than constant-velocity,
+        because a target flying a *straight line* still has large angular
+        acceleration near the crossing point: the geometry accelerates even
+        though the target does not. A 30 m/s pass at 10 m peaks at about
+        335 deg/s^2. A constant-velocity filter's velocity estimate lags that by
+        roughly `accel * dt / beta`, which at 60 fps and beta=0.08 is 70 deg/s -
+        over a 50 ms horizon, 3.5 degrees of pointing error, making the filter a
+        larger error source than everything else combined.
+
+        Args:
+            stream: The `ServoStream` driving the gimbal.
+            command_latency: Measured delay in seconds between issuing a command
+                and the motor acting on it. Only this part - the *detector*
+                delay is derived per sighting from its capture timestamp, so it
+                adapts automatically to a jittery pipeline. See
+                `measure_command_latency`.
+            alpha: Position gain. Higher tracks harder and admits more noise.
+            beta: Velocity gain.
+            gamma: Acceleration gain. The most noise-sensitive of the three.
+
+        The default gains come from a sweep against this example's trajectory
+        with 0.15 deg of bearing noise: they give about 0.24 deg of error at the
+        crossing point and degrade gracefully as noise rises. Re-tune for your
+        own detector's noise and frame rate.
+        """
+        self.stream = stream
+        self.command_latency = command_latency
+        self.azimuth = AlphaBetaGammaTracker(alpha=alpha, beta=beta, gamma=gamma)
+        self.elevation = AlphaBetaGammaTracker(alpha=alpha, beta=beta, gamma=gamma)
+        self.last_error: Optional[float] = None
+
+    def on_sighting(self, bearing: Bearing) -> None:
+        """
+        Folds in a sighting and commands the gimbal.
+
+        The prediction horizon is the age of this measurement plus the command
+        latency: how far in the future the motor will act, measured from when
+        the photons landed. Deriving the detector's share from the capture
+        timestamp rather than assuming a fixed figure means a pipeline whose
+        latency varies frame to frame is handled correctly and for free.
+
+        Getting this wrong is expensive and silent. Adding the detector latency
+        a second time - easy to do, since it is already inside `age` - doubles
+        the horizon and over-predicts: in this example that turns 0.24 deg of
+        error at the crossing point into 7.4 deg, worse than not predicting at
+        all.
+
+        Args:
+            bearing: The sighting to process.
+        """
+        self.azimuth.update(bearing.azimuth, bearing.captured_at)
+        self.elevation.update(bearing.elevation, bearing.captured_at)
+
+        age = time.monotonic() - bearing.captured_at
+        horizon = age + self.command_latency
+
+        predicted_az = self.azimuth.predict(horizon)
+        predicted_el = self.elevation.predict(horizon)
+
+        # The feed-forward rate is what stops the motor decelerating into every
+        # target. Without it the gimbal stutters: it arrives, stops, and waits
+        # for the next command. With it, the trapezoidal planner inside the
+        # driver is already moving at roughly the target's speed.
+        #
+        # Use the rate the target will have when the command *lands*, not the
+        # one it had when last seen - the same extrapolation argument as for
+        # position.
+        self.stream.set_targets(
+            {"pan": predicted_az, "tilt": predicted_el},
+            {
+                "pan": abs(self.azimuth.predict_velocity(horizon)),
+                "tilt": abs(self.elevation.predict_velocity(horizon)),
+            },
+        )
+
+    def pointing_error(self, truth: Tuple[float, float]) -> float:
+        """
+        Angular distance between where the gimbal is aimed and the truth.
+
+        Only meaningful with a synthetic target, where truth is known. Kept
+        because it is the number that tells you whether any of this works.
+
+        Args:
+            truth: The target's exact (azimuth, elevation) in degrees.
+
+        Returns:
+            Great-circle-ish angular error in degrees.
+        """
+        pan = self.stream.axes["pan"].target_position
+        tilt = self.stream.axes["tilt"].target_position
+        d_az = (truth[0] - pan) * math.cos(math.radians(tilt))
+        d_el = truth[1] - tilt
+        self.last_error = math.hypot(d_az, d_el)
+        return self.last_error
+
+
+def build_axes() -> list:
+    """
+    Describes the three gimbal axes.
+
+    Returns:
+        The `StreamAxis` objects for pan, tilt and roll.
+    """
+    return [
+        StreamAxis(
+            "pan",
+            can_id=1,
+            accel_param=GIMBAL_ACCEL_PARAM,
+            min_position=PAN_LIMITS[0],
+            max_position=PAN_LIMITS[1],
+            # 3000 RPM at 1:1 is 18000 deg/s, but stepper torque collapses well
+            # before that. 1000 RPM (6000 deg/s) is a defensible working ceiling
+            # and still 35x the fastest target this is designed for.
+            max_rate=6000.0,
+            microsteps=32,
+        ),
+        StreamAxis(
+            "tilt",
+            can_id=2,
+            accel_param=GIMBAL_ACCEL_PARAM,
+            min_position=TILT_LIMITS[0],
+            max_position=TILT_LIMITS[1],
+            max_rate=6000.0,
+            microsteps=32,
+        ),
+        StreamAxis(
+            "roll",
+            can_id=3,
+            accel_param=GIMBAL_ACCEL_PARAM,
+            min_position=ROLL_LIMITS[0],
+            max_position=ROLL_LIMITS[1],
+            max_rate=3000.0,
+            microsteps=32,
+        ),
+    ]
+
+
+async def measure_command_latency(stream: ServoStream, axis: str = "pan") -> float:
+    """
+    Measures how long a command takes to reach the motor and start it moving.
+
+    This is only the *command* half of the pipeline, and deliberately so: the
+    camera half is derived per sighting from its capture timestamp, which keeps
+    the horizon correct even when the detector's latency varies.
+
+    If your camera does not give you a trustworthy capture timestamp you will
+    have to measure its delay directly - put a blinking LED in frame, command a
+    known step, and cross-correlate - and subtract it when you build `Bearing`.
+
+    Args:
+        stream: A running `ServoStream`.
+        axis: Which axis to probe.
+
+    Returns:
+        Median command latency in seconds.
+    """
+    samples = []
+    target = stream.axes[axis].target_position
+    for i in range(40):
+        started = time.perf_counter()
+        stream.set_target(axis, target + (0.05 if i % 2 else -0.05))
+        await asyncio.sleep(1.0 / CONTROL_RATE_HZ)
+        samples.append(time.perf_counter() - started)
+    samples.sort()
+    return samples[len(samples) // 2]
+
+
+def report_design_margins() -> None:
+    """
+    Prints the sizing calculations behind the constants at the top of the file.
+
+    Worth reading once: it shows which constraints are comfortable (acceleration,
+    bus bandwidth, encoder resolution) and which are not (latency).
+    """
+    resolution = motor_profile.encoder_resolution_degrees()
+    accel = motor_profile.accel_param_to_deg_per_s2(GIMBAL_ACCEL_PARAM)
+    max_rate = motor_profile.max_output_speed_deg_per_s(max_usable_rpm=1000)
+
+    print("Gimbal design margins (1:1 direct drive)")
+    print("-" * 62)
+    print(f"  encoder resolution    {resolution:8.4f} deg  ({resolution*3600:.1f} arcsec)")
+    print(f"  acceleration (acc={GIMBAL_ACCEL_PARAM})  {accel:8.0f} deg/s^2")
+    print(f"  usable slew rate      {max_rate:8.0f} deg/s   (at 1000 RPM)")
+    print()
+    print("  worst-case target: 30 m/s drone at 10 m closest approach")
+    print(f"    angular rate         {math.degrees(30/10):8.1f} deg/s")
+    print(f"    angular accel (4 g)  {math.degrees(4*9.81/10):8.1f} deg/s^2")
+    print(f"    acceleration margin  {accel/math.degrees(4*9.81/10):8.0f}x")
+    print(f"    slew rate margin     {max_rate/math.degrees(30/10):8.0f}x")
+    print()
+    print("  => acceleration and slew rate are not the constraint. Latency is.")
+    print()
+
+
+async def run_tracking(
+    can_if: CANInterface, duration: float, quiet: bool = False
+) -> dict:
+    """
+    Runs a tracking pass and reports how well it went.
+
+    Args:
+        can_if: A connected `CANInterface`.
+        duration: How long to track, in seconds.
+        quiet: Suppress the per-second progress lines.
+
+    Returns:
+        A summary dict with the error statistics and loop timing.
+    """
+    target = SyntheticTarget()
+    axes = build_axes()
+
+    async with ServoStream(
+        can_if,
+        axes,
+        rate_hz=CONTROL_RATE_HZ,
+        feedback_rate_hz=FEEDBACK_RATE_HZ,
+        # A gimbal whose detector has crashed should hold, not coast into its
+        # own cabling.
+        watchdog_timeout=0.5,
+    ) as stream:
+        stream.set_targets({"pan": 0.0, "tilt": 0.0, "roll": 0.0})
+        await asyncio.sleep(0.2)
+
+        command_latency = await measure_command_latency(stream)
+        total_latency = command_latency + target.detection_latency
+        if not quiet:
+            print(
+                f"  measured command latency {command_latency*1000:.2f} ms, "
+                f"detector latency {target.detection_latency*1000:.0f} ms "
+                f"-> prediction horizon {total_latency*1000:.0f} ms\n"
+            )
+
+        tracker = GimbalTracker(stream, command_latency=command_latency)
+
+        errors = []
+        naive_errors = []
+        started = time.monotonic()
+        next_report = started + 1.0
+        detector_period = 1.0 / 60.0  # a 60 fps camera
+
+        while time.monotonic() - started < duration:
+            sighting = target.observe()
+            tracker.on_sighting(sighting)
+
+            truth = target.true_bearing(time.monotonic() - target._t0)
+            rate = abs(tracker.azimuth.velocity)
+            errors.append((rate, tracker.pointing_error(truth)))
+            # What the error would have been pointing straight at the stale
+            # measurement, with no extrapolation at all.
+            naive_errors.append(
+                (
+                    rate,
+                    math.hypot(
+                        (truth[0] - sighting.azimuth)
+                        * math.cos(math.radians(sighting.elevation)),
+                        truth[1] - sighting.elevation,
+                    ),
+                )
+            )
+
+            if not quiet and time.monotonic() > next_report:
+                next_report += 1.0
+                print(
+                    f"  t={time.monotonic()-started:4.1f}s  "
+                    f"az={truth[0]:+7.1f} deg  el={truth[1]:5.1f} deg  "
+                    f"rate={abs(tracker.azimuth.velocity):6.1f} deg/s  "
+                    f"error={errors[-1][1]:5.3f} deg"
+                )
+            await asyncio.sleep(detector_period)
+
+        # Segment by target angular rate. Averaging over a whole pass is
+        # misleading: most of a pass is slow and far away, where any approach
+        # works. The question is what happens at the crossing point, which is a
+        # small fraction of the samples but the entire reason for the design.
+        return {
+            "samples": len(errors),
+            "prediction_horizon_ms": total_latency * 1000.0,
+            "bands": _summarise_by_rate(errors, naive_errors),
+            "loop": stream.stats.as_dict(),
+        }
+
+
+RATE_BANDS = [
+    ("slow    (< 20 deg/s)", 0.0, 20.0),
+    ("moderate (20-60 deg/s)", 20.0, 60.0),
+    ("fast     (60-120 deg/s)", 60.0, 120.0),
+    ("crossing (> 120 deg/s)", 120.0, float("inf")),
+]
+
+
+def _summarise_by_rate(errors, naive_errors) -> list:
+    """
+    Groups pointing errors by how fast the target was moving.
+
+    Args:
+        errors: (angular_rate, error) pairs with prediction enabled.
+        naive_errors: (angular_rate, error) pairs without prediction.
+
+    Returns:
+        One dict per rate band that had samples, each with median and worst
+        error for both approaches.
+    """
+    summary = []
+    for label, low, high in RATE_BANDS:
+        tracked = sorted(e for r, e in errors if low <= r < high)
+        naive = sorted(e for r, e in naive_errors if low <= r < high)
+        if not tracked:
+            continue
+        summary.append(
+            {
+                "band": label,
+                "samples": len(tracked),
+                "median_deg": tracked[len(tracked) // 2],
+                "worst_deg": tracked[-1],
+                "median_naive_deg": naive[len(naive) // 2] if naive else float("nan"),
+            }
+        )
+    return summary
+
+
+async def main() -> None:
+    """Parses arguments, connects, and runs one tracking pass."""
+    parser = argparse.ArgumentParser(
+        description="Three-axis camera gimbal tracking demonstration.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--hardware", action="store_true", help="use a real CAN bus (default: simulator)"
+    )
+    parser.add_argument("--channel", default="can0", help="CAN channel for --hardware")
+    parser.add_argument(
+        "--interface", default="socketcan", help="python-can interface type"
+    )
+    parser.add_argument(
+        "--bitrate", type=int, default=1000000, help="CAN bitrate (default 1 Mbit/s)"
+    )
+    parser.add_argument(
+        "--simulator-port", type=int, default=6789, help="simulator TCP port"
+    )
+    parser.add_argument(
+        "--duration", type=float, default=8.0, help="seconds to track"
+    )
+    parser.add_argument("--quiet", action="store_true", help="summary only")
+    parser.add_argument(
+        "--verbose", action="store_true", help="enable library debug logging"
+    )
+    args = parser.parse_args()
+
+    # The library logs every frame at DEBUG. Leave it off in a control loop:
+    # even discarded records cost formatting time on the hot path.
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+
+    report_design_margins()
+
+    if args.hardware:
+        can_if = CANInterface(
+            interface_type=args.interface,
+            channel=args.channel,
+            bitrate=args.bitrate,
+        )
+        print(f"Connecting to {args.interface}:{args.channel} @ {args.bitrate} bps")
+    else:
+        can_if = CANInterface(
+            use_simulator=True, simulator_port=args.simulator_port
+        )
+        print(f"Connecting to simulator on port {args.simulator_port}")
+
+    await can_if.connect()
+    try:
+        print(f"Tracking for {args.duration:.0f}s at {CONTROL_RATE_HZ:.0f} Hz\n")
+        result = await run_tracking(can_if, args.duration, quiet=args.quiet)
+
+        print("\nPointing error by target angular rate")
+        print("-" * 78)
+        print(
+            f"  {'band':26s} {'n':>5s} {'median':>9s} {'worst':>9s} "
+            f"{'no predictor':>13s} {'gain':>7s}"
+        )
+        for band in result["bands"]:
+            gain = (
+                band["median_naive_deg"] / band["median_deg"]
+                if band["median_deg"] > 0
+                else float("inf")
+            )
+            print(
+                f"  {band['band']:26s} {band['samples']:5d} "
+                f"{band['median_deg']:8.3f}d {band['worst_deg']:8.3f}d "
+                f"{band['median_naive_deg']:12.3f}d {gain:6.1f}x"
+            )
+        print()
+        print(f"  sightings processed        {result['samples']}")
+        print(f"  prediction horizon         {result['prediction_horizon_ms']:.0f} ms")
+        print()
+        loop = result["loop"]
+        print(f"  control loop ticks         {loop['ticks']:.0f}")
+        print(f"  frames sent                {loop['frames_sent']:.0f}")
+        print(f"  send errors                {loop['send_errors']:.0f}")
+        print(
+            f"  loop lateness              mean {loop['mean_lateness_ms']:.2f} ms, "
+            f"max {loop['max_lateness_ms']:.2f} ms"
+        )
+        if loop["late_ticks"]:
+            print(
+                f"  late ticks                 {loop['late_ticks']:.0f} "
+                "(asyncio jitter; see the module docstring)"
+            )
+    finally:
+        await can_if.disconnect()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

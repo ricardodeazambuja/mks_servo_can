@@ -28,6 +28,18 @@ except ImportError as exc:  # pragma: no cover - install-time failure
     ) from exc
 
 SIM_TIME_STEP_MS = 10
+
+# Commands whose uplink frame CanRSP can suppress. Manual V1.0.6 sections
+# 6.4-6.8 only; every other command answers regardless.
+SUPPRESSIBLE_RESPONSE_COMMANDS = frozenset(
+    {
+        const.CMD_RUN_SPEED_MODE,                        # 6.4  0xF6
+        const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES,     # 6.5  0xFD
+        const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES,     # 6.6  0xFE
+        const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS,       # 6.7  0xF4
+        const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,       # 6.8  0xF5
+    }
+)
 SIM_MAX_SPEED_PARAM = 3000 # Used for RPM conversion, matches VFOC for SR_VFOC
 SIM_MAX_ACCEL_PARAM = 255
 
@@ -908,6 +920,21 @@ class SimulatedMotor:
         else:
             logger.warning(f"Motor {self.original_can_id}: Unhandled CMD 0x{command_code:02X}. Data: {data_from_payload.hex()}")
             return self._generate_simple_status_response(command_code, False) # Generic fail for unhandled
+
+        # CanRSP (0x8C byte1) suppresses the uplink frame, but only for the
+        # speed and position mode commands. Manual V1.0.6 attaches the note
+        # "the Uplink frame can be disabled by Menu CanRSP" to sections 6.4
+        # through 6.8 and to nothing else: reads (5.1), system parameter writes
+        # (5.2) and enable/query (6.2) always answer. Getting this wrong makes
+        # a "fire-and-forget" control loop still pay for every reply, and makes
+        # it impossible to re-enable responses once disabled.
+        if command_code in SUPPRESSIBLE_RESPONSE_COMMANDS and not self.slave_respond_enabled:
+            logger.debug(
+                "Motor %s: suppressing uplink for CMD %02X (CanRSP disabled)",
+                self.original_can_id,
+                command_code,
+            )
+            return None
 
         # Generate response based on override or default success/fail
         if response_status_override is not None:

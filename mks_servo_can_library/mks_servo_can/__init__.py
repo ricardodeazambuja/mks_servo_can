@@ -15,6 +15,13 @@ from .axis import Axis
 from .can_interface import CANInterface
 from .low_level_api import LowLevelAPI
 from . import motor_profile
+from .realtime import (
+    AlphaBetaGammaTracker,
+    AlphaBetaTracker,
+    ServoStream,
+    StreamAxis,
+    StreamStats,
+)
 from .multi_axis_controller import MultiAxisController
 
 # Import kinematics classes
@@ -87,6 +94,13 @@ __all__ = [
 
     # Motion parameter model (speed/accel parameters <-> engineering units)
     "motor_profile",
+
+    # Fixed-rate streaming control, for tracking a moving reference
+    "ServoStream",
+    "StreamAxis",
+    "StreamStats",
+    "AlphaBetaTracker",
+    "AlphaBetaGammaTracker",
 
     # Kinematics classes
     "Kinematics",

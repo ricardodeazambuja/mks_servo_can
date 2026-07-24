@@ -297,6 +297,39 @@ class LowLevelAPI:
             can_id, const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS, data=data_payload
         )
 
+    async def stop_position_mode_absolute_axis_no_wait(
+        self, can_id: int, acceleration: int
+    ) -> None:
+        """
+        Stops an absolute-axis move without waiting for an acknowledgement.
+
+        The MKS protocol encodes "stop" as command 0xF5 with both speed and
+        target set to zero. This is a distinct command, not a move to position
+        zero, and it is the only way to halt a position-mode move in place.
+
+        Note that simply re-commanding the current target with speed 0 does
+        *not* stop the motor: the firmware substitutes a minimum speed and keeps
+        creeping toward the target. Use this instead.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            acceleration: Deceleration parameter (0-255). 0 stops immediately.
+
+        Raises:
+            ParameterError: If `acceleration` is out of range.
+            CANError, SimulatorError: If the send itself fails.
+        """
+        if not (0 <= acceleration <= const.MAX_ACCEL_PARAM):
+            raise ParameterError(
+                f"Acceleration parameter {acceleration} out of range "
+                f"(0-{const.MAX_ACCEL_PARAM})."
+            )
+        await self._send_command_no_response(
+            can_id,
+            const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
+            data=[0x00, 0x00, acceleration & 0xFF, 0x00, 0x00, 0x00],
+        )
+
     async def run_speed_mode_no_wait(
         self, can_id: int, ccw_direction: bool, speed: int, acceleration: int
     ) -> None:
