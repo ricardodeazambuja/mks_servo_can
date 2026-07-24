@@ -37,6 +37,15 @@ Simulator observability, and the library defects that observability exposed.
   consults it while it is. When it is not, the move is dispatched rather than
   preceded by an encoder read, so the hidden round trip removed in 0.3.0 stays
   removed.
+- **Digitizer playback never reached its last point, and said otherwise.**
+  Points are dispatched without waiting, and the cleanup stopped every axis as
+  soon as the loop ended, cutting the final move short — a sweep ending at 15
+  degrees settled at 9.6. Playback now waits for that move, stops the axes only
+  when something went wrong, and raises instead of printing `PLAYBACK COMPLETE`
+  when it could not command a motor. `speed_factor=0` is rejected up front
+  rather than dividing by zero mid-run, and the precision report no longer
+  counts its own 50 ms settle delay as lateness — which had put every
+  measurement at the boundary of the `EXCELLENT` threshold that judges it.
 - **An installed package had no command reference.** The manual's transcription
   was read out of `tests/fixtures/`, which a wheel does not contain, so
   `/commands` returned nothing and `available_commands` reported 0 for anyone

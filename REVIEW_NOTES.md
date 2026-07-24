@@ -176,6 +176,29 @@ not parse as Python (so the real count is higher). Examples:
 exported name is `Kinematics`). `docs/user_guides/library/reading_status.md`
 alone references seven non-existent `Axis` methods.
 
+## L9. Digitizer playback misreported and cut itself short — **fixed**
+
+Found while raising coverage on the weakest module in the library
+(`base_digitizer.py`, 11%). Four defects, all in `playback_sequence`, all now
+covered by `tests/integration/test_digitizer.py` against a real motor:
+
+- **The last recorded point was never reached.** Every point is dispatched
+  without waiting, and the `finally` block stopped all axes the moment the loop
+  ended — so the final move was cut off part-way. A four-point sweep ending at
+  15 deg settled at 9.6 deg. Playback now waits for the last move before
+  returning, and only stops the axes on the error paths.
+- **A playback that could not command its motors announced completion.** The
+  move failure was caught, logged and forgotten; the run printed
+  `PLAYBACK COMPLETE` and returned `None`, which is also what a successful run
+  without precision testing returns. It now raises.
+- **The precision report counted its own settle delay as lateness.** The
+  timestamp was taken after the 50 ms settle sleep, so every measurement carried
+  that 50 ms — and `PrecisionAnalyzer` calls anything under 50 ms `EXCELLENT`.
+  A playback that was never late scored at the boundary of merely `GOOD`.
+- **`speed_factor=0` divided by zero from inside the loop**, after the motors
+  had been commanded, and the resulting error was swallowed by the handler
+  above. It is now rejected before anything moves.
+
 ## L7. MANUAL_SPEC_NOT_PACKAGED - **fixed**
 
 **Fixed.** The specification now ships as package data at

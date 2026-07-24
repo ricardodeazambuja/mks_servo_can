@@ -20,10 +20,14 @@ from typing import Any, Dict, List, Optional
 # of __init__ - including by an import sorter - breaks the whole package.
 from ..axis import Axis
 from ..can_interface import CANInterface
+from ..exceptions import MKSServoError, ParameterError
 from ..multi_axis_controller import MultiAxisController
 from .data_structures import DigitizedPoint, DigitizedSequence, PlaybackStats
 
 logger = logging.getLogger("MotorDigitizer")
+
+# How long to let the final dispatched move finish before giving up on it.
+_FINAL_MOVE_TIMEOUT_S = 30.0
 
 
 class MotorDigitizer:
@@ -241,14 +245,30 @@ class MotorDigitizer:
         
         Args:
             sequence: DigitizedSequence to play back
-            speed_factor: Playback speed multiplier (1.0 = original speed)
+            speed_factor: Playback speed multiplier (1.0 = original speed).
+                Must be positive; it divides every interval in the sequence.
             precision_test: Whether to measure precision against original positions
-            
+
         Returns:
             PlaybackStats if precision_test=True, None otherwise
+
+        Raises:
+            ParameterError: If `speed_factor` is not positive.
+            ValueError: If no axes are configured, or the sequence names one
+                that is not.
+            RuntimeError: If a recording is in progress.
+            MKSServoError: If a motor could not be commanded. The playback stops
+                at that point rather than reporting completion.
         """
         if not self.axes:
             raise ValueError("No axes configured for playback")
+
+        # Checked here rather than discovered as a ZeroDivisionError from inside
+        # the loop, after the motors have already been commanded.
+        if speed_factor <= 0:
+            raise ParameterError(
+                f"speed_factor must be positive, got {speed_factor}."
+            )
 
         if self.is_recording:
             raise RuntimeError("Cannot playback during recording")
@@ -311,16 +331,18 @@ class MotorDigitizer:
 
                 # Precision testing
                 if precision_test:
+                    # Timed here, before the settle delay: lateness is how far
+                    # the command was from its slot, not how long we then chose
+                    # to wait. Including the delay put a 50 ms floor under every
+                    # measurement - which is exactly the threshold
+                    # PrecisionAnalyzer calls the boundary of EXCELLENT.
+                    timing_errors.append(abs(time.time() - target_time))
+
                     # Small delay to let movement settle
                     await asyncio.sleep(0.05)
 
                     # Read actual positions
                     actual_positions = await self.controller.get_all_positions_user()
-                    actual_time = time.time()
-
-                    # Calculate errors
-                    timing_error = abs(actual_time - target_time)
-                    timing_errors.append(timing_error)
 
                     for axis_name in sequence.axis_names:
                         if axis_name in actual_positions and axis_name in point.positions:
@@ -332,17 +354,23 @@ class MotorDigitizer:
                     progress = (i + 1) / len(sequence.points) * 100
                     print(f"▶️  Progress: {progress:5.1f}% ({i+1}/{len(sequence.points)} points)")
 
+            # The last point was dispatched without waiting, like every other
+            # one. Stopping the axes now would cut that final move short, so the
+            # sequence would never actually reach its last recorded position.
+            await self.controller.wait_for_all_moves_to_complete(
+                timeout_per_axis=_FINAL_MOVE_TIMEOUT_S
+            )
+
         except KeyboardInterrupt:
             print("\n⚠️  Playback interrupted by user")
-        except Exception as e:
-            logger.error(f"Error during playback: {e}")
-
-        finally:
-            # Stop all movements
-            try:
-                await self.controller.stop_all_axes()
-            except Exception:
-                pass
+            await self._stop_axes_quietly()
+        except MKSServoError:
+            # Reporting "PLAYBACK COMPLETE" after failing to command a motor is
+            # indistinguishable, to the caller, from having played the sequence:
+            # without precision_test this method returns None either way.
+            print("\n❌ PLAYBACK FAILED")
+            await self._stop_axes_quietly()
+            raise
 
         total_duration = time.time() - start_time
 
@@ -372,6 +400,18 @@ class MotorDigitizer:
             return stats
 
         return None
+
+    async def _stop_axes_quietly(self) -> None:
+        """
+        Halts every axis, swallowing failures.
+
+        Used on the error paths, where the failure being handled matters more
+        than a motor that will not answer a stop either.
+        """
+        try:
+            await self.controller.stop_all_axes()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Could not stop all axes after playback: %s", exc)
 
     def _display_precision_stats(self, stats: PlaybackStats) -> None:
         """Display precision testing statistics"""
