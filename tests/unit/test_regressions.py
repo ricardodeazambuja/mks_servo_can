@@ -335,6 +335,17 @@ HOT_PATH_FUNCTIONS = [
     ("can_interface.py", "send_message"),
     ("can_interface.py", "_process_received_message"),
     ("axis.py", "_execute_move"),
+    # Every motion command is per-frame on a streaming path, not just the 0xF5
+    # one that was converted first (L5).
+    ("low_level_api.py", "run_position_mode_relative_pulses"),
+    ("low_level_api.py", "run_position_mode_absolute_pulses"),
+    ("low_level_api.py", "run_position_mode_relative_axis"),
+    ("low_level_api.py", "run_position_mode_absolute_axis"),
+    ("low_level_api.py", "run_speed_mode"),
+    ("low_level_api.py", "stop_speed_mode"),
+    ("low_level_api.py", "stop_position_mode_relative_axis"),
+    ("low_level_api.py", "stop_position_mode_absolute_axis"),
+    ("low_level_api.py", "emergency_stop"),
 ]
 
 

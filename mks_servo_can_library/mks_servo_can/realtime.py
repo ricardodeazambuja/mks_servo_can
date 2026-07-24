@@ -409,10 +409,32 @@ class ServoStream:
             raise MKSServoError("ServoStream requires a connected CANInterface.")
 
         if self.manage_motor_responses:
-            for axis in self.axes.values():
-                await self._api.set_slave_respond_active(
-                    axis.can_id, respond_enabled=False, active_enabled=False
-                )
+            # Disabling responses is only undone by stop(), which returns early
+            # unless the stream is running. A start that fails partway would
+            # therefore leave the axes it had already reached mute for the rest
+            # of the session, so it undoes its own work before propagating.
+            silenced = []
+            try:
+                for axis in self.axes.values():
+                    await self._api.set_slave_respond_active(
+                        axis.can_id, respond_enabled=False, active_enabled=False
+                    )
+                    silenced.append(axis)
+            except BaseException:
+                for axis in reversed(silenced):
+                    try:
+                        await self._api.set_slave_respond_active(
+                            axis.can_id, respond_enabled=True, active_enabled=False
+                        )
+                    except MKSServoError as exc:
+                        logger.error(
+                            "ServoStream: axis '%s' (CAN ID %d) is left with its "
+                            "responses disabled after a failed start: %s",
+                            axis.name,
+                            axis.can_id,
+                            exc,
+                        )
+                raise
             logger.info(
                 "ServoStream: motor responses disabled on %d axes; commands are "
                 "now fire-and-forget and failures will be silent.",
@@ -575,40 +597,52 @@ class ServoStream:
 
         Deliberately decoupled from the control loop: feedback exists to detect
         loss of sync and correct drift, not to close the inner loop, which the
-        motor already does for itself. Polling needs motor responses, so this
-        temporarily re-enables them per read.
+        motor already does for itself.
+
+        Reads are not bracketed by CanRSP toggling. By manual sections 6.4-6.8
+        only the run commands are suppressible, so 0x31 answers whether or not
+        responses are disabled - one round trip per axis per poll instead of
+        three. That reading has not yet been confirmed against hardware (see
+        `docs/development/roadmap.md`, item 2), so persistent read failures are
+        reported at warning level naming that possibility, rather than being
+        lost among debug records.
         """
         period = 1.0 / self.feedback_rate_hz
         loop = asyncio.get_running_loop()
         next_poll = loop.time()
+        consecutive_failures = 0
+        warned = False
         try:
             while self._running:
                 for axis in self.axes.values():
                     try:
-                        if self.manage_motor_responses:
-                            await self._api.set_slave_respond_active(
-                                axis.can_id, respond_enabled=True, active_enabled=False
-                            )
                         counts = await self._api.read_encoder_value_addition(
                             axis.can_id
                         )
                         axis.measured_position = axis.counts_to_position(counts)
+                        consecutive_failures = 0
                     except MKSServoError as exc:
                         logger.debug(
                             "ServoStream: feedback read failed on '%s': %s",
                             axis.name,
                             exc,
                         )
-                    finally:
-                        if self.manage_motor_responses:
-                            try:
-                                await self._api.set_slave_respond_active(
-                                    axis.can_id,
-                                    respond_enabled=False,
-                                    active_enabled=False,
-                                )
-                            except MKSServoError:
-                                pass
+                        consecutive_failures += 1
+                        if (
+                            not warned
+                            and self.manage_motor_responses
+                            and consecutive_failures >= 3 * len(self.axes)
+                        ):
+                            warned = True
+                            logger.warning(
+                                "ServoStream: %d consecutive feedback reads have "
+                                "failed while motor responses are disabled. If "
+                                "this motor suppresses replies to 0x31 as well as "
+                                "to the run commands, feedback cannot work in "
+                                "this mode; pass manage_motor_responses=False and "
+                                "manage CanRSP yourself.",
+                                consecutive_failures,
+                            )
                 next_poll += period
                 if next_poll < loop.time():
                     next_poll = loop.time() + period

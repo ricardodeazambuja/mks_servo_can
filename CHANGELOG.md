@@ -37,6 +37,11 @@ Simulator observability, and the library defects that observability exposed.
   consults it while it is. When it is not, the move is dispatched rather than
   preceded by an encoder read, so the hidden round trip removed in 0.3.0 stays
   removed.
+- **A `ServoStream.start()` that failed partway left motors mute.** Responses
+  are disabled axis by axis; a failure after the first one meant `__aexit__`
+  never ran and `stop()` early-returned, so those motors stayed silent for the
+  rest of the session. `start()` now restores what it silenced before
+  propagating.
 - **One bad frame stopped all reception for the rest of the session.** An
   exception raised while processing a single message escaped the per-message
   `try` in both listeners and ended the listener task; every command afterwards
@@ -88,6 +93,21 @@ Simulator observability, and the library defects that observability exposed.
   coverage at all.
 - **`record_error` had no callers anywhere**, so the `errors` array was
   permanently empty and every error display was decorative.
+
+### Changed
+
+- **Feedback polling costs one round trip per axis instead of three.**
+  `ServoStream._run_feedback` no longer re-enables and re-disables motor
+  responses around every encoder read: CanRSP suppresses only the run commands
+  of manual sections 6.4–6.8, so 0x31 is answered either way. That reading comes
+  from the manual and not yet from hardware, so persistent feedback failures
+  while responses are disabled now warn and name the possibility rather than
+  vanishing into debug records.
+- `can.interface.Bus` is opened with `interface=` rather than the `bustype=`
+  deprecated in python-can 4 and removed in 5.
+- The remaining eight motion commands log per frame at lazy `debug` instead of
+  eagerly-formatted `info`; only the 0xF5 path had been converted in 0.3.0. The
+  hot-path gate in `tests/unit/test_regressions.py` now covers all of them.
 
 ### Added
 

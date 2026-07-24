@@ -360,8 +360,10 @@ class CANInterface:
                 logger.info(
                     f"Attempting to connect to CAN hardware: type={self.interface_type}, channel={self.channel}, bitrate={self.bitrate}"
                 )
+                # `interface=`, not `bustype=`: the latter is deprecated in
+                # python-can 4 and removed in 5.
                 self.bus = can.interface.Bus( # type: ignore[name-defined]
-                    bustype=self.interface_type,
+                    interface=self.interface_type,
                     channel=self.channel,
                     bitrate=self.bitrate,
                 )

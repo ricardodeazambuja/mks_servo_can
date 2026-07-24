@@ -980,9 +980,9 @@ class Axis:
     ):
         """
         Moves the motor to an absolute target position specified in command microsteps.
-        This method emulates absolute positioning by leveraging the motor's relative
-        pulse movement command (0xFD) as a workaround for potential issues with the
-        direct absolute motion command (0xFE).
+        The target is converted to raw encoder steps and sent with the absolute
+        axis command (0xF5); "pulses" describes the unit the caller works in, not
+        the command used.
 
         Args:
             target_command_microsteps: The absolute target position in command microsteps

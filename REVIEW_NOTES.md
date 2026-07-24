@@ -131,24 +131,32 @@ session, and every later command then failed with a timeout, far from the cause.
 It was reachable rather than theoretical: the homing predicate registered by
 `Axis.home_axis` reads `data[1]` and raises `IndexError` on a one-byte frame.
 
-## L5. Smaller items
+## L5. Smaller items — **fixed**
 
-- **`ServoStream.start()` is not atomic.** If it fails after disabling responses
-  on some axes, `__aexit__` never runs and `stop()` early-returns on
-  `_running == False`, leaving those motors with responses disabled.
-- **`ServoStream._run_feedback` toggles `0x8C` around every read** — three round
+- **`ServoStream.start()` was not atomic.** If it failed after disabling
+  responses on some axes, `__aexit__` never ran and `stop()` early-returned on
+  `_running == False`, leaving those motors mute for the rest of the session.
+  `start()` now restores what it silenced before propagating.
+  `tests/integration/test_stream_start_atomicity.py` provokes the failure with an
+  axis on a CAN ID nothing answers, and checks recovery with a command CanRSP
+  actually suppresses — an encoder read is answered either way and proves
+  nothing.
+- **`ServoStream._run_feedback` toggled `0x8C` around every read** — three round
   trips per axis per poll instead of one, and unnecessary: by the repo's own
   reading of the manual (`SUPPRESSIBLE_RESPONSE_COMMANDS`), `0x31` is not
-  suppressible and always answers.
+  suppressible and always answers. The toggling is gone. Because that reading is
+  from the manual rather than from hardware, repeated feedback failures while
+  responses are disabled now log a warning naming the possibility instead of
+  disappearing into debug records.
 - **`can.interface.Bus(bustype=...)`** is deprecated in python-can 4 and removed
   in 5; the argument is now `interface`.
-- **Stale docstrings.** `get_current_position_steps` claims it inverts the value
-  it reads (it does not); `move_to_position_abs_pulses` claims it emulates
-  absolute motion via 0xFD (it uses 0xF5).
-- **Per-frame `logger.info` with eager f-strings** remains in
-  `run_position_mode_relative_pulses`, `run_speed_mode`, `stop_speed_mode`,
-  `run_position_mode_relative_axis` and others. Only the 0xF5 path was converted
-  to lazy `debug`.
+- **Stale docstrings** on `get_current_position_steps` (claimed to invert the
+  value it reads) and `move_to_position_abs_pulses` (claimed to emulate absolute
+  motion via 0xFD) corrected.
+- **Per-frame `logger.info` with eager f-strings** converted to lazy `debug` in
+  the eight remaining motion commands, and `HOT_PATH_FUNCTIONS` in
+  `tests/unit/test_regressions.py` extended to cover all of them, so the next one
+  cannot slip back in.
 
 ## L6. Documentation does not match the API *(now gated, debt outstanding)*
 

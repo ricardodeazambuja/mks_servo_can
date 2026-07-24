@@ -1567,9 +1567,10 @@ class LowLevelAPI:
             ParameterError: If input parameters are out of range.
             CommunicationError, CommandError, CRCError, MotorError: On issues.
         """
-        logger.info(
-            f"LowLevelAPI.run_position_mode_relative_pulses: CAN_ID={can_id:03X}, "
-            f"CCW={ccw_direction}, SpeedParam={speed}, AccelParam={acceleration}, Pulses={pulses}"
+        logger.debug(
+            "LowLevelAPI.run_position_mode_relative_pulses: CAN_ID=%03X, "
+            "CCW=%s, SpeedParam=%s, AccelParam=%s, Pulses=%s",
+            can_id, ccw_direction, speed, acceleration, pulses,
         )
         if not (0 <= speed <= 3000): # Speed param range [MKS Servo42D CAN Manual] (Page 43)
             raise ParameterError(f"Speed parameter {speed} out of range for 0xFD (0-3000).")
@@ -1616,9 +1617,10 @@ class LowLevelAPI:
             ParameterError: If input parameters are out of range.
             CommunicationError, CommandError, CRCError, MotorError: On issues.
         """
-        logger.info(
-            f"LowLevelAPI.run_position_mode_absolute_pulses: CAN_ID={can_id:03X}, "
-            f"SpeedParam={speed}, AccelParam={acceleration}, AbsPulses={absolute_pulses}"
+        logger.debug(
+            "LowLevelAPI.run_position_mode_absolute_pulses: CAN_ID=%03X, "
+            "SpeedParam=%s, AccelParam=%s, AbsPulses=%s",
+            can_id, speed, acceleration, absolute_pulses,
         )
         if not (0 <= speed <= 3000): # Speed param range [MKS Servo42D CAN Manual] (Page 45)
             raise ParameterError(f"Speed parameter {speed} out of range for 0xFE (0-3000).")
@@ -1665,9 +1667,10 @@ class LowLevelAPI:
             ParameterError: If input parameters are out of range.
             CommunicationError, CommandError, CRCError, MotorError: On issues.
         """
-        logger.info(
-            f"LowLevelAPI.run_speed_mode: CAN_ID={can_id:03X}, CCW={ccw_direction}, "
-            f"SpeedParam={speed}, AccelParam={acceleration}"
+        logger.debug(
+            "LowLevelAPI.run_speed_mode: CAN_ID=%03X, CCW=%s, "
+            "SpeedParam=%s, AccelParam=%s",
+            can_id, ccw_direction, speed, acceleration,
         )
         if not (0 <= speed <= 3000): # Manual for 0xF6 states speed 0-3000 for parameter [MKS Servo42D CAN Manual] (Page 40)
             raise ParameterError(f"Speed parameter {speed} out of range for 0xF6 (0-3000).")
@@ -1703,7 +1706,10 @@ class LowLevelAPI:
             ParameterError: If acceleration is out of range.
             CommunicationError, CommandError, CRCError, MotorError: On issues.
         """
-        logger.info(f"LowLevelAPI.stop_speed_mode: CAN_ID={can_id:03X}, AccelParam={acceleration}")
+        logger.debug(
+            "LowLevelAPI.stop_speed_mode: CAN_ID=%03X, AccelParam=%s",
+            can_id, acceleration,
+        )
         if not (0 <= acceleration <= 255): # Accel param range [MKS Servo42D CAN Manual] (Page 41)
             raise ParameterError(f"Acceleration parameter {acceleration} out of range (0-255) for stop.")
 
@@ -1728,7 +1734,7 @@ class LowLevelAPI:
             CommunicationError, CommandError, CRCError: On communication issues.
             MotorError: If the motor reports failure to stop.
         """
-        logger.info(f"LowLevelAPI.emergency_stop: CAN_ID={can_id:03X}")
+        logger.debug("LowLevelAPI.emergency_stop: CAN_ID=%03X", can_id)
         response = await self._send_command_and_get_response(
             can_id, const.CMD_EMERGENCY_STOP, expected_dlc=3
         )
@@ -1810,9 +1816,10 @@ class LowLevelAPI:
             ParameterError: If input parameters are out of range.
             CommunicationError, CommandError, CRCError, MotorError: On issues.
         """
-        logger.info(
-            f"LowLevelAPI.run_position_mode_relative_axis: CAN_ID={can_id:03X}, "
-            f"SpeedParam={speed}, AccelParam={acceleration}, RelAxis={relative_axis}"
+        logger.debug(
+            "LowLevelAPI.run_position_mode_relative_axis: CAN_ID=%03X, "
+            "SpeedParam=%s, AccelParam=%s, RelAxis=%s",
+            can_id, speed, acceleration, relative_axis,
         )
         if not (0 <= speed <= 3000): # Speed param range [MKS Servo42D CAN Manual] (Page 47)
             raise ParameterError(f"Speed parameter {speed} out of range for 0xF4 (0-3000).")
@@ -1857,8 +1864,9 @@ class LowLevelAPI:
             ParameterError: If acceleration is out of range.
             CommunicationError, CommandError, CRCError, MotorError: On issues.
         """
-        logger.info(
-            f"LowLevelAPI.stop_position_mode_relative_axis: CAN_ID={can_id:03X}, AccelParam={acceleration}"
+        logger.debug(
+            "LowLevelAPI.stop_position_mode_relative_axis: CAN_ID=%03X, AccelParam=%s",
+            can_id, acceleration,
         )
         if not (0 <= acceleration <= 255): # Accel param range [MKS Servo42D CAN Manual] (Page 48)
             raise ParameterError(f"Acceleration parameter {acceleration} out of range (0-255) for stop.")
@@ -1944,8 +1952,9 @@ class LowLevelAPI:
             ParameterError: If acceleration is out of range.
             CommunicationError, CommandError, CRCError, MotorError: On issues.
         """
-        logger.info(
-            f"LowLevelAPI.stop_position_mode_absolute_axis: CAN_ID={can_id:03X}, AccelParam={acceleration}"
+        logger.debug(
+            "LowLevelAPI.stop_position_mode_absolute_axis: CAN_ID=%03X, AccelParam=%s",
+            can_id, acceleration,
         )
         if not (0 <= acceleration <= 255): # Accel param range [MKS Servo42D CAN Manual] (Page 50)
             raise ParameterError(f"Acceleration parameter {acceleration} out of range (0-255) for stop.")
