@@ -206,22 +206,28 @@ human surface.
 
 ---
 
-## Item 6 — Coverage where it is thinnest
+## Item 6 — Coverage where it is thinnest (started)
 
-Current library coverage, weakest first:
+Library coverage is **66%**, up from 58%. The digitizer's base class was the
+weakest module in the library and is done: 11% to 61%, and it turned up four
+defects, recorded as L9 in `REVIEW_NOTES.md`. That is the pattern to expect from
+the rest of this item — the untested modules are untested because nobody has run
+them, not because they are simple.
 
-| module | coverage |
-|---|---|
-| `digitizer/base_digitizer.py` | 11% |
-| `digitizer/surface_mapping.py` | 17% |
-| `digitizer/precision_analyzer.py` | 35% |
-| `multi_axis_controller.py` | 44% |
-| `can_interface.py` | 47% (Item 1 lifts this) |
-| `low_level_api.py` | 57% |
-| `axis.py` | 61% |
+What is left, weakest first:
 
-The digitizer is by far the weakest area and the one most likely to harbour the
-same class of defect the review found elsewhere.
+| module | coverage | note |
+|---|---|---|
+| `digitizer/surface_mapping.py` | 17% | probing patterns and the surface model |
+| `digitizer/precision_analyzer.py` | 35% | pure statistics; cheap to test, and its thresholds now matter (see L9) |
+| `multi_axis_controller.py` | 44% | `move_linearly_to`, homing, the group error paths |
+| `can_interface.py` | 55% | the hardware branch, which no test touches |
+| `low_level_api.py` | 58% | the commands with no coverage at all |
+| `axis.py` | 64% | homing, calibration, work-mode changes |
+
+`precision_analyzer.py` is the best next step: it is pure functions over
+`PlaybackStats`, so it needs no simulator, and L9 showed its thresholds are load
+bearing.
 
 ---
 
