@@ -240,6 +240,13 @@ class CANInterface:
         ] = {}  # (can_id, command_code) -> list of (Future, Predicate)
         self._is_listening = False
         self._listener_task: Optional[asyncio.Task] = None
+        # (can_id, command_code) -> number of unsolicited notification frames to
+        # discard before matching anything to a response future. MKS motors emit
+        # a completion/abort frame for a superseded move that carries the same
+        # command byte as the acknowledgement of the command that superseded it,
+        # so without this the two are indistinguishable. See
+        # Axis._supersede_active_move().
+        self._stale_notifications: Dict[Tuple[int, int], int] = {}
 
         # For Notifier-based hardware listening
         self._message_queue: Optional[asyncio.Queue] = None
@@ -491,7 +498,8 @@ class CANInterface:
                 raise SimulatorError("Not connected to simulator or writer is closing.")
             try:
                 sim_data = self._can_message_to_sim_protocol(msg)
-                logger.info(f"CANInterface: Sending to simulator: {sim_data.decode().strip()}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("CANInterface: tx sim %s", sim_data.decode().strip())
                 self._sim_writer.write(sim_data)
                 await asyncio.wait_for(
                     self._sim_writer.drain(), timeout=timeout
@@ -511,9 +519,13 @@ class CANInterface:
                 raise CANError("CAN bus not connected.")
             try:
                 self.bus.send(msg, timeout=timeout) # type: ignore[union-attr]
-                logger.debug(
-                    f"Sent on CAN bus: ID={msg.arbitration_id:03X}, DLC={msg.dlc}, Data={' '.join(f'{b:02X}' for b in msg.data)}" # type: ignore[union-attr]
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "CANInterface: tx ID=%03X dlc=%d data=%s",
+                        msg.arbitration_id,
+                        msg.dlc,
+                        msg.data.hex(),  # type: ignore[union-attr]
+                    )
             except can.CanOperationError as e: # type: ignore[name-defined]
                 logger.error(
                     f"CAN bus send operation failed: {e}", exc_info=True
@@ -590,7 +602,7 @@ class CANInterface:
                         break
                     line_str = line_bytes.decode().strip()
                     if line_str:
-                        logger.info(f"CANInterface: Received from simulator: {line_str}")
+                        logger.debug("CANInterface: rx sim %s", line_str)
                         msg = self._sim_protocol_to_can_message(line_str)
                         if msg:
                             await self._process_received_message(msg)
@@ -624,14 +636,31 @@ class CANInterface:
         Args:
             msg: The `can.Message` object that was received.
         """
-        cmd_str = f"{msg.data[0]:02X}" if msg.data else "N/A"
-        logger.info(
-            f"CANInterface: Processing received: ID={msg.arbitration_id:03X}, CMD={cmd_str}, Data={msg.data.hex()}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "CANInterface: rx ID=%03X CMD=%s Data=%s",
+                msg.arbitration_id,
+                f"{msg.data[0]:02X}" if msg.data else "N/A",
+                msg.data.hex(),
+            )
 
         cmd_code = msg.data[0] if msg.data else None
         key_tuple = (msg.arbitration_id, cmd_code)
-        
+
+        # Discard exactly one frame per outstanding stale-notification credit.
+        pending_stale = self._stale_notifications.get(key_tuple, 0)
+        if pending_stale > 0:
+            if pending_stale == 1:
+                del self._stale_notifications[key_tuple]
+            else:
+                self._stale_notifications[key_tuple] = pending_stale - 1
+            logger.debug(
+                "CANInterface: discarded stale notification for ID=%03X CMD=%02X",
+                msg.arbitration_id,
+                cmd_code if cmd_code is not None else 0,
+            )
+            return
+
         futures_for_key = self._response_futures.get(key_tuple, [])
         remaining_futures_for_key = []
         resolved_this_message = False
@@ -755,6 +784,52 @@ class CANInterface:
         
         logger.debug(f"Created future for CAN ID {can_id:03X}, CMD {command_code:02X}{' with predicate' if response_predicate else ''}. Total waiters for key: {len(self._response_futures[key_tuple])}")
         return future
+
+    def expect_stale_notification(self, can_id: int, command_code: int, count: int = 1) -> None:
+        """
+        Arranges for the next unsolicited frame(s) matching a key to be discarded.
+
+        MKS motors reuse one command byte for both the synchronous
+        acknowledgement of a command and the asynchronous completion (or abort)
+        notification of the move that command started. When a move is superseded,
+        the motor emits an abort frame for the old move whose content is
+        indistinguishable from the acknowledgement of the new one. Left alone,
+        that frame resolves the new command's response future and the caller sees
+        a spurious failure.
+
+        Callers that knowingly abandon a move should register the resulting
+        orphan frame here so the transport drops it instead of misattributing it.
+
+        Args:
+            can_id: CAN ID of the motor that will emit the stale frame.
+            command_code: Command byte the stale frame will carry.
+            count: How many frames to discard. Defaults to 1.
+        """
+        key = (can_id, command_code)
+        self._stale_notifications[key] = self._stale_notifications.get(key, 0) + count
+        logger.debug(
+            "CANInterface: expecting %d stale notification(s) for ID=%03X CMD=%02X",
+            self._stale_notifications[key],
+            can_id,
+            command_code,
+        )
+
+    def clear_stale_notifications(self, can_id: Optional[int] = None) -> None:
+        """
+        Drops outstanding stale-notification credits.
+
+        Use this when resynchronising after an error, so that a credit registered
+        for a frame that never arrived does not swallow a later, legitimate
+        response.
+
+        Args:
+            can_id: Only clear credits for this motor. If None, clears all.
+        """
+        if can_id is None:
+            self._stale_notifications.clear()
+        else:
+            for key in [k for k in self._stale_notifications if k[0] == can_id]:
+                del self._stale_notifications[key]
 
     def start_listening(self):
         """

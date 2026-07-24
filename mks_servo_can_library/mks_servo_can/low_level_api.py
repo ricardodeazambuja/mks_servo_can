@@ -126,12 +126,14 @@ class LowLevelAPI:
             is_extended_id=False,
         )
 
-        cmd_byte_str = f"{msg_to_send.data[0]:02X}" if msg_to_send.data else "N/A"
-        payload_str = msg_to_send.data.hex() if msg_to_send.data else "N/A"
-        logger.info(
-            f"LowLevelAPI: Attempting to send to CAN ID {can_id:03X}: "
-            f"CMD={cmd_byte_str}, FullPayload={payload_str}, DLC={msg_to_send.dlc}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "LowLevelAPI: tx ID=%03X CMD=%02X payload=%s dlc=%d",
+                can_id,
+                command_code,
+                msg_to_send.data.hex(),
+                msg_to_send.dlc,
+            )
 
         expected_response_can_id = can_id
         
@@ -224,13 +226,115 @@ class LowLevelAPI:
             data=bytes(full_payload),
             is_extended_id=False,
         )
-        cmd_byte_str = f"{msg_to_send.data[0]:02X}" if msg_to_send.data else "N/A"
-        payload_str = msg_to_send.data.hex() if msg_to_send.data else "N/A"
-        logger.info(
-            f"LowLevelAPI: Attempting to send (no response expected) to CAN ID {can_id:03X}: "
-            f"CMD={cmd_byte_str}, FullPayload={payload_str}, DLC={msg_to_send.dlc}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "LowLevelAPI: tx (no response) ID=%03X CMD=%02X payload=%s dlc=%d",
+                can_id,
+                command_code,
+                msg_to_send.data.hex(),
+                msg_to_send.dlc,
+            )
         await self.can_if.send_message(msg_to_send, timeout=timeout)
+
+    async def run_position_mode_absolute_axis_no_wait(
+        self, can_id: int, speed: int, acceleration: int, absolute_axis: int
+    ) -> None:
+        """
+        Sends an absolute-axis move (0xF5) without waiting for an acknowledgement.
+
+        This is the fire-and-forget counterpart of
+        `run_position_mode_absolute_axis`, intended for fixed-rate control loops
+        that stream a fresh target every cycle. It halves the frame count on the
+        bus and removes head-of-line blocking, at the cost of losing the motor's
+        status byte.
+
+        Only use this after disabling motor responses with
+        `set_slave_respond_active(can_id, respond_enabled=False,
+        active_enabled=False)`. If responses are left enabled the motor will
+        still emit acknowledgement and completion frames, which will accumulate
+        unmatched in the transport.
+
+        Because 0xF5 accepts a new target while a move is in progress, streaming
+        targets at a fixed rate turns the command into a continuously re-planned
+        servo input rather than a discrete point-to-point move.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            speed: Speed parameter (0-3000). In a streaming loop this is the
+                velocity feed-forward, not a "move at this speed then stop".
+            acceleration: Acceleration parameter (0-255). 0 disables the ramp.
+            absolute_axis: Target position in raw encoder counts (signed 24-bit).
+
+        Raises:
+            ParameterError: If any parameter is out of range.
+            CANError, SimulatorError: If the send itself fails.
+        """
+        if not (0 <= speed <= const.MAX_SPEED_PARAM):
+            raise ParameterError(
+                f"Speed parameter {speed} out of range for 0xF5 "
+                f"(0-{const.MAX_SPEED_PARAM})."
+            )
+        if not (0 <= acceleration <= const.MAX_ACCEL_PARAM):
+            raise ParameterError(
+                f"Acceleration parameter {acceleration} out of range "
+                f"(0-{const.MAX_ACCEL_PARAM})."
+            )
+        if not (-8388608 <= absolute_axis <= 8388607):
+            raise ParameterError(
+                f"Absolute axis value {absolute_axis} out of signed 24-bit range."
+            )
+
+        unsigned_24 = absolute_axis & 0xFFFFFF
+        data_payload = [
+            (speed >> 8) & 0xFF,
+            speed & 0xFF,
+            acceleration & 0xFF,
+            (unsigned_24 >> 16) & 0xFF,
+            (unsigned_24 >> 8) & 0xFF,
+            unsigned_24 & 0xFF,
+        ]
+        await self._send_command_no_response(
+            can_id, const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS, data=data_payload
+        )
+
+    async def run_speed_mode_no_wait(
+        self, can_id: int, ccw_direction: bool, speed: int, acceleration: int
+    ) -> None:
+        """
+        Sends a speed-mode command (0xF6) without waiting for an acknowledgement.
+
+        The fire-and-forget counterpart of `run_speed_mode`, for control loops
+        that close the position loop in software and stream velocity commands.
+        The same caveat about disabling responses applies as for
+        `run_position_mode_absolute_axis_no_wait`.
+
+        Args:
+            can_id: The CAN ID of the target motor.
+            ccw_direction: True for counter-clockwise, False for clockwise.
+            speed: Speed parameter (0-3000).
+            acceleration: Acceleration parameter (0-255).
+
+        Raises:
+            ParameterError: If any parameter is out of range.
+            CANError, SimulatorError: If the send itself fails.
+        """
+        if not (0 <= speed <= const.MAX_SPEED_PARAM):
+            raise ParameterError(
+                f"Speed parameter {speed} out of range (0-{const.MAX_SPEED_PARAM})."
+            )
+        if not (0 <= acceleration <= const.MAX_ACCEL_PARAM):
+            raise ParameterError(
+                f"Acceleration parameter {acceleration} out of range "
+                f"(0-{const.MAX_ACCEL_PARAM})."
+            )
+        # byte2 bit7 is direction, bits 3:0 are the speed high nibble.
+        dir_bit = 0x00 if ccw_direction else 0x80
+        byte2 = dir_bit | ((speed >> 8) & 0x0F)
+        await self._send_command_no_response(
+            can_id,
+            const.CMD_RUN_SPEED_MODE,
+            data=[byte2, speed & 0xFF, acceleration & 0xFF],
+        )
 
     # --- Part 5.1: Read Status Parameter Commands ---
     async def read_encoder_value_carry(self, can_id: int) -> Tuple[int, int]:
@@ -1378,12 +1482,19 @@ class LowLevelAPI:
             MotorError: If the motor reports immediate failure (status 0x00).
             CommunicationError, CommandError, CRCError: On communication or response issues.
         """
-        logger.info(f"LowLevelAPI._run_motor_command: Preparing to send CMD={command_code:02X} to CAN_ID={can_id:03X} with DataForCmd={data}")
+        logger.debug(
+            "LowLevelAPI: run CMD=%02X on ID=%03X data=%s", command_code, can_id, data
+        )
         response = await self._send_command_and_get_response(
             can_id, command_code, data=data, expected_dlc=3
         )
         status = response.data[1]
-        logger.info(f"LowLevelAPI._run_motor_command: CMD={command_code:02X} for CAN_ID={can_id:03X} received response status={status:02X}")
+        logger.debug(
+            "LowLevelAPI: CMD=%02X on ID=%03X acked status=%02X",
+            command_code,
+            can_id,
+            status,
+        )
         # For run commands like FD, FE, F4, F5, F6, status 0 generally means failure.
         # Example: 0xFD status 0 = run fail [MKS Servo42D CAN Manual] (Page 43)
         if status == const.POS_RUN_FAIL: # Typically 0x00 for run commands
@@ -1753,9 +1864,12 @@ class LowLevelAPI:
             ParameterError: If input parameters are out of range.
             CommunicationError, CommandError, CRCError, MotorError: On issues.
         """
-        logger.info(
-            f"LowLevelAPI.run_position_mode_absolute_axis: CAN_ID={can_id:03X}, "
-            f"SpeedParam={speed}, AccelParam={acceleration}, AbsAxis={absolute_axis}"
+        logger.debug(
+            "LowLevelAPI: 0xF5 ID=%03X speed=%d accel=%d target=%d",
+            can_id,
+            speed,
+            acceleration,
+            absolute_axis,
         )
         if not (0 <= speed <= 3000): # Speed param range [MKS Servo42D CAN Manual] (Page 49)
             raise ParameterError(f"Speed parameter {speed} out of range for 0xF5 (0-3000).")

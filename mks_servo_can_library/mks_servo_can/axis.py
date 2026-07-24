@@ -133,7 +133,10 @@ class Axis:
         self.motor_type = motor_type
         self._can_if = can_interface_manager
         self._low_level_api = LowLevelAPI(self._can_if)
-        self._loop = loop if loop else asyncio.get_event_loop()
+        # Deliberately not resolved here: asyncio.get_event_loop() outside a
+        # running loop is deprecated on 3.12+ and an error on 3.14+, and an Axis
+        # is often constructed before the loop starts. Resolved lazily instead.
+        self._explicit_loop = loop
 
         if kinematics is None:
             logger.info(
@@ -169,6 +172,35 @@ class Axis:
         self._is_calibrated: bool = False # Assume not calibrated until explicitly done
         self._active_move_future: Optional[asyncio.Future] = None
         self._error_state: Optional[MKSServoError] = None
+        # Background task that resolves _active_move_future when the motor's
+        # asynchronous completion frame arrives. See _execute_move().
+        self._completion_task: Optional[asyncio.Task] = None
+        # Command byte of the move currently in flight, if any. Needed so that a
+        # superseded move's stale notification can be identified and discarded.
+        self._pending_move_command: Optional[int] = None
+        # Cached work mode, used to size move timeouts. Updated by set_work_mode().
+        # Serial FOC is the factory default for CAN control.
+        self._work_mode: int = const.MODE_SR_VFOC
+
+    @property
+    def _loop(self) -> asyncio.AbstractEventLoop:
+        """
+        The event loop this axis schedules work on.
+
+        Resolved lazily so that constructing an `Axis` outside a running loop
+        stays valid: `asyncio.get_event_loop()` is deprecated on Python 3.12+
+        and raises on 3.14+ when no loop is running. If an explicit loop was
+        passed to the constructor it always wins.
+
+        Returns:
+            The explicitly configured loop, or the currently running loop.
+
+        Raises:
+            RuntimeError: If no loop was configured and none is running.
+        """
+        if self._explicit_loop is not None:
+            return self._explicit_loop
+        return asyncio.get_running_loop()
 
     def _raw_encoder_steps_to_command_microsteps(self, raw_encoder_steps: int) -> int:
         """Converts raw encoder steps (16384/rev motor shaft base) to command microsteps."""
@@ -293,6 +325,8 @@ class Axis:
             f"Axis '{self.name}': Setting work mode to {const.WORK_MODES.get(mode_const, 'Unknown')} ({mode_const})."
         )
         await self._low_level_api.set_work_mode(self.can_id, mode_const)
+        # Cache it: the maximum RPM differs per mode and drives move timeouts.
+        self._work_mode = mode_const
 
     async def calibrate_encoder(self) -> None:
         """
@@ -448,195 +482,327 @@ class Axis:
         self._is_homed = True # Setting zero often implies a homed state relative to this new zero
         self._error_state = None
 
+    def _calculate_move_timeout(
+        self,
+        command_const: int,
+        pulses_to_move_for_timeout: Optional[int],
+        speed_param_for_calc: Optional[int],
+    ) -> float:
+        """
+        Estimates how long a move should take, for use as a completion timeout.
+
+        The estimate is derived from the commanded speed parameter and the move
+        distance, expressed in whichever step unit the command uses. A generous
+        buffer is added because the motor's acceleration ramp is not modelled
+        here.
+
+        Args:
+            command_const: The MKS run command being issued. Determines whether
+                `pulses_to_move_for_timeout` is in command microsteps (0xFD/0xFE)
+                or raw encoder steps (0xF4/0xF5).
+            pulses_to_move_for_timeout: Magnitude of the move, or None to use the
+                default timeout.
+            speed_param_for_calc: MKS speed parameter (0-3000) for the move, or
+                None to use the default timeout.
+
+        Returns:
+            A timeout in seconds, never shorter than five CAN timeouts.
+        """
+        default_timeout = const.CAN_TIMEOUT_SECONDS * 10.0
+        if not pulses_to_move_for_timeout or not speed_param_for_calc:
+            return default_timeout
+
+        try:
+            max_rpm_reference = const.MAX_RPM_BY_WORK_MODE.get(
+                self._work_mode, const.MAX_RPM_VFOC_MODE
+            )
+            estimated_motor_rpm = (
+                float(speed_param_for_calc) / 3000.0
+            ) * max_rpm_reference
+            if estimated_motor_rpm <= 0.1:
+                return default_timeout
+
+            if command_const in (
+                const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES,
+                const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES,
+            ):
+                steps_per_rev = float(self._microsteps_per_motor_revolution_for_cmd)
+            elif command_const in (
+                const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS,
+                const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
+            ):
+                steps_per_rev = float(const.ENCODER_PULSES_PER_REVOLUTION)
+            else:
+                steps_per_rev = float(self.kinematics.steps_per_revolution)
+
+            steps_per_sec = (estimated_motor_rpm / 60.0) * steps_per_rev
+            if steps_per_sec <= 1.0:
+                return default_timeout
+
+            estimated_duration = abs(pulses_to_move_for_timeout) / steps_per_sec
+            calculated = estimated_duration * 1.25 + const.CAN_TIMEOUT_SECONDS * 3.0
+            return max(calculated, const.CAN_TIMEOUT_SECONDS * 5.0)
+        except (ZeroDivisionError, AttributeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Axis '%s': could not compute move timeout (%s); using %.2fs",
+                self.name,
+                exc,
+                default_timeout,
+            )
+            return default_timeout
+
+    def _supersede_active_move(self, reason: str) -> None:
+        """
+        Abandons any move currently in flight so a new one can be issued.
+
+        Cancels the background completion watcher and tells the transport to
+        expect one stale asynchronous notification for the abandoned move. MKS
+        motors emit a completion/abort frame for a superseded move that is
+        otherwise indistinguishable from the acknowledgement of the *new*
+        command, because both carry the same command byte.
+
+        Args:
+            reason: Human-readable explanation, used for logging and to annotate
+                the cancellation of the previous move's future.
+        """
+        task = self._completion_task
+        self._completion_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+        previous = self._active_move_future
+        if previous is not None and not previous.done():
+            logger.debug("Axis '%s': superseding active move (%s)", self.name, reason)
+            previous.cancel(reason)
+            if self._pending_move_command is not None:
+                self._can_if.expect_stale_notification(
+                    self.can_id, self._pending_move_command
+                )
+        self._pending_move_command = None
+
+    @staticmethod
+    def _swallow_unretrieved_exception(future: asyncio.Future) -> None:
+        """
+        Marks a move future's exception as retrieved to silence asyncio warnings.
+
+        A caller using ``wait=False`` may legitimately never await the move
+        future. Without this, a failed move would produce an "exception was
+        never retrieved" warning at garbage-collection time.
+
+        Args:
+            future: The completed move future to inspect.
+        """
+        if not future.cancelled():
+            future.exception()
+
+    async def _await_move_completion(
+        self,
+        completion_future: asyncio.Future,
+        command_const: int,
+        success_status: int,
+        timeout: float,
+    ) -> None:
+        """
+        Background watcher that resolves the active move future.
+
+        Runs as its own task so that dispatching a move does not block the
+        caller. Waits for the motor's asynchronous completion frame, translates
+        it into a result or an exception on `self._active_move_future`, and
+        refreshes the cached position.
+
+        Args:
+            completion_future: Future resolved by the transport with the motor's
+                completion frame.
+            command_const: The MKS run command whose completion is awaited.
+            success_status: Status byte that means the move finished normally.
+            timeout: Maximum seconds to wait before declaring a timeout.
+        """
+        move_future = self._active_move_future
+        try:
+            response = await asyncio.wait_for(completion_future, timeout=timeout)
+            status = response.data[1]
+            if status == success_status:
+                logger.debug(
+                    "Axis '%s': move (CMD=%02X) completed", self.name, command_const
+                )
+                if move_future is not None and not move_future.done():
+                    move_future.set_result(True)
+            elif status == const.POS_RUN_END_LIMIT_STOPPED:
+                msg = (
+                    f"Axis '{self.name}': move (CMD={command_const:02X}) "
+                    "stopped by end limit."
+                )
+                logger.warning(msg)
+                if move_future is not None and not move_future.done():
+                    move_future.set_exception(
+                        LimitError(msg, error_code=status, can_id=self.can_id)
+                    )
+            else:
+                msg = (
+                    f"Axis '{self.name}': move (CMD={command_const:02X}) failed "
+                    f"with status {status:#04x}."
+                )
+                logger.error(msg)
+                if move_future is not None and not move_future.done():
+                    move_future.set_exception(
+                        MotorError(msg, error_code=status, can_id=self.can_id)
+                    )
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            msg = (
+                f"Axis '{self.name}': Timeout waiting for move "
+                f"(CMD={command_const:02X}) completion after {timeout:.2f}s."
+            )
+            logger.error(msg)
+            if move_future is not None and not move_future.done():
+                move_future.set_exception(
+                    CommunicationError(msg, can_id=self.can_id)
+                )
+        except MKSServoError as exc:
+            if move_future is not None and not move_future.done():
+                move_future.set_exception(exc)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(
+                "Axis '%s': unexpected error awaiting move completion: %s",
+                self.name,
+                exc,
+                exc_info=True,
+            )
+            if move_future is not None and not move_future.done():
+                move_future.set_exception(
+                    MKSServoError(f"Unexpected move error: {exc}", can_id=self.can_id)
+                )
+        finally:
+            self._pending_move_command = None
+            # Refresh the cached position; failure here must not mask the move
+            # result that has already been recorded above.
+            try:
+                await self.get_current_position_steps()
+            except MKSServoError as exc:
+                logger.debug(
+                    "Axis '%s': position refresh after move failed: %s", self.name, exc
+                )
+
     async def _execute_move(
         self,
-        move_command_func, # type: ignore
+        move_command_func,  # type: ignore
         command_const: int,
         success_status: int = const.POS_RUN_COMPLETE,
-        pulses_to_move_for_timeout: Optional[int] = None, # Magnitude of move in units relevant to command_const
+        pulses_to_move_for_timeout: Optional[int] = None,
         speed_param_for_calc: Optional[int] = None,
     ) -> None:
         """
-        Internal helper to execute a positional move command and manage its lifecycle.
+        Dispatches a positional move and returns once the motor has acknowledged it.
 
-        This method handles sending the low-level move command, creating an
-        `asyncio.Future` to track its completion, and processing the motor's
-        response(s). It supports dynamic timeout calculation based on the move
-        distance and speed if relevant parameters are provided.
+        This method does **not** wait for the move to finish. It sends the
+        command, inspects the motor's immediate acknowledgement, and — if the
+        move is under way — hands off to a background task that resolves
+        `self._active_move_future` when the completion frame arrives. Callers
+        that want to block should await `wait_for_move_completion()`.
+
+        Any move already in flight is superseded (see `_supersede_active_move`).
 
         Args:
-            move_command_func (Callable[[], Awaitable[int]]): An async callable that, when executed,
-                sends the specific low-level move command to the motor and returns
-                the initial status code from the motor (e.g., `POS_RUN_STARTING`).
-            command_const (int): The MKS CAN command constant for this type of move
-                                 (e.g., `const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES`).
-            success_status (int): The expected status code from the motor upon successful
-                                  completion of the move. Defaults to `const.POS_RUN_COMPLETE`.
-            pulses_to_move_for_timeout (Optional[int]): The absolute number of pulses/steps for the move,
-                                           in units relevant to the command (microsteps for 0xFD/0xFE,
-                                           raw encoder steps for 0xF4/0xF5). Used for calculating
-                                           a dynamic timeout. If None, a default timeout is used.
-            speed_param_for_calc (Optional[int]): The MKS speed parameter (0-3000) used for the move.
-                                                  Also used for dynamic timeout calculation.
+            move_command_func: Async callable that sends the specific low-level
+                move command and returns the motor's initial status byte.
+            command_const: The MKS CAN command constant for this move.
+            success_status: Status byte meaning "completed", defaults to
+                `const.POS_RUN_COMPLETE`.
+            pulses_to_move_for_timeout: Magnitude of the move in the step unit
+                appropriate to `command_const`, used to size the timeout.
+            speed_param_for_calc: MKS speed parameter used for the move, also
+                used to size the timeout.
 
         Raises:
-            CommunicationError: If the initial command send or response wait times out,
-                                or if the listener is not active.
-            MotorError: If the motor reports an immediate failure to start the move,
-                        or if the move completes with a failure status.
-            LimitError: If the motor reports that the move was stopped by an end limit.
-            MKSServoError: For other unexpected errors during the move execution.
+            CommunicationError: If the command could not be sent or acknowledged.
+            MotorError: If the motor refused to start the move.
+            LimitError: If the motor reported an end limit immediately.
         """
-        if self._active_move_future and not self._active_move_future.done():
-            logger.warning(f"Axis '{self.name}': Active move future exists. Cancelling previous move.")
-            self._active_move_future.cancel("New move initiated")
-            await asyncio.sleep(0) # Allow cancellation to propagate
-
+        self._supersede_active_move("new move initiated")
 
         if not self.is_enabled():
             await self.enable_motor()
 
-        self._active_move_future = self._loop.create_future()
-        
-        logger.info(f"Axis '{self.name}'._execute_move: Called for CMD={command_const:02X}. Current active_move_future: {self._active_move_future}")
+        move_future = self._loop.create_future()
+        move_future.add_done_callback(self._swallow_unretrieved_exception)
+        self._active_move_future = move_future
+        self._pending_move_command = command_const
 
-        # Dynamic timeout calculation
-        move_timeout: float = const.CAN_TIMEOUT_SECONDS * 10.0 # Default timeout
-
-        if pulses_to_move_for_timeout is not None and speed_param_for_calc is not None and speed_param_for_calc > 0:
-            try:
-                # Max motor RPM from constant, e.g., const.MAX_RPM_VFOC_MODE for VFOC
-                # The MKS speed parameter (0-3000) mapping to RPM depends on the work mode.
-                # We use MAX_RPM_VFOC_MODE as a general reference if not mode-specific.
-                max_rpm_reference = const.MAX_RPM_VFOC_MODE # TODO: Make this mode-dependent if possible
-                
-                estimated_motor_rpm = (float(speed_param_for_calc) / 3000.0) * max_rpm_reference
-                
-                if estimated_motor_rpm > 0.1: # Avoid division by zero or negligible speeds
-                    motor_rps = estimated_motor_rpm / 60.0
-                    
-                    steps_per_rev_for_timeout_calc: float
-                    if command_const in [const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES, const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES]:
-                        steps_per_rev_for_timeout_calc = float(self._microsteps_per_motor_revolution_for_cmd)
-                    elif command_const in [const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS, const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS]:
-                        steps_per_rev_for_timeout_calc = float(const.ENCODER_PULSES_PER_REVOLUTION) # Raw encoder steps for these commands
-                    else:
-                        # Fallback for other commands, or if command type is unknown here
-                        steps_per_rev_for_timeout_calc = float(self.kinematics.steps_per_revolution) # This is raw encoder steps by default
-                        logger.warning(f"Axis '{self.name}': Timeout calculation for CMD {command_const:02X} using default kinematics steps_per_revolution ({steps_per_rev_for_timeout_calc}).")
-
-                    if steps_per_rev_for_timeout_calc == 0:
-                        raise ConfigurationError("Steps per revolution for timeout calculation is zero.")
-
-                    # pulses_to_move_for_timeout is the magnitude of the move in the units of steps_per_rev_for_timeout_calc
-                    motor_shaft_units_per_sec = motor_rps * steps_per_rev_for_timeout_calc
-                    
-                    if motor_shaft_units_per_sec > 1.0: # Ensure meaningful speed
-                        estimated_duration_s = abs(pulses_to_move_for_timeout) / motor_shaft_units_per_sec
-                        # Buffer: e.g., 3x CAN_TIMEOUT_SECONDS + 25% of duration for processing/acceleration
-                        buffer_s = const.CAN_TIMEOUT_SECONDS * 3.0 
-                        calculated_timeout = estimated_duration_s * 1.25 + buffer_s 
-                        # Ensure a minimum sensible timeout, e.g., 5 times the base CAN timeout
-                        move_timeout = max(calculated_timeout, const.CAN_TIMEOUT_SECONDS * 5.0) 
-                        logger.debug(
-                            f"Axis '{self.name}': Calculated move_timeout: {move_timeout:.2f}s "
-                            f"for {abs(pulses_to_move_for_timeout)} units (type for CMD {command_const:02X}) at speed_param {speed_param_for_calc} "
-                            f"(est. duration: {estimated_duration_s:.2f}s)"
-                        )
-            except Exception as e_timeout_calc: # pylint: disable=broad-except
-                logger.warning(
-                    f"Axis '{self.name}': Error calculating dynamic timeout, using default {move_timeout:.2f}s. Error: {e_timeout_calc}"
-                )
-        
-        logger.info(f"Axis '{self.name}': Using move timeout of {move_timeout:.2f}s for CMD {command_const:02X}.")
-
+        move_timeout = self._calculate_move_timeout(
+            command_const, pulses_to_move_for_timeout, speed_param_for_calc
+        )
+        logger.debug(
+            "Axis '%s': dispatching CMD=%02X with completion timeout %.2fs",
+            self.name,
+            command_const,
+            move_timeout,
+        )
 
         try:
-            logger.info(f"Axis '{self.name}'._execute_move: Awaiting move_command_func() for CMD={command_const:02X}...")
             initial_status = await move_command_func()
-            logger.info(f"Axis '{self.name}'._execute_move: move_command_func() for CMD={command_const:02X} returned initial_status={initial_status:02X}")
+        except MKSServoError as exc:
+            self._pending_move_command = None
+            if not move_future.done():
+                move_future.set_exception(exc)
+            raise
 
-
-            if initial_status == const.POS_RUN_STARTING: # 0x01
-                logger.debug(
-                    f"Axis '{self.name}': Move (CMD={command_const:02X}) reported STARTING. Waiting for completion signal..."
-                )
-                
-                def move_completion_predicate(msg: CanMessage) -> bool:
-                    return (msg.data is not None and len(msg.data) >= 2 and
-                            msg.data[0] == command_const and # Echoed command
-                            msg.data[1] in [success_status, const.POS_RUN_END_LIMIT_STOPPED, const.POS_RUN_FAIL])
-
-                completion_future = self._can_if.create_response_future(
-                    self.can_id, command_const, response_predicate=move_completion_predicate
-                )
-                final_response_msg = await asyncio.wait_for(
-                    completion_future, timeout=move_timeout
-                )
-                final_status = final_response_msg.data[1]
-                logger.info(f"Axis '{self.name}': Move (CMD={command_const:02X}) async completion received with status={final_status:02X}")
-
-                if final_status == success_status:
-                    logger.info(
-                        f"Axis '{self.name}': Move (CMD={command_const:02X}) completed successfully (async)."
+        if initial_status == const.POS_RUN_STARTING:
+            # The move is under way; watch for the asynchronous completion frame.
+            completion_future = self._can_if.create_response_future(
+                self.can_id,
+                command_const,
+                response_predicate=lambda msg: (
+                    msg.data is not None
+                    and len(msg.data) >= 2
+                    and msg.data[0] == command_const
+                    and msg.data[1]
+                    in (
+                        success_status,
+                        const.POS_RUN_END_LIMIT_STOPPED,
+                        const.POS_RUN_FAIL,
                     )
-                    if not self._active_move_future.done(): self._active_move_future.set_result(True)
-                elif final_status == const.POS_RUN_END_LIMIT_STOPPED:
-                    msg = f"Axis '{self.name}': Move (CMD={command_const:02X}) stopped by end limit (async)."
-                    logger.warning(msg)
-                    if not self._active_move_future.done(): self._active_move_future.set_exception(
-                        LimitError(msg, error_code=final_status, can_id=self.can_id)
-                    )
-                else: # Includes POS_RUN_FAIL
-                    msg = f"Axis '{self.name}': Move (CMD={command_const:02X}) failed or completed with unexpected async status {final_status}."
-                    logger.error(msg)
-                    if not self._active_move_future.done(): self._active_move_future.set_exception(
-                        MotorError(msg, error_code=final_status, can_id=self.can_id)
-                    )
+                ),
+            )
+            self._completion_task = self._loop.create_task(
+                self._await_move_completion(
+                    completion_future, command_const, success_status, move_timeout
+                )
+            )
+            return
 
-            elif initial_status == success_status: 
-                logger.info(
-                    f"Axis '{self.name}': Move (CMD={command_const:02X}) reported COMPLETE in initial response."
-                )
-                if not self._active_move_future.done(): self._active_move_future.set_result(True)
-            elif initial_status == const.POS_RUN_END_LIMIT_STOPPED: 
-                msg = f"Axis '{self.name}': Move (CMD={command_const:02X}) reported END LIMIT in initial response."
-                logger.warning(msg)
-                if not self._active_move_future.done(): self._active_move_future.set_exception(
-                    LimitError(msg, error_code=initial_status, can_id=self.can_id)
-                )
-            else:  # Includes POS_RUN_FAIL (0x00) or other unexpected initial status
-                msg = f"Axis '{self.name}': Move (CMD={command_const:02X}) command failed to start properly or other error. Initial status: {initial_status:02X}"
-                logger.error(msg)
-                if not self._active_move_future.done(): self._active_move_future.set_exception(
-                    MotorError(msg, error_code=initial_status, can_id=self.can_id)
-                )
-            
-            await self.get_current_position_steps() # Update position after move attempt
+        self._pending_move_command = None
 
-        except asyncio.TimeoutError:
-            msg = f"Axis '{self.name}': Timeout waiting for move (CMD={command_const:02X}) response/completion."
+        if initial_status == success_status:
+            logger.debug(
+                "Axis '%s': move (CMD=%02X) completed in the initial response",
+                self.name,
+                command_const,
+            )
+            if not move_future.done():
+                move_future.set_result(True)
+            return
+
+        if initial_status == const.POS_RUN_END_LIMIT_STOPPED:
+            msg = (
+                f"Axis '{self.name}': move (CMD={command_const:02X}) reported an "
+                "end limit in its initial response."
+            )
+            logger.warning(msg)
+            error: MKSServoError = LimitError(
+                msg, error_code=initial_status, can_id=self.can_id
+            )
+        else:
+            msg = (
+                f"Axis '{self.name}': move (CMD={command_const:02X}) failed to "
+                f"start. Initial status: {initial_status:#04x}"
+            )
             logger.error(msg)
-            if not self._active_move_future.done():
-                self._active_move_future.set_exception(CommunicationError(msg, can_id=self.can_id))
-        except MKSServoError as e: 
-            logger.error(
-                f"Axis '{self.name}': MKSServoError during move (CMD={command_const:02X}): {e}"
-            )
-            if not self._active_move_future.done():
-                self._active_move_future.set_exception(e)
-        except Exception as e: # pylint: disable=broad-except
-            logger.error(
-                f"Axis '{self.name}': Unexpected Exception during move (CMD={command_const:02X}): {e}", exc_info=True
-            )
-            if not self._active_move_future.done():
-                self._active_move_future.set_exception(MKSServoError(f"Unexpected move error: {e}", can_id=self.can_id))
-        finally:
-            if self._active_move_future and not self._active_move_future.done():
-                logger.error(f"Axis '{self.name}'._execute_move: Future for CMD={command_const:02X} was not resolved. Setting generic error.")
-                self._active_move_future.set_exception(
-                    MKSServoError(f"Move future for {command_const:02X} ended without explicit result/error.", can_id=self.can_id)
-                )
+            error = MotorError(msg, error_code=initial_status, can_id=self.can_id)
+
+        if not move_future.done():
+            move_future.set_exception(error)
+        raise error
 
     async def _move_relative_handler(
         self,
@@ -725,12 +891,20 @@ class Axis:
         else:
             raise ParameterError(f"Unknown unit type '{unit}' for absolute move.")
 
-        # 2. Check if a move is necessary
-        current_steps = await self.get_current_position_steps()
+        # 2. Check whether a move is necessary, using the cached position.
+        #    Polling the encoder here would add a full CAN round trip to the
+        #    latency of every absolute move. The cache is refreshed after each
+        #    move completes and by any explicit position read.
+        current_steps = self._current_position_steps
+        if current_steps is None:
+            current_steps = await self.get_current_position_steps()
         if abs(target_encoder_steps - current_steps) < 2 or math.isclose(mks_speed_param, 0, abs_tol=0.1): # Tolerance for rounding
-            logger.info(f"Axis '{self.name}': Target position {target_encoder_steps} is same as current. No move needed.")
-            if self._active_move_future and not self._active_move_future.done():
-                self._active_move_future.set_result(True)
+            logger.debug(
+                "Axis '%s': target %d already reached; no move needed.",
+                self.name,
+                target_encoder_steps,
+            )
+            self._supersede_active_move("target already reached")
             return
 
         # 3. Execute the move using the direct absolute axis command

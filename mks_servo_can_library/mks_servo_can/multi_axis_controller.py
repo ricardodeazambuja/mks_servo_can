@@ -505,7 +505,7 @@ class MultiAxisController:
             if move_execution_errors:
                 raise MultiAxisError("Error(s) during multi-axis absolute move execution.", individual_errors=move_execution_errors)
 
-    logger.info("Multi-axis absolute move command sequence finished.")
+        logger.info("Multi-axis absolute move command sequence finished.")
 
     async def move_all_relative_user(
         self,
