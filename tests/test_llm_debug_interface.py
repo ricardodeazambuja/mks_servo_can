@@ -18,12 +18,12 @@ import time
 import unittest
 from unittest.mock import patch
 
-from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import (
+from mks_simulator.interface.llm_debug_interface import (
     ErrorRecord,
     LLMDebugInterface,
 )
-from mks_servo_simulator.mks_simulator.motor_model import SimulatedMotor
-from mks_servo_simulator.mks_simulator.virtual_can_bus import VirtualCANBus
+from mks_simulator.motor_model import SimulatedMotor
+from mks_simulator.virtual_can_bus import VirtualCANBus
 
 
 class TestLLMDebugInterface(unittest.TestCase):
@@ -201,7 +201,7 @@ class TestLLMDebugInterface(unittest.TestCase):
             "0x31": {"name": "Another Command", "description": "Another one", "request": {}},
         }
         with patch.dict(
-            "mks_servo_simulator.mks_simulator.interface.llm_debug_interface.MANUAL_COMMANDS",
+            "mks_simulator.interface.llm_debug_interface.MANUAL_COMMANDS",
             mock_manual_commands_data,
             clear=True,
         ):
@@ -216,7 +216,7 @@ class TestLLMDebugInterface(unittest.TestCase):
 
     def test_get_available_commands_not_loaded(self):
         with patch.dict(
-            "mks_servo_simulator.mks_simulator.interface.llm_debug_interface.MANUAL_COMMANDS",
+            "mks_simulator.interface.llm_debug_interface.MANUAL_COMMANDS",
             {},
             clear=True,
         ):
@@ -235,7 +235,7 @@ class TestLLMDebugInterface(unittest.TestCase):
         reported 0 and the command reference an agent consults was empty. That
         failed silently; this asserts it does not.
         """
-        from mks_servo_simulator.mks_simulator.interface import llm_debug_interface
+        from mks_simulator.interface import llm_debug_interface
 
         self.assertGreater(
             len(llm_debug_interface.MANUAL_COMMANDS),

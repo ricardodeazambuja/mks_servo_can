@@ -8,6 +8,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from .clock import RealTimeClock
 from .motor_model import SimulatedMotor
 
 if TYPE_CHECKING:
@@ -41,6 +42,11 @@ class VirtualCANBus:
             loop: The asyncio event loop to use for server and motor tasks.
         """
         self._loop = loop
+        # Where simulated time comes from. Replaced by the CLI with a
+        # SteppedClock under --step; the default keeps the wall-clock behaviour
+        # the simulator has always had. Held here because it is the one object
+        # the debug API's /step endpoint needs to reach.
+        self.simulation_clock = RealTimeClock()
         self.simulated_motors: Dict[int, SimulatedMotor] = (
             {}
         )  # CAN ID -> Motor Object

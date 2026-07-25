@@ -43,6 +43,7 @@ can_if = CANInterface(use_simulator=True, simulator_host="localhost", simulator_
 |---|---|---|
 | `--debug-api` | off | Starts the HTTP debug server. |
 | `--debug-api-port INTEGER` | `8765` | Port for it. |
+| `--step` | off | Simulated time advances only when `POST /step` says so. Implies `--debug-api`. See [Deterministic time](advanced_simulation.md#deterministic-time---step). |
 | `--json-output` | off | Emits machine-readable JSON state on stdout, periodically. |
 | `--textual-dashboard` | off | Legacy terminal TUI. |
 | `--refresh-rate INTEGER` | `200` | Dashboard refresh interval in milliseconds. |

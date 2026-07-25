@@ -127,6 +127,69 @@ curl http://localhost:8765/config/profiles
 curl -X POST http://localhost:8765/config/profiles/bench/load
 ```
 
+## Deterministic time (`--step`)
+
+By default the simulator runs on the wall clock: motors integrate their motion
+against `time.monotonic()` and a client has to *wait* for a move, then guess
+whether it waited long enough.
+
+`--step` replaces that clock with one that does not move on its own:
+
+```bash
+mks-servo-simulator --num-motors 2 --step
+```
+
+Nothing turns until you say so. `--step` implies `--debug-api`, because
+`POST /step` is the only way to drive it:
+
+```bash
+curl -X POST http://localhost:8765/step \
+  -H "Content-Type: application/json" \
+  -d '{"seconds": 0.5}'
+```
+
+```json
+{
+  "stepped": true,
+  "advanced_seconds": 0.5,
+  "simulated_time": 0.5,
+  "status": { "motors": { "1": { "position_steps": 8192.0, "...": "..." } } }
+}
+```
+
+Three things make this worth using:
+
+* **The response already contains the answer.** `/step` returns the full
+  `/status` payload as of the end of the step, and it does not return until
+  every motor has finished the last sub-step. So the sequence is command →
+  step → read, with no sleeping anywhere and no window in which you might catch
+  a motor half-updated.
+* **It is exact.** One simulated second at 60 RPM moves exactly one revolution,
+  every run, on any machine, under any load. Timing assertions stop needing
+  tolerances.
+* **It is free.** Ten seconds of simulated motion costs the arithmetic, not ten
+  seconds.
+
+Time advances in 10 ms sub-steps regardless of how large a step you ask for, so
+`{"seconds": 10}` integrates the acceleration ramp exactly as a hundred separate
+100 ms steps would. Asking for less than a sub-step is fine and moves time by
+exactly that much.
+
+`{"seconds": 0}` is allowed and does nothing. A negative value is rejected with
+HTTP 422 rather than quietly ignored.
+
+**On a simulator started without `--step`**, the endpoint still works: it waits
+out the interval and returns `"stepped": false`. That distinction matters — it
+lets a client tell "time was advanced" from "we slept", instead of being told
+success either way.
+
+### What it does not change
+
+The bus latency (`--latency-ms`) and the delays in the *client* are still real
+time. `--step` governs the motors' own motion; a command still travels over a
+real socket and your code still runs at its own pace. It makes the *motor* 
+deterministic, not the whole system.
+
 ## Injecting commands directly
 
 For protocol-level work you can bypass the library entirely and put a raw frame

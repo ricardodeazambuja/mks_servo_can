@@ -11,22 +11,22 @@ if FASTAPI_AVAILABLE:
 
     from fastapi.testclient import TestClient
 
-    from mks_servo_simulator.mks_simulator.interface.config_manager import (  # Corrected import
+    from mks_simulator.interface.config_manager import (  # Corrected import
         ConfigurationManager,
         LiveConfigurationInterface,
     )
-    from mks_servo_simulator.mks_simulator.interface.debug_tools import (
+    from mks_simulator.interface.debug_tools import (
         CommandInjector,  # LiveConfigurationInterface removed from here
     )
 
     # Assuming these are the correct paths. Adjust if necessary.
     # Removed CommandResult, CommandInjectorPayload, TemplateCommandPayload, ParameterUpdatePayload
     # as they are not defined in http_debug_server.py and not directly used by tests.
-    from mks_servo_simulator.mks_simulator.interface.http_debug_server import (
+    from mks_simulator.interface.http_debug_server import (
         DebugHTTPServer,
         JSONOutputHandler,
     )
-    from mks_servo_simulator.mks_simulator.interface.llm_debug_interface import (
+    from mks_simulator.interface.llm_debug_interface import (
         LLMDebugInterface,
     )
 
@@ -87,7 +87,7 @@ if FASTAPI_AVAILABLE:
             self.assertIn("endpoints", data)
             self.assertEqual(data["name"], "MKS Servo Simulator Debug API") # Corrected name
 
-        @patch('mks_servo_simulator.mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_system_status')
+        @patch('mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_system_status')
         def test_health_endpoint(self, mock_get_system_status):
             # The communication key is "total_messages". This mock previously
             # supplied "total_messages_sent", which get_system_status has never
@@ -110,7 +110,7 @@ if FASTAPI_AVAILABLE:
             }
             self.assertEqual(response.json(), expected_response)
 
-        @patch('mks_servo_simulator.mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_system_status')
+        @patch('mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_system_status')
         def test_get_status(self, mock_get_system_status):
             expected_status = {"motor_count": 1, "can_bus_status": "connected"}
             mock_get_system_status.return_value = expected_status
@@ -120,7 +120,7 @@ if FASTAPI_AVAILABLE:
             self.assertEqual(response.json(), expected_status)
             mock_get_system_status.assert_called_once()
 
-        @patch('mks_servo_simulator.mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_motor_status')
+        @patch('mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_motor_status')
         def test_get_motor_status_found(self, mock_get_motor_status):
             motor_id = 1
             expected_motor_status = {"id": motor_id, "position": 100, "speed": 50}
@@ -131,7 +131,7 @@ if FASTAPI_AVAILABLE:
             self.assertEqual(response.json(), expected_motor_status)
             mock_get_motor_status.assert_called_once_with(motor_id)
 
-        @patch('mks_servo_simulator.mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_motor_status')
+        @patch('mks_simulator.interface.llm_debug_interface.LLMDebugInterface.get_motor_status')
         def test_get_motor_status_not_found(self, mock_get_motor_status):
             motor_id = 99  # An ID assumed not to exist
             mock_get_motor_status.return_value = None
@@ -142,7 +142,7 @@ if FASTAPI_AVAILABLE:
             self.assertEqual(response.json(), {"error": "Not found", "detail": f"Motor {motor_id} not found"})
             mock_get_motor_status.assert_called_once_with(motor_id)
 
-        @patch('mks_servo_simulator.mks_simulator.interface.llm_debug_interface.LLMDebugInterface.validate_expected_state')
+        @patch('mks_simulator.interface.llm_debug_interface.LLMDebugInterface.validate_expected_state')
         def test_validate_state(self, mock_validate_expected_state):
             expected_state_payload = {
                 "motors": [
@@ -383,8 +383,8 @@ if FASTAPI_AVAILABLE:
         def setUp(self):
             import asyncio
 
-            from mks_servo_simulator.mks_simulator.motor_model import SimulatedMotor
-            from mks_servo_simulator.mks_simulator.virtual_can_bus import (
+            from mks_simulator.motor_model import SimulatedMotor
+            from mks_simulator.virtual_can_bus import (
                 VirtualCANBus as RealVirtualCANBus,
             )
 
@@ -413,6 +413,34 @@ if FASTAPI_AVAILABLE:
             self.assertEqual(motor["position_steps"], 4096.0)
             self.assertAlmostEqual(motor["position_degrees"], 90.0)
             self.assertTrue(motor["enabled"])
+
+        def test_status_survives_an_acceleration_parameter_of_zero(self):
+            """
+            Acceleration parameter 0 must not break the observability surface.
+
+            The manual defines 0 as "no ramp, jump straight to speed", so
+            `motor_profile.accel_param_to_deg_per_s2(0)` correctly returns
+            `math.inf`. That is not representable in JSON, and Starlette
+            serialises with `allow_nan=False` - so a single motor set that way
+            turned `/status` into an HTTP 500 and took the browser dashboard,
+            which renders `/status`, down with it. The snapshot reports None
+            for it instead.
+
+            Nothing caught this because every test motor used the default
+            acceleration of 100.
+            """
+            motor = self.bus.simulated_motors[1]
+            motor.target_accel_mks = 0
+
+            response = self.client.get("/status")
+
+            self.assertEqual(response.status_code, 200, response.text)
+            reported = response.json()["motors"]["1"]
+            self.assertIsNone(
+                reported["accel_deg_per_s2"],
+                "instantaneous acceleration should be reported as null",
+            )
+            self.assertEqual(reported["accel_param"], 0)
 
         def test_health_returns_200(self):
             response = self.client.get("/health")

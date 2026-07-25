@@ -4,10 +4,12 @@ Models the internal state and behavior of a motor responding to CAN commands.
 """
 import asyncio
 import logging
+import math
 import struct
-import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from .clock import RealTimeClock
 
 logger = logging.getLogger("SimulatedMotor") # Changed from __name__ for clarity if file is moved/copied
 
@@ -45,6 +47,26 @@ SIM_MAX_ACCEL_PARAM = 255
 
 # Degrees of shaft rotation per revolution, for reporting angles.
 _DEGREES_PER_REV = 360.0
+
+
+def _json_safe(value: float) -> Optional[float]:
+    """
+    Returns `value`, or None if it cannot survive JSON.
+
+    `inf` and `nan` are legitimate results in the motion model - an
+    acceleration parameter of 0 means "no ramp", whose acceleration really is
+    infinite - but they are not JSON. Starlette serialises responses with
+    `allow_nan=False`, so one such value anywhere in a snapshot turns `/status`
+    into an HTTP 500 and takes the browser dashboard, which renders `/status`,
+    down with it.
+
+    Args:
+        value: The number to check.
+
+    Returns:
+        The value if finite, otherwise None.
+    """
+    return value if math.isfinite(value) else None
 
 
 def mks_speed_param_to_rpm(param: int, mode: int = const.MODE_SR_VFOC) -> float:
@@ -148,7 +170,14 @@ class MotorSnapshot:
         active_notifications_enabled: CanACT - whether asynchronous completion
             frames are emitted.
         accel_param: The acceleration parameter of the most recent move.
-        accel_deg_per_s2: `accel_param` converted to engineering units.
+        accel_deg_per_s2: `accel_param` converted to engineering units, or
+            None when `accel_param` is 0, which the manual defines as "no ramp,
+            jump straight to speed" - an infinite acceleration. `math.inf` is
+            the correct engineering answer and is what `motor_profile` returns,
+            but it is not representable in JSON: Starlette serialises with
+            `allow_nan=False`, so a single motor with accel_param 0 made
+            `/status` return HTTP 500 and took the browser dashboard down with
+            it. None says the same thing and survives the wire.
     """
 
     can_id: int
@@ -179,7 +208,7 @@ class MotorSnapshot:
     responses_enabled: bool
     active_notifications_enabled: bool
     accel_param: int
-    accel_deg_per_s2: float
+    accel_deg_per_s2: Optional[float]
 
     def as_dict(self) -> Dict[str, Any]:
         """
@@ -211,6 +240,7 @@ class SimulatedMotor:
         mstep_value: int = 16,
         min_pos_limit_steps: Optional[int] = None,
         max_pos_limit_steps: Optional[int] = None,
+        clock=None,
     ):
         """
         Initializes a new simulated MKS servo motor instance.
@@ -227,6 +257,10 @@ class SimulatedMotor:
             mstep_value: The microstepping setting (e.g., 16).
             min_pos_limit_steps: Optional minimum software position limit in steps.
             max_pos_limit_steps: Optional maximum software position limit in steps.
+            clock: Where simulated time comes from. Defaults to a `RealTimeClock`,
+                   which is the behaviour this has always had. Pass a
+                   `SteppedClock` to make the motion model advance only when it
+                   is told to - see `mks_simulator.clock`.
         """
         self.can_id = can_id
         self.original_can_id = can_id
@@ -245,7 +279,10 @@ class SimulatedMotor:
 
         self.is_enabled: bool = False
         self.motor_status_code: int = const.MOTOR_STATUS_STOPPED
-        self._last_update_time: float = time.monotonic()
+        self._clock = clock if clock is not None else RealTimeClock(
+            step_seconds=SIM_TIME_STEP_MS / 1000.0
+        )
+        self._last_update_time: float = self._clock.now()
         self._current_move_task: Optional[asyncio.Future] = None
         self._current_move_command_code: Optional[int] = None
         self._send_completion_callback: Optional[
@@ -478,8 +515,12 @@ class SimulatedMotor:
         This task is started by `start()` and cancelled by `stop_simulation()`.
         """
         while True:
-            await asyncio.sleep(SIM_TIME_STEP_MS / 1000.0)
-            current_time = time.monotonic()
+            # Both the pacing and the timebase come from the clock. Under
+            # `--step` this parks until `advance()` releases it, so the motion
+            # model integrates exactly the simulated interval it is given rather
+            # than however long the machine happened to take.
+            await self._clock.tick()
+            current_time = self._clock.now()
             delta_t = current_time - self._last_update_time
             if delta_t <= 0:
                 continue
@@ -877,7 +918,8 @@ class SimulatedMotor:
             if self.slave_active_initiation_enabled:
                 async def _complete_homing():
                     """Simulates the completion of the homing sequence."""
-                    await asyncio.sleep(0.5) # Simulate homing time
+                    # Simulated time, so `--step` does not leave homing on the wall clock.
+                    await self._clock.sleep(0.5)
                     self.is_homed = True
                     self.position_steps = 0.0
                     self.motor_status_code = const.MOTOR_STATUS_STOPPED
@@ -1074,7 +1116,8 @@ class SimulatedMotor:
                     if self.slave_active_initiation_enabled:
                         async def _complete_stop():
                             """Simulates the completion of a stop command."""
-                            await asyncio.sleep(0.1 + (255 - mks_accel_val) * 0.001) # Sim stop time
+                            # Simulated time; see the homing delay above.
+                            await self._clock.sleep(0.1 + (255 - mks_accel_val) * 0.001)
                             await self._send_completion_if_callback(command_code, const.POS_RUN_COMPLETE) # "stop complete"
                         self._loop.create_task(_complete_stop())
                 else: # It's a move command
@@ -1124,7 +1167,11 @@ class SimulatedMotor:
         if self.is_running_task and not self.is_running_task.done():
             logger.warning(f"Motor {self.original_can_id} simulation task already running.")
             return
-        self._last_update_time = time.monotonic()
+        self._last_update_time = self._clock.now()
+        # Registered before the task exists: a stepped clock must not advance
+        # past a motor that has been started but has not yet reached its first
+        # tick, or that motor misses an interval of simulated time.
+        self._clock.register()
         self.is_running_task = self._loop.create_task(self._update_state())
         logger.info(f"SimulatedMotor {self.original_can_id} update task started.")
 
@@ -1141,6 +1188,11 @@ class SimulatedMotor:
 
         if self.is_running_task and not self.is_running_task.done():
             self.is_running_task.cancel()
+            # Withdraw from the barrier before awaiting the cancellation. A
+            # stepped clock waits for every registered motor to reach its tick;
+            # one that is being torn down never will, and would hang the next
+            # `advance()` forever.
+            self._clock.unregister()
             try:
                 await self.is_running_task
             except asyncio.CancelledError:
@@ -1208,8 +1260,10 @@ class SimulatedMotor:
             responses_enabled=self.slave_respond_enabled,
             active_notifications_enabled=self.slave_active_initiation_enabled,
             accel_param=self.target_accel_mks,
-            accel_deg_per_s2=_profile.accel_param_to_deg_per_s2(
-                max(0, min(int(self.target_accel_mks), SIM_MAX_ACCEL_PARAM))
+            accel_deg_per_s2=_json_safe(
+                _profile.accel_param_to_deg_per_s2(
+                    max(0, min(int(self.target_accel_mks), SIM_MAX_ACCEL_PARAM))
+                )
             ),
         )
 

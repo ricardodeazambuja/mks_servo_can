@@ -501,6 +501,79 @@ command went out, where it is harmlessly unmatched rather than misattributed. It
 would have sat in the suite looking like a guard. The two tests above discriminate;
 that one did not, so it is gone.
 
+## L14. `/status` returned HTTP 500 for a legal acceleration setting — **fixed**
+
+Found while building the stepped-time tests, which set the acceleration
+parameter to 0 to get a motor up to speed with no ramp.
+
+**Reproduction.** Any motor with `target_accel_mks == 0`, then `GET /status`:
+
+```
+ValueError: Out of range float values are not JSON compliant
+```
+
+The manual defines acceleration parameter 0 as "no ramp, jump straight to
+speed", so `motor_profile.accel_param_to_deg_per_s2(0)` correctly returns
+`math.inf` — that is the right engineering answer and the library is not wrong
+to give it. But `MotorSnapshot` carried it straight into the response, and
+Starlette serialises with `allow_nan=False`. One motor set that way took out
+`/status` **and** the browser dashboard, which renders `/status`.
+
+Nothing caught it because every test motor used the default acceleration of 100.
+An entire class of legal configuration had never been rendered.
+
+**Fixed.** `MotorSnapshot.accel_deg_per_s2` is `Optional[float]` and reports
+`None` for a non-finite value, which says the same thing and survives the wire.
+The conversion in `motor_profile` is unchanged.
+
+**Covered by**
+`tests/test_http_debug_server.py::TestEndpointsAgainstRealMotors::test_status_survives_an_acceleration_parameter_of_zero`.
+Verified by mutation: removing the finite check turns it red, along with two
+stepped-time tests.
+
+## L15. Nine debug API endpoints had never worked — **fixed**
+
+Found by trying to use `/inject` from the command line while checking `--step`
+end to end.
+
+**Reproduction.**
+
+```
+$ curl -X POST http://localhost:8765/inject \
+    -H 'Content-Type: application/json' \
+    -d '{"motor_id": 1, "command_code": 243, "data_bytes": [1]}'
+{"detail":"'LLMDebugInterface' object has no attribute 'virtual_can_bus'"}
+```
+
+`http_debug_server.py` read `self.debug_interface.virtual_can_bus` in thirteen
+places. `LLMDebugInterface` stores it as `self.can_bus`. Affected: `/inject`,
+`/inject_template`, `/templates`, `/injection_stats`, `/run_scenario`,
+`/performance`, `/performance/history`, `/performance/connections` and
+`/performance/reset`.
+
+**Four of them failed silently**, which is the worse half. The performance
+endpoints guarded with `hasattr(self.debug_interface, 'virtual_can_bus')`, which
+was simply always false, so instead of erroring they returned
+
+```json
+{"error": "Performance monitoring not enabled"}
+```
+
+— a plausible, actionable-looking message that was untrue. Anyone who read it
+would have gone and turned on monitoring that was already running.
+
+**Fixed.** All thirteen reads corrected to `can_bus`. Confirmed against a live
+simulator: `/performance` now returns real metrics (`uptime_seconds`,
+`current_metrics`, `latency_distribution`, `thresholds`) where it previously
+returned the "not enabled" message, and `/inject` returns a structured result
+rather than a 500.
+
+**Still outstanding, and separate:** the command injector's own table is empty —
+`/templates` returns nothing and `/inject` answers `Unknown command code: 0xF3`
+for a command that is plainly in the manual. That is a second defect behind the
+first, and could not be seen until the first was fixed. Recorded as work
+remaining in `docs/development/roadmap.md`.
+
 ---
 
 # Part 1 — Repository Review: what remains

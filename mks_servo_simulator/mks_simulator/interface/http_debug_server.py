@@ -53,6 +53,9 @@ class TemplateCommandPayload(BaseModel):
 class ParameterUpdatePayload(BaseModel):
     value: Any
 
+class StepPayload(BaseModel):
+    seconds: float = 0.1
+
 
 class DebugHTTPServer:
     """
@@ -134,6 +137,7 @@ class DebugHTTPServer:
                 "endpoints": {
                     "/dashboard": "Human-facing browser dashboard",
                     "/status": "Get complete system status",
+                    "/step": "Advance simulated time and return the resulting state (POST)",
                     "/motors/{motor_id}": "Get specific motor status",
                     "/history": "Get command execution history",
                     "/validate": "Validate expected state (POST)",
@@ -162,6 +166,54 @@ class DebugHTTPServer:
             """
             return self.debug_interface.get_system_status()
         
+        @self.app.post("/step", summary="Advance simulated time")
+        async def step(request_data: StepPayload):
+            """
+            Advances simulated time and returns the state that results.
+
+            Only meaningful when the simulator was started with `--step`. On a
+            real-time clock the request simply waits out the interval and says
+            so in `stepped: false`, rather than pretending to have done
+            something - a caller polling `/status` afterwards would otherwise be
+            told the motors had been stepped when they had merely been slept
+            past.
+
+            The response carries the post-step snapshots, so a client can
+            command, step and read in one round trip with no sleeping and no
+            guessing how long a move takes. `advance()` returns only once every
+            motor has finished the last sub-step, so the state below is settled.
+
+            Request body example:
+            ```json
+            {"seconds": 0.1}
+            ```
+
+            Returns:
+                The time advanced, the new simulated clock reading, and the
+                system status as of that moment.
+            """
+            clock = getattr(self.debug_interface.can_bus, "simulation_clock", None)
+            if clock is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="the simulator has no clock attached",
+                )
+
+            seconds = request_data.seconds
+            if seconds < 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"seconds must not be negative, got {seconds}",
+                )
+
+            advanced = await clock.advance(seconds)
+            return {
+                "stepped": bool(getattr(clock, "is_stepped", False)),
+                "advanced_seconds": advanced,
+                "simulated_time": clock.now(),
+                "status": self.debug_interface.get_system_status(),
+            }
+
         @self.app.get("/motors/{motor_id}", summary="Get specific motor status")
         async def get_motor_status(motor_id: int):
             """
@@ -309,7 +361,7 @@ class DebugHTTPServer:
                 if not hasattr(self.debug_interface, 'command_injector'):
                     from .debug_tools import CommandInjector
                     self.debug_interface.command_injector = CommandInjector(
-                        self.debug_interface.virtual_can_bus, 
+                        self.debug_interface.can_bus, 
                         self.debug_interface
                     )
                 
@@ -357,7 +409,7 @@ class DebugHTTPServer:
                 if not hasattr(self.debug_interface, 'command_injector'):
                     from .debug_tools import CommandInjector
                     self.debug_interface.command_injector = CommandInjector(
-                        self.debug_interface.virtual_can_bus, 
+                        self.debug_interface.can_bus, 
                         self.debug_interface
                     )
                 
@@ -390,7 +442,7 @@ class DebugHTTPServer:
             if not hasattr(self.debug_interface, 'command_injector'):
                 from .debug_tools import CommandInjector
                 self.debug_interface.command_injector = CommandInjector(
-                    self.debug_interface.virtual_can_bus, 
+                    self.debug_interface.can_bus, 
                     self.debug_interface
                 )
             
@@ -408,7 +460,7 @@ class DebugHTTPServer:
             if not hasattr(self.debug_interface, 'command_injector'):
                 from .debug_tools import CommandInjector
                 self.debug_interface.command_injector = CommandInjector(
-                    self.debug_interface.virtual_can_bus, 
+                    self.debug_interface.can_bus, 
                     self.debug_interface
                 )
             
@@ -441,7 +493,7 @@ class DebugHTTPServer:
                 if not hasattr(self.debug_interface, 'command_injector'):
                     from .debug_tools import CommandInjector
                     self.debug_interface.command_injector = CommandInjector(
-                        self.debug_interface.virtual_can_bus, 
+                        self.debug_interface.can_bus, 
                         self.debug_interface
                     )
                 
@@ -478,10 +530,10 @@ class DebugHTTPServer:
             Returns:
                 Current performance metrics including latency, throughput, and memory usage
             """
-            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+            if not hasattr(self.debug_interface, 'can_bus') or not self.debug_interface.can_bus.performance_monitor:
                 return {"error": "Performance monitoring not enabled"}
             
-            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            performance_monitor = self.debug_interface.can_bus.performance_monitor
             return performance_monitor.get_performance_summary()
         
         @self.app.get("/performance/history", summary="Get performance history")
@@ -495,10 +547,10 @@ class DebugHTTPServer:
             Returns:
                 Performance trends data
             """
-            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+            if not hasattr(self.debug_interface, 'can_bus') or not self.debug_interface.can_bus.performance_monitor:
                 return {"error": "Performance monitoring not enabled"}
             
-            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            performance_monitor = self.debug_interface.can_bus.performance_monitor
             return performance_monitor.get_performance_trends(minutes)
         
         @self.app.get("/performance/connections", summary="Get connection details")
@@ -509,10 +561,10 @@ class DebugHTTPServer:
             Returns:
                 List of connection details with statistics
             """
-            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+            if not hasattr(self.debug_interface, 'can_bus') or not self.debug_interface.can_bus.performance_monitor:
                 return {"error": "Performance monitoring not enabled"}
             
-            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            performance_monitor = self.debug_interface.can_bus.performance_monitor
             return {
                 "connections": performance_monitor.get_connection_details(),
                 "summary": {
@@ -529,10 +581,10 @@ class DebugHTTPServer:
             Returns:
                 Confirmation message
             """
-            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+            if not hasattr(self.debug_interface, 'can_bus') or not self.debug_interface.can_bus.performance_monitor:
                 raise HTTPException(status_code=404, detail="Performance monitoring not enabled")
             
-            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            performance_monitor = self.debug_interface.can_bus.performance_monitor
             performance_monitor.reset_metrics()
             
             return {"message": "Performance metrics reset successfully"}

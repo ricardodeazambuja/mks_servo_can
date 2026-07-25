@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING, Optional
 
 import click  # Ensure 'click' is in your requirements for the simulator
 
+from .clock import make_clock
 from .interface.config_manager import ConfigurationManager, LiveConfigurationInterface
 from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
 from .interface.llm_debug_interface import LLMDebugInterface
-from .motor_model import SimulatedMotor
+from .motor_model import SIM_TIME_STEP_MS, SimulatedMotor
 from .virtual_can_bus import VirtualCANBus
 
 # The Textual dashboard is imported inside the --textual-dashboard branch, not
@@ -216,6 +217,17 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
     show_default=True,
 )
 @click.option(
+    "--step",
+    "stepped_time",
+    is_flag=True,
+    help=(
+        "Advance simulated time only on request, via POST /step on the debug "
+        "API. Motors do not move until told to, so a client can command, step "
+        "and read with no sleeping and get the same answer every run. Implies "
+        "--debug-api, since /step is the only way to drive it."
+    ),
+)
+@click.option(
     "--textual-dashboard",
     is_flag=True,
     help=(
@@ -262,6 +274,7 @@ def main(
     json_output: bool,
     debug_api: bool,
     debug_api_port: int,
+    stepped_time: bool,
     textual_dashboard: bool,
     refresh_rate: int,
     no_color: bool,
@@ -373,8 +386,27 @@ def main(
             logger.info("Textual dashboard active and file logger already configured.")
 
 
+    # Stepped time is only reachable through POST /step, so asking for it
+    # without the debug API would produce a simulator whose motors never move
+    # and no way to make them - a silent no-op. Turn the API on rather than
+    # fail, and say so.
+    if stepped_time and not debug_api:
+        debug_api = True
+        logger.info("--step implies --debug-api; enabling it (POST /step drives the clock).")
+
+    simulation_clock = make_clock(
+        stepped=stepped_time, step_seconds=SIM_TIME_STEP_MS / 1000.0
+    )
+    if stepped_time:
+        logger.info(
+            "Simulated time is STEPPED: motors do not move until POST "
+            "http://127.0.0.1:%d/step advances the clock.",
+            debug_api_port,
+        )
+
     loop = asyncio.get_event_loop()
     bus = VirtualCANBus(loop)
+    bus.simulation_clock = simulation_clock
     bus.set_latency(latency_ms)  # Set global latency for the bus
 
     # Create live configuration interface
@@ -419,6 +451,7 @@ def main(
             motor = SimulatedMotor(
                 can_id=motor_config.can_id,
                 loop=loop,
+                clock=simulation_clock,
                 motor_type=sim_motor_type_str,
                 initial_pos_steps=(
                     _degrees_to_steps(motor_config.initial_position, steps_per_rev) or 0
@@ -457,6 +490,7 @@ def main(
             motor = SimulatedMotor(
                 can_id=current_can_id,
                 loop=loop,
+                clock=simulation_clock,
                 motor_type=sim_motor_type_str,
                 steps_per_rev_encoder=steps_per_rev,
                 # Add options for initial pos, limits if needed from CLI

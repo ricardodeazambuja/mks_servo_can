@@ -2,13 +2,13 @@
 
 Repository: `/home/ricardodeazambuja/backup/GitStuff/mks_servo_can`
 Branch: `library-hardening`, **nothing pushed** (no upstream tracking branch).
-Baseline: 606 tests passing / 30 skipped, `ruff check .` clean, library coverage
+Baseline: 646 tests passing / 30 skipped, `ruff check .` clean, library coverage
 68%, **documentation baseline empty** (63 → 26 → 0 known problems).
 
 Context: a Python library for MKS SERVO42D/57D stepper drivers over CAN, plus a
 simulator that emulates the same protocol so the library can be developed with no
 hardware attached. Two reviews found defects in both. **All of them are now
-fixed** — L1–L5 and L7 from the reviews, plus L8, L9, and L10–L13 found while
+fixed** — L1–L5 and L7 from the reviews, plus L8, L9, and L10–L15 found while
 testing the fixes and while doing the work below. `REVIEW_NOTES.md` Part 0
 records each with its original reproduction; `CHANGELOG.md` `[Unreleased]` says
 what changed and why.
@@ -195,30 +195,47 @@ kept (see L13).
 
 ---
 
-## Item 4 — Deterministic simulated time *(largest; do last)*
+## Item 4 — Finish moving the timing-sensitive tests onto stepped time
 
-`tests/determinism/` has been an empty placeholder since May 2025 — the same
-state `tests/hil/` was in before it was built out. Every simulator test paces
-itself with `asyncio.sleep` against a wall clock, which is why the suite takes
-~2 minutes and why the timing-sensitive tests will eventually go flaky under CI
-load. Several tests added recently — the default-speed comparisons, the playback
-timing checks — are wall-clock measurements that a `--step` control would turn
-into exact assertions.
+**The mechanism is built.** `mks_simulator/clock.py` provides a `SteppedClock`,
+`--step` installs it, and `POST /step {"seconds": 0.1}` advances it and returns
+the resulting `/status`. `tests/determinism/` is no longer empty: 42 tests run a
+full motor model — acceleration ramps, multi-motor lockstep, the HTTP endpoint —
+in 0.4 s, with exact assertions and a test that two identical runs agree bit for
+bit. `/step` is documented in the simulator guide and the debug API guide.
 
-A `--step` / `/step` control that advances simulated time explicitly would make
-those tests deterministic and fast. It is also the single change that would most
-improve the simulator for an agent driving it: right now an agent has to *guess*
-how long to wait after issuing a command before reading back state.
+**What is left is the conversion of the existing tests.** These still measure the
+wall clock and still carry tolerances:
 
-Sketch: the motor model's integration tick takes its `dt` from a clock object
-rather than `time.monotonic()`; the default clock is real time, and `--step` swaps
-in one that only advances when `/step` is called. The debug API gains
-`POST /step {"seconds": 0.1}` returning the resulting snapshots, so an agent can
-command, step, and read with no sleeping at all.
+| test | what it times | tolerance |
+|---|---|---|
+| `tests/integration/test_default_speed.py` | two moves compared against each other | 25% |
+| `tests/integration/test_digitizer.py` | playback timing error | 50 ms |
+| `tests/integration/test_stream_feedback_cost.py` | feedback round trips | ratio |
 
-**Done when:** at least the timing-sensitive tests run under stepped time, take
-no wall-clock time, and give identical results across runs; and `/step` is
-documented in the simulator guide.
+They are not simply a matter of swapping the clock. Each drives a real `Axis`
+over a socket to a simulator *subprocess*, so converting them means either
+running the simulator in-process on a stepped clock, or having the test drive
+`POST /step` on the subprocess while awaiting a move. The first is probably
+right: `VirtualCANBus.start_server` and `CANInterface` will talk over a local
+socket within one event loop, and with `--latency-ms 0` there is no other
+wall-clock delay in the path.
+
+Note also that `--step` governs the *motors*. Bus latency and the client's own
+code still run in real time; a fully deterministic end-to-end test needs latency
+at zero.
+
+**Done when:** the three tests above run under stepped time, take no measurable
+wall-clock time, and assert exact values rather than tolerances.
+
+### Also found while doing this, and not yet fixed
+
+**The command injector's table is empty.** With L15 fixed, `/inject` and
+`/templates` are reachable for the first time — and `/templates` returns nothing,
+while `/inject` answers `Unknown command code: 0xF3` for a command plainly in the
+manual. A second defect that was hidden behind the first. The injector should be
+built from the packaged manual spec (`mks_servo_can.manual_spec`), which is
+already the single source everything else uses.
 
 ---
 
@@ -228,7 +245,8 @@ documented in the simulator guide.
    and is the only item that can invalidate work already done.
 2. **Item 2** as a release-readiness pass; the decision that blocked it is made.
 3. **Item 3** continuously, a module at a time.
-4. **Item 4** when the rest is quiet; it touches the simulator's core loop.
+4. **Item 4** — the hard part is done; what remains is conversion work that can
+   be taken one test at a time.
 
 ### Done and removed from this list
 

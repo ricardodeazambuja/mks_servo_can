@@ -157,6 +157,50 @@ Simulator observability, and the library defects that observability exposed.
 - **`record_error` had no callers anywhere**, so the `errors` array was
   permanently empty and every error display was decorative.
 
+### Added — deterministic simulated time
+
+- **`--step` and `POST /step`.** The simulated motors' `dt` now comes from a
+  clock object rather than `time.monotonic()`. The default clock is wall time
+  and behaves exactly as before; `--step` swaps in one that moves only when
+  `POST /step {"seconds": 0.1}` says so, and returns the resulting `/status`
+  payload once every motor has finished the last sub-step.
+  Time advances in 10 ms sub-steps however large a step is requested, so
+  stepping ten seconds integrates the acceleration ramp exactly as a hundred
+  100 ms steps would. Motors are held at a barrier between sub-steps, so they
+  all see the same `dt` and none can run ahead — a multi-axis result no longer
+  depends on the order the event loop happened to schedule the motor tasks in.
+  Simulated time is counted in whole nanoseconds rather than accumulated as a
+  float, so ten 10 ms steps come to exactly 0.1 s and two identical runs agree
+  bit for bit.
+- **`tests/determinism/` is no longer an empty placeholder.** 39 tests that run
+  a full motor model — acceleration ramps, multi-motor lockstep, the HTTP
+  endpoint — in 0.4 s of wall clock, with exact assertions rather than
+  tolerances, including one that simply asserts two identical runs produce
+  identical output. No wall-clock test in this repository could state that.
+- For an agent or a script driving the simulator this removes the guesswork
+  entirely: command, step, read, with no sleeping and no window in which a motor
+  might be caught half-updated.
+
+### Fixed (simulator)
+
+- **`/status` returned HTTP 500 for a legal acceleration setting (L14).**
+  Acceleration parameter 0 means "no ramp, jump straight to speed", so its
+  converted value is `math.inf` — correct, and not JSON. Starlette serialises
+  with `allow_nan=False`, so one motor set that way took out `/status` and the
+  browser dashboard with it. `MotorSnapshot.accel_deg_per_s2` is now
+  `Optional[float]` and reports `None`. Never caught because every test motor
+  used the default acceleration of 100.
+- **Nine debug API endpoints had never worked (L15).** `http_debug_server.py`
+  read `debug_interface.virtual_can_bus` in thirteen places; the attribute is
+  `can_bus`. `/inject`, `/inject_template`, `/templates`, `/injection_stats`
+  and `/run_scenario` returned HTTP 500. Worse, the four `/performance*`
+  endpoints guarded on `hasattr(..., 'virtual_can_bus')`, which was always
+  false, and so returned `{"error": "Performance monitoring not enabled"}` —
+  plausible, actionable-looking and untrue — while monitoring was running
+  perfectly well.
+- The simulator's homing and stop delays are measured on simulated time, so
+  `--step` does not leave them running against the wall clock.
+
 ### Packaging
 
 - **One distribution.** `mks-servo-can` and `mks-servo-simulator` were two
