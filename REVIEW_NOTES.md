@@ -160,16 +160,21 @@ It was reachable rather than theoretical: the homing predicate registered by
   `tests/unit/test_regressions.py` extended to cover all of them, so the next one
   cannot slip back in.
 
-## L6. Documentation does not match the API *(now gated, debt outstanding)*
+## L6. Documentation does not match the API — **fixed; 26 unwritten pages remain**
 
-`tests/test_docs_api.py` now enforces this, as a ratchet over
+`tests/test_docs_api.py` enforces this, as a ratchet over
 `tests/fixtures/docs_known_issues.json`: new problems fail the build and the
-baseline can only shrink. The findings below remain to be burned down — see
-`docs/development/roadmap.md` item 3 for the workflow.
+baseline can only shrink.
 
-A mechanical check of the code blocks in `docs/` and `README.md` found **26
-references to things that do not exist** across 12 files, plus 7 blocks that do
-not parse as Python (so the real count is higher). Examples:
+**Every API mismatch is now fixed — 63 findings down to 26.** What remains is 26
+documents that were never written, all linked from `docs/README.md` and marked
+*(planned)* there; see `docs/development/roadmap.md` item 2, which groups them by
+the decision each one needs.
+
+The original finding, for reference. A mechanical check of the code blocks in
+`docs/` and `README.md` found **26 references to things that do not exist**
+across 12 files, plus 7 blocks that do not parse as Python (so the real count was
+higher). Examples:
 `LinearKinematics(steps_per_mm=)`, `RotaryKinematics(units=)`,
 `axis.move_absolute()`, `axis.get_current_position()`, `axis.set_kinematics()`,
 `axis.update_status()`, `CANInterface(enable_crc=)`, and `BaseKinematics` (the
