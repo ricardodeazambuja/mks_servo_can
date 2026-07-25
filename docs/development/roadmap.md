@@ -200,38 +200,50 @@ kept (see L13).
 
 ---
 
-## Item 4 — Finish moving the timing-sensitive tests onto stepped time
+## Item 4 — Stepped time: done as far as it goes, and where it stops
 
 **The mechanism is built.** `mks_simulator/clock.py` provides a `SteppedClock`,
 `--step` installs it, and `POST /step {"seconds": 0.1}` advances it and returns
-the resulting `/status`. `tests/determinism/` is no longer empty: 42 tests run a
-full motor model — acceleration ramps, multi-motor lockstep, the HTTP endpoint —
-in 0.4 s, with exact assertions and a test that two identical runs agree bit for
-bit. `/step` is documented in the simulator guide and the debug API guide.
+the resulting `/status`. `tests/determinism/` runs a full motor model —
+acceleration ramps, multi-motor lockstep, the HTTP endpoint — in 0.4 s, with
+exact assertions and a test that two identical runs agree bit for bit.
 
-**What is left is the conversion of the existing tests.** These still measure the
-wall clock and still carry tolerances:
+**`tests/stepped_simulator.py` closes the gap to the integration tests.** It
+starts a `VirtualCANBus` on a `SteppedClock` inside the test's own event loop,
+serves it on an OS-assigned loopback port, and connects a real `CANInterface` to
+it, so the client is unchanged and only the source of time differs.
+`run_under_simulated_time(clock, awaitable)` drives a client call to completion
+while advancing the clock, and returns how much *simulated* time it took.
 
-| test | what it times | tolerance |
+`tests/integration/test_default_speed.py` is converted. It went from four tests
+in **20.7 s** with a 25% tolerance to six in **0.6 s** asserting equality to
+within two milliseconds — and the two moves it compares in fact come out exactly
+equal, run after run. The defect it guards produces a 39% difference, so the
+margin went from 1.1x the tolerance to about 300x it.
+
+**The other two cannot follow, and it is worth being clear why.**
+
+| test | what it measures | why stepped time does not reach it |
 |---|---|---|
-| `tests/integration/test_default_speed.py` | two moves compared against each other | 25% |
-| `tests/integration/test_digitizer.py` | playback timing error | 50 ms |
-| `tests/integration/test_stream_feedback_cost.py` | feedback round trips | ratio |
+| `tests/integration/test_digitizer.py` | `stats.average_timing_error` | computed inside `playback_sequence` from `time.time()` — the *client's* clock |
+| `tests/integration/test_stream_feedback_cost.py` | CanRSP commands sent while polling | paced by `ServoStream`'s own loop, also on the real clock |
 
-They are not simply a matter of swapping the clock. Each drives a real `Axis`
-over a socket to a simulator *subprocess*, so converting them means either
-running the simulator in-process on a stepped clock, or having the test drive
-`POST /step` on the subprocess while awaiting a move. The first is probably
-right: `VirtualCANBus.start_server` and `CANInterface` will talk over a local
-socket within one event loop, and with `--latency-ms 0` there is no other
-wall-clock delay in the path.
+`--step` governs the motors. The library reads `time.monotonic()` and
+`time.time()` directly in `axis.py`, `can_interface.py`, `realtime.py` and
+`digitizer/base_digitizer.py`, with no seam to pass a clock through. Both of
+these tests measure a quantity the *library* produces from the real clock, so
+stepping the simulator changes nothing about them.
 
-Note also that `--step` governs the *motors*. Bus latency and the client's own
-code still run in real time; a fully deterministic end-to-end test needs latency
-at zero.
+Converting them therefore means giving the library an injectable clock, which is
+a different piece of work and not obviously desirable: the library's job is to
+drive real hardware in real time, and a clock seam is a surface that has to be
+correct in production to be useful in tests. If it is ever wanted, the four
+modules above are the whole of it.
 
-**Done when:** the three tests above run under stepped time, take no measurable
-wall-clock time, and assert exact values rather than tolerances.
+**Done when:** nothing further — the mechanism exists, everything reachable by
+it has been converted, and what is left is recorded above with its reason.
+
+---
 
 ### Also found while doing this — **fixed, see L16**
 
@@ -260,8 +272,8 @@ transcription's gap, not a separate injector defect, and it is now closed — se
    and is the only item that can invalidate work already done.
 2. **Item 2** as a release-readiness pass; the decision that blocked it is made.
 3. **Item 3** continuously, a module at a time.
-4. **Item 4** — the hard part is done; what remains is conversion work that can
-   be taken one test at a time.
+4. **Item 4** is closed: everything stepped time can reach has been converted,
+   and what it cannot reach is recorded with its reason.
 
 ### Done and removed from this list
 

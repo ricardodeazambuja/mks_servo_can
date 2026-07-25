@@ -8,6 +8,24 @@ versioning is [semantic](https://semver.org/).
 
 Simulator observability, and the library defects that observability exposed.
 
+### Changed
+
+- **The default-speed tests measure simulated time instead of the wall clock.**
+  `tests/stepped_simulator.py` starts a `VirtualCANBus` on a `SteppedClock`
+  inside the test's own event loop, serves it on an OS-assigned loopback port,
+  and connects a real `CANInterface` to it, so the client is unchanged and only
+  the source of time differs; `run_under_simulated_time` drives a client call to
+  completion while advancing the clock and reports how much simulated time it
+  took. `tests/integration/test_default_speed.py` went from four tests in 20.7 s
+  with a 25% tolerance to six in 0.6 s asserting equality to within two
+  milliseconds — and the two moves it compares come out exactly equal on every
+  run. L3 produces a 39% difference, so the margin over the assertion's noise
+  floor went from 1.1x to roughly 300x.
+  `test_digitizer.py` and `test_stream_feedback_cost.py` stay on the wall clock:
+  both measure a quantity the *library* computes from `time.time()`, and the
+  library has no clock seam. `docs/development/roadmap.md` item 4 records what
+  converting them would take.
+
 ### Fixed
 
 - **The simulator acknowledged IO port writes and discarded them (L19).** The
