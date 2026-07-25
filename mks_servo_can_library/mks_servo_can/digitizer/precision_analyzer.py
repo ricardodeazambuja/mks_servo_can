@@ -31,7 +31,8 @@ class PrecisionAnalyzer:
     automated precision scoring for digitizer systems.
     """
 
-    # Precision assessment thresholds
+    # Precision assessment thresholds, best first. Every comparison is
+    # inclusive, so a value exactly on a threshold keeps the better grade.
     PRECISION_THRESHOLDS = {
         "EXCELLENT": {"position": 0.1, "max_position": 0.5, "timing": 0.05},
         "GOOD": {"position": 0.5, "max_position": 2.0, "timing": 0.1},
@@ -39,14 +40,36 @@ class PrecisionAnalyzer:
         "POOR": {"position": float('inf'), "max_position": float('inf'), "timing": float('inf')}
     }
 
+    # How complete a playback must be to be *eligible* for each grade.
+    #
+    # The error statistics in PlaybackStats are computed only over the points
+    # that were actually executed, so they say nothing whatever about the points
+    # that were not. Grading on them alone meant a playback which managed one
+    # point of five hundred - and managed it accurately - was reported as
+    # EXCELLENT. That is the same defect as L9 one layer up: precise figures
+    # about a job that did not happen.
+    #
+    # These caps never promote, only demote: a complete run with poor errors
+    # stays poor.
+    COMPLETENESS_CAPS = (
+        (1.0, "EXCELLENT"),   # complete: no restriction
+        (0.999, "GOOD"),      # a point or two short of a thousand
+        (0.95, "FAIR"),
+    )
+
     @classmethod
     def assess_precision(cls, stats: PlaybackStats) -> str:
         """
         Assess overall precision performance.
-        
+
+        The grade reflects both how accurately the executed points were hit and
+        how much of the sequence was executed at all. A playback that stopped
+        early cannot earn a good grade on the strength of the part that ran -
+        see `COMPLETENESS_CAPS`.
+
         Args:
             stats: PlaybackStats from precision testing
-            
+
         Returns:
             Assessment string: "EXCELLENT", "GOOD", "FAIR", or "POOR"
         """
@@ -62,13 +85,44 @@ class PrecisionAnalyzer:
         timing_error = stats.average_timing_error
 
         # Check thresholds in order of quality
+        accuracy_grade = "POOR"
         for assessment, thresholds in cls.PRECISION_THRESHOLDS.items():
             if (overall_avg_error <= thresholds["position"] and
                 overall_max_error <= thresholds["max_position"] and
                 timing_error <= thresholds["timing"]):
-                return assessment
+                accuracy_grade = assessment
+                break
 
-        return "POOR"
+        return cls._cap_by_completeness(accuracy_grade, stats)
+
+    @classmethod
+    def _cap_by_completeness(cls, accuracy_grade: str, stats: PlaybackStats) -> str:
+        """
+        Lowers a grade earned on accuracy to what the run's completeness allows.
+
+        Args:
+            accuracy_grade: The grade the error statistics alone would earn.
+            stats: The statistics, for `planned_points` and `executed_points`.
+
+        Returns:
+            The lower of `accuracy_grade` and the completeness cap.
+        """
+        grades = list(cls.PRECISION_THRESHOLDS)
+
+        if stats.planned_points <= 0:
+            # Nothing was asked for, so nothing was demonstrated. A sequence
+            # that recorded no points must not come back as a perfect run.
+            return "POOR"
+
+        completion = stats.executed_points / stats.planned_points
+        cap = "POOR"
+        for required_completion, allowed_grade in cls.COMPLETENESS_CAPS:
+            if completion >= required_completion:
+                cap = allowed_grade
+                break
+
+        # Grades are ordered best-first, so the worse of the two is the later.
+        return grades[max(grades.index(accuracy_grade), grades.index(cap))]
 
     @classmethod
     def calculate_path_complexity(cls, sequence: DigitizedSequence) -> float:
@@ -197,7 +251,14 @@ class PrecisionAnalyzer:
         report = {
             "overall_assessment": assessment,
             "path_complexity": complexity,
-            "execution_success_rate": stats.executed_points / stats.planned_points,
+            # planned_points is len(sequence.points) and nothing rejects an
+            # empty sequence, so this was a ZeroDivisionError on a legitimate
+            # input - a recording that captured nothing.
+            "execution_success_rate": (
+                stats.executed_points / stats.planned_points
+                if stats.planned_points > 0
+                else 0.0
+            ),
             "timing_performance": {
                 "average_error_ms": stats.average_timing_error * 1000,
                 "max_error_ms": stats.max_timing_error * 1000,

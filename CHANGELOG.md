@@ -10,6 +10,50 @@ Simulator observability, and the library defects that observability exposed.
 
 ### Fixed
 
+- **A multi-axis move reported success when the last axis failed (L11).**
+  `MultiAxisController.wait_for_all_moves_to_complete` built its task list from
+  the axes that were still moving, awaited them, and then *rebuilt* that list to
+  map results back to axis names by position. The rebuild happened after the
+  wait, by which point every axis that finished had dropped out of it —
+  including every axis that finished by **failing**, since a future resolved
+  with an exception is `done()`. The two lists were different lengths, so the
+  index was wrong; and the bounds check that looked defensive was doing the
+  damage, discarding any error at an index past the end of the shorter list.
+  `errors_found` stayed empty, no `MultiAxisError` was raised, and the caller
+  was told every move completed. With the failure anywhere but first, the error
+  was either dropped or attributed to the wrong axis.
+  Axes and coroutines are now paired once, before the wait, and results mapped
+  through `zip`; the check also widened to `BaseException` so a cancelled wait
+  is reported rather than counted as success. The sibling methods
+  `move_all_to_positions_abs_user` and `move_all_relative_user` were checked and
+  are correct. Covered by `tests/integration/test_multi_axis_group_errors.py`
+  against three real simulated motors.
+- **A superseded move's watcher wiped the state of the move that replaced it
+  (L13).** `_supersede_active_move` cancels the previous move's completion
+  watcher, but `task.cancel()` only *schedules* cancellation: the watcher's
+  `finally` ran later, after a new move had been dispatched, and
+  unconditionally cleared `_pending_move_command` — which by then belonged to
+  the new move. The next supersede then found nothing to register a
+  stale-notification credit against, so the abort frame it should have swallowed
+  resolved the new move's future as `MotorError: move (CMD=F5) failed with
+  status 0x00`. L1's symptom by another route; it made a digitizer playback fail
+  on its last point. The same `finally` also refreshed the position cache, which
+  marks it *fresh* — doing that while a new move is in flight is exactly L8's
+  precondition. The whole block is now guarded on the watcher still owning the
+  axis. Found immediately by the L11 fix above, which stopped the resulting
+  error being discarded.
+- **The precision analyzer graded a playback that never ran (L12).**
+  `PrecisionAnalyzer.assess_precision` read only the position and timing errors,
+  which are computed over the points that were *executed* — so a playback that
+  managed one point of five hundred, accurately, was reported as `EXCELLENT`.
+  That is the headline verdict `examples/basic_digitizer_demo.py` prints, and it
+  sat in `generate_performance_report` directly beside an
+  `execution_success_rate` of 0.002 that it ignored. A `COMPLETENESS_CAPS` table
+  now bounds the grade by how much of the sequence actually ran; the caps only
+  demote, never promote.
+  In the same function, `execution_success_rate` divided by `planned_points`
+  with nothing rejecting an empty sequence, so a recording that captured nothing
+  raised `ZeroDivisionError`. It now yields 0.0 and grades POOR.
 - **Re-targeting a move in flight always raised a spurious `MotorError`.**
   Dispatching a move with `wait=False` and then dispatching another before it
   completed failed every single time — the behaviour the whole streaming design

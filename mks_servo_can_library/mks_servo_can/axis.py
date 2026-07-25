@@ -689,15 +689,36 @@ class Axis:
                     MKSServoError(f"Unexpected move error: {exc}", can_id=self.can_id)
                 )
         finally:
-            self._pending_move_command = None
-            # Refresh the cached position; failure here must not mask the move
-            # result that has already been recorded above.
-            try:
-                await self.get_current_position_steps()
-            except MKSServoError as exc:
-                logger.debug(
-                    "Axis '%s': position refresh after move failed: %s", self.name, exc
-                )
+            # Only the watcher that still owns the axis may touch shared state.
+            #
+            # `_supersede_active_move` cancels the previous watcher, but
+            # `task.cancel()` merely schedules the cancellation: the watcher's
+            # `finally` runs later, by which time a *new* move has been
+            # dispatched and has installed its own `_active_move_future` and
+            # `_pending_move_command`. Unguarded, the dead watcher then cleared
+            # the new move's command byte, so the next supersede found nothing
+            # to register a stale-notification credit against - and the abort
+            # frame for the move it had just superseded resolved the new move's
+            # future as a failure. That is the L1 symptom, reintroduced through
+            # the back door, and it is why a digitizer playback of four points
+            # could fail on the last one under load.
+            #
+            # The position refresh has to be inside the guard for a second
+            # reason: it marks the cache fresh, and doing that while the new
+            # move is still in flight is exactly the stale-cache precondition
+            # that let an absolute move be silently skipped (L8).
+            if self._active_move_future is move_future:
+                self._pending_move_command = None
+                # Refresh the cached position; failure here must not mask the
+                # move result that has already been recorded above.
+                try:
+                    await self.get_current_position_steps()
+                except MKSServoError as exc:
+                    logger.debug(
+                        "Axis '%s': position refresh after move failed: %s",
+                        self.name,
+                        exc,
+                    )
 
     async def _execute_move(
         self,

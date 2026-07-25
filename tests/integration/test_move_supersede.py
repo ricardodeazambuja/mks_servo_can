@@ -174,3 +174,49 @@ async def test_credit_expires_when_no_abort_arrives():
     assert completion_future.done(), (
         "an expired credit swallowed a legitimate completion frame"
     )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_cancelled_watcher_does_not_clear_the_new_moves_state(
+    retarget_axis: Axis,
+):
+    """
+    The superseded move's watcher must not wipe the state of the move that
+    replaced it.
+
+    `_supersede_active_move` cancels the previous completion watcher, but
+    `task.cancel()` only *schedules* the cancellation. The watcher's `finally`
+    runs at the next opportunity - by which point a new move has been dispatched
+    and installed its own `_active_move_future` and `_pending_move_command`.
+    Unguarded, that `finally` cleared `_pending_move_command`, so the *next*
+    supersede found nothing to register a stale-notification credit against and
+    the abort frame it should have swallowed resolved the new move's future as a
+    failure instead.
+
+    The loop is yielded to explicitly rather than slept on: the defect is a
+    scheduling race, and giving the cancelled task its turn is the whole point.
+    Left to chance it reproduces only under load - it was found because a
+    coverage run was slow enough to lose the race every time.
+    """
+    axis = retarget_axis
+
+    await axis.move_to_position_abs_axis(
+        STEPS_PER_REV // 2, speed_param=SLOW_SPEED_PARAM, wait=False
+    )
+    await asyncio.sleep(0.3)
+
+    await axis.move_to_position_abs_axis(
+        STEPS_PER_REV // 3, speed_param=SLOW_SPEED_PARAM, wait=False
+    )
+
+    # Hand the loop to the cancelled watcher so its `finally` runs now.
+    for _ in range(50):
+        await asyncio.sleep(0)
+
+    assert (
+        axis._pending_move_command == const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS
+    ), (
+        "the superseded move's watcher cleared the pending command of the move "
+        "that replaced it; the next supersede will register no credit"
+    )

@@ -2,15 +2,23 @@
 
 Repository: `/home/ricardodeazambuja/backup/GitStuff/mks_servo_can`
 Branch: `library-hardening`, **nothing pushed** (no upstream tracking branch).
-Baseline: 561 tests passing / 30 skipped, `ruff check .` clean, library coverage
-66%, **documentation baseline empty** (63 → 26 → 0 known problems).
+Baseline: 606 tests passing / 30 skipped, `ruff check .` clean, library coverage
+68%, **documentation baseline empty** (63 → 26 → 0 known problems).
 
 Context: a Python library for MKS SERVO42D/57D stepper drivers over CAN, plus a
 simulator that emulates the same protocol so the library can be developed with no
 hardware attached. Two reviews found defects in both. **All of them are now
-fixed** — L1–L5 and L7 from the reviews, plus L8 and L9 found while testing the
-fixes. `REVIEW_NOTES.md` Part 0 records each with its original reproduction;
-`CHANGELOG.md` `[Unreleased]` says what changed and why.
+fixed** — L1–L5 and L7 from the reviews, plus L8, L9, and L10–L13 found while
+testing the fixes and while doing the work below. `REVIEW_NOTES.md` Part 0
+records each with its original reproduction; `CHANGELOG.md` `[Unreleased]` says
+what changed and why.
+
+Note the pattern in those later numbers, because it is the most useful thing to
+know about this codebase: **every one of them was found by a change that made
+something previously invisible visible.** L10 by the first CI job to run against
+an installed package rather than the source tree; L13 by the L11 fix, which
+stopped a group operation discarding its errors. Nothing here was found by
+reading the code.
 
 **Where things are written down.** `REVIEW_NOTES.md` Part 0 is the source of
 truth for what was wrong and how it was proved — symptoms, reproductions,
@@ -146,36 +154,44 @@ machine that has never seen the repository.
 
 ## Item 3 — Coverage where it is thinnest
 
-Library coverage is 66%, up from 58%. The digitizer's base class went from 11% to
-61% and turned up four defects (recorded as L9) — expect the same from the rest.
-These modules are untested because nobody has run them, not because they are
-simple.
+Library coverage is 68%. The pattern holds without exception so far: every module
+taken from "untested" to "tested" has produced a defect, and in two cases the
+defect was the module's headline behaviour. `precision_analyzer.py` (35% → 98%)
+gave L12, `multi_axis_controller.py` (44% → 61%) gave L11, and L11's fix
+immediately exposed L13 in `axis.py`. These modules are untested because nobody
+has run them, not because they are simple.
 
 Weakest first:
 
 | module | coverage | what is untested |
 |---|---|---|
 | `digitizer/surface_mapping.py` | 17% | probing patterns, the surface model, the file formats |
-| `digitizer/precision_analyzer.py` | 35% | pure statistics over `PlaybackStats` |
-| `multi_axis_controller.py` | 44% | `move_linearly_to`, `home_all_axes`, the group error paths |
-| `can_interface.py` | 55% | the hardware branch, which no test touches |
+| `can_interface.py` | 56% | the hardware branch, which no test touches |
 | `low_level_api.py` | 58% | the commands with no coverage at all |
-| `axis.py` | 64% | homing, calibration, work-mode changes |
+| `digitizer/base_digitizer.py` | 61% | recording, the file formats, the error paths |
+| `multi_axis_controller.py` | 61% | `move_linearly_to`, `home_all_axes`, sequential (`concurrent=False`) execution |
+| `axis.py` | 66% | homing, calibration, work-mode changes |
 
-**Start with `precision_analyzer.py`:** pure functions, no simulator needed, and
-L9 showed its thresholds are load-bearing — it calls anything under 50 ms of
-timing error `EXCELLENT`, which is precisely the margin the playback bug was
-consuming. Check the boundaries and the empty/one-sample cases.
+**Start with `surface_mapping.py`**, now by far the weakest and completely
+unexercised. It is also the one whose output a user acts on physically, so a
+wrong height map is a crash into a workpiece rather than a wrong number.
 
-Then `multi_axis_controller.py`, where the group error paths matter: it gathers
-per-axis failures into `MultiAxisError.individual_errors`, and nothing tests that
-a partial failure is reported rather than swallowed — the house defect again.
+**Then `low_level_api.py`**, where whole commands have no coverage at all and the
+simulator can answer every one of them.
+
+Note that `multi_axis_controller.py`'s remaining gap is mostly
+`_execute_on_axes(concurrent=False)` and `move_all_relative_user`. The
+concurrent path recovers axis names by splitting the asyncio task name on the
+method name — worth a test with an axis whose name contains the method name,
+which would truncate it.
 
 **Done when:** each module worked on has tests that fail against the code as it
 was, and any defect found is recorded in `REVIEW_NOTES.md` and `CHANGELOG.md`.
 Coverage is the symptom, not the goal; a module at 90% whose tests assert only
 that calls were made is worse than one at 40% with three tests that assert
-effects.
+effects. A test that still passes when you break the code it covers is not a
+test — one written during this item did exactly that and was deleted rather than
+kept (see L13).
 
 ---
 

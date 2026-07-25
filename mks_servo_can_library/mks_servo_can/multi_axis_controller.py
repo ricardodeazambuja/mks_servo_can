@@ -708,26 +708,40 @@ class MultiAxisController:
                             The `individual_errors` attribute will detail these failures.
         """
         logger.info("Waiting for all axes to complete their moves...")
-        tasks = [
-            axis.wait_for_move_completion(timeout=timeout_per_axis)
-            for axis in self.axes.values()
-            if not axis.is_move_complete()
+
+        # The axes and their coroutines are paired up *here*, once, and the
+        # pairing is what results are mapped back through.
+        #
+        # This used to build the task list, await it, and then rebuild the list
+        # of "axes with pending moves" to index into positionally. By that point
+        # the wait had happened: every axis that finished - including every axis
+        # that finished by *failing*, since a future resolved with an exception
+        # is `done()` - had dropped out of the list. The two lists were
+        # different lengths, so the index was wrong, and the bounds check that
+        # looked defensive was doing the damage: an error at an index past the
+        # end of the shorter list was logged as a "mismatch" and discarded,
+        # leaving `errors_found` empty and this method returning normally. A
+        # three-axis move in which only the last axis failed reported success.
+        pending = [
+            axis for axis in self.axes.values() if not axis.is_move_complete()
         ]
-        if tasks:
+        if pending:
             results = await asyncio.gather(
-                *tasks, return_exceptions=True
+                *(
+                    axis.wait_for_move_completion(timeout=timeout_per_axis)
+                    for axis in pending
+                ),
+                return_exceptions=True,
             )
-            # Check for exceptions in results
+
             errors_found: Dict[str, Exception] = {}
-            axis_list = [axis for axis in self.axes.values() if not axis.is_move_complete()] # Re-create list of axes that had pending moves
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    if i < len(axis_list): # Ensure index is valid
-                        axis_name = axis_list[i].name
-                        errors_found[axis_name] = result
-                        logger.error(f"Error waiting for move completion on axis '{axis_name}': {result}")
-                    else: # Should not happen if tasks and axis_list align
-                        logger.error(f"Mismatch in results and axis list during wait_for_all_moves_to_complete: {result}")
+            for axis, result in zip(pending, results):
+                if isinstance(result, BaseException):
+                    errors_found[axis.name] = result
+                    logger.error(
+                        f"Error waiting for move completion on axis "
+                        f"'{axis.name}': {result!r}"
+                    )
 
             if errors_found:
                 raise MultiAxisError("One or more axes failed to complete their move.", individual_errors=errors_found)

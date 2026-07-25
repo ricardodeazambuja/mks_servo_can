@@ -326,6 +326,181 @@ measuring something other than what it claims:
   was installed. Left in place, it would have made the new packaging job report
   success while testing the source tree. Removed.
 
+## L11. A group move reported success when the last axis failed — **fixed**
+
+Found while raising coverage on `multi_axis_controller.py` (44%). Same shape as
+L9, at the level that coordinates a whole machine.
+
+**Reproduction.** Three axes on the compliance simulator. Give the first two
+short moves and the third a long one, then wait with a timeout that the third
+cannot meet:
+
+```python
+await ax1.move_to_position_abs_user(30.0, wait=False)
+await ax2.move_to_position_abs_user(30.0, wait=False)
+await ax3.move_to_position_abs_user(3600.0, speed_user=20.0, wait=False)
+
+await controller.wait_for_all_moves_to_complete(timeout_per_axis=2.0)   # returns normally
+```
+
+ax3 never arrives. The call returns without raising, and the only trace is a
+debug-level line reading `Mismatch in results and axis list during
+wait_for_all_moves_to_complete:` with an empty message.
+
+**Cause.** The method built its task list from the axes that were still moving,
+awaited them, and then *rebuilt* that list to map results back to axis names by
+position:
+
+```python
+tasks = [axis.wait_for_move_completion(...) for axis in self.axes.values()
+         if not axis.is_move_complete()]
+results = await asyncio.gather(*tasks, return_exceptions=True)
+axis_list = [axis for axis in self.axes.values() if not axis.is_move_complete()]
+for i, result in enumerate(results):
+    if isinstance(result, Exception):
+        if i < len(axis_list):
+            errors_found[axis_list[i].name] = result
+        else:
+            logger.error("Mismatch in results and axis list ...")
+```
+
+The rebuild happens *after* the wait. By then every axis that finished has
+dropped out — including every axis that finished by **failing**, because a
+future resolved with an exception is `done()`. The two lists are therefore
+different lengths and the index is meaningless. Worse, the bounds check that
+reads as defensive is what does the damage: an error at an index past the end of
+the shorter list is logged and **discarded**, so `errors_found` stays empty, no
+`MultiAxisError` is raised, and the caller is told every move completed.
+
+The general case is worse than the reproduction: with the failure anywhere but
+first, the error is either dropped or attributed to the *wrong* axis — which
+sends whoever reads it to the wrong motor.
+
+**Fixed.** The axes and their coroutines are paired once, before the wait, and
+results are mapped through `zip(pending, results)`. The bounds check is gone
+because there is nothing left to be out of bounds. The check is also widened to
+`BaseException`, so a cancelled wait is reported rather than counted as success.
+
+The two sibling methods, `move_all_to_positions_abs_user` and
+`move_all_relative_user`, were checked and are correct: both build their axis
+list alongside their task list in one pass and never rebuild it. The latter even
+carries a comment saying the order must stay consistent — the hazard was known
+in one place and missed in the other.
+
+**Covered by** `tests/integration/test_multi_axis_group_errors.py`, against
+three real simulated motors, plus CAN ID 99 for the axis that answers nothing.
+Verified by mutation: restoring the post-wait rebuild, and separately dropping
+the error collection entirely, each turn two tests red.
+
+## L12. The precision analyzer graded a playback that never ran — **fixed**
+
+Found while raising coverage on `digitizer/precision_analyzer.py` (35%). L9's
+shape one layer up: L9 was a playback that stopped early and printed
+`PLAYBACK COMPLETE`; this is the analyzer that grades it.
+
+**Reproduction.**
+
+```python
+stats = PlaybackStats(planned_points=500, executed_points=1,
+                      average_position_error={"X": 0.0}, max_position_error={"X": 0.0},
+                      average_timing_error=0.0, max_timing_error=0.0, total_duration=1.0)
+PrecisionAnalyzer.assess_precision(stats)     # "EXCELLENT"
+```
+
+One point of five hundred, graded EXCELLENT — which is what
+`examples/basic_digitizer_demo.py` prints as its headline verdict.
+`assess_precision` never read `planned_points` or `executed_points` at all. The
+error statistics it *did* read are perfectly true and entirely misleading: they
+describe only the fraction of the job that happened.
+`generate_performance_report` computed `execution_success_rate` correctly right
+next to an `overall_assessment` that ignored it, so a report could read
+`EXCELLENT` beside a success rate of 0.002.
+
+**Fixed.** A `COMPLETENESS_CAPS` table now bounds the grade by how much of the
+sequence was executed: complete runs are unrestricted, a hair short caps at
+GOOD, below 95% caps at FAIR, and further down is POOR. The caps only ever
+demote, so a complete run with bad errors is still POOR.
+
+A second defect in the same function: `execution_success_rate` is
+`executed_points / planned_points`, and `planned_points` is
+`len(sequence.points)` with nothing rejecting an empty sequence — so an empty
+recording raised `ZeroDivisionError` from the report. It now yields 0.0, and an
+empty plan is graded POOR rather than treated as a complete run.
+
+**Covered by** `tests/unit/test_precision_analyzer.py` (35% → 98%), which also
+pins every grade boundary as inclusive. Verified by mutation: removing the cap,
+removing the zero-division guard, inverting the cap to pick the better grade,
+and disabling the empty-plan branch each turn tests red.
+
+One of those mutations initially *survived*, which is worth recording. The
+empty-plan test had been written with empty error dictionaries, which return
+POOR from an earlier branch and never reach the guard. What
+`playback_sequence` actually produces for an empty sequence is a dictionary of
+zeros, one per axis. The test only tests the guard when it is built the way the
+code that feeds it builds it.
+
+## L13. A superseded move's watcher wiped the state of the move that replaced it — **fixed**
+
+Found by the L11 fix, immediately. Fixing `wait_for_all_moves_to_complete` so it
+stops discarding errors turned a silent failure into a loud one, and what came
+out was a defect that had been happening all along: a digitizer playback of four
+points failing on its last point.
+
+**Reproduction.** `tests/integration/test_digitizer.py::test_playback_moves_the_motor_to_the_last_recorded_point`,
+run under `--cov` (which is slow enough to lose the race every time):
+
+```
+MotorError: Axis 'probe': move (CMD=F5) failed with status 0x00.
+```
+
+The frame log is what identifies it. Each supersede should register a credit for
+the abandoned move's abort frame; the second one does and the third does not:
+
+```
+Axis 'probe': superseding active move (new move initiated)
+CANInterface: expecting 1 stale notification(s) for ID=001 CMD=F5 (statuses=[0, 2, 3], ttl=1.00s)
+...
+CANInterface: discarded stale notification for ID=001 CMD=F5 status=00     <- correct
+Axis 'probe': superseding active move (new move initiated)                 <- no credit line
+...
+Axis 'probe': move (CMD=F5) failed with status 0x00.                       <- the abort, misattributed
+```
+
+**Cause.** `_supersede_active_move` cancels the previous move's completion
+watcher, and registers the credit only `if self._pending_move_command is not
+None`. But `task.cancel()` merely *schedules* cancellation. The cancelled
+watcher's `finally` ran at the next opportunity — after a new move had been
+dispatched and installed its own `_active_move_future` and
+`_pending_move_command` — and unconditionally executed
+`self._pending_move_command = None`, clearing the *new* move's command byte. The
+next supersede therefore found nothing to register a credit against, and the
+abort frame it should have swallowed resolved the new move's future as a
+failure. L1's symptom, reintroduced through the back door.
+
+The same `finally` also called `get_current_position_steps()`, which sets
+`_position_cache_is_fresh = True`. A dead watcher marking the cache fresh while
+a new move is in flight is precisely the precondition for L8 — an absolute move
+silently skipped against a stale cache.
+
+**Fixed.** The whole `finally` body is guarded by
+`if self._active_move_future is move_future:` — only the watcher that still owns
+the axis may touch shared state.
+
+**Covered by** `tests/integration/test_move_supersede.py::test_a_cancelled_watcher_does_not_clear_the_new_moves_state`,
+which yields to the event loop explicitly rather than sleeping, because the
+defect is a scheduling race and giving the cancelled task its turn is the point.
+The digitizer playback test guards the end-to-end consequence. Verified by
+mutation: removing the guard turns both red, and the digitizer one now fails
+without needing coverage to slow it down.
+
+**A test was deleted during this work**, which is worth recording because the
+standard here says a test that passes under mutation is not a test. A
+three-retarget end-to-end case was written to reproduce the failure and did not:
+the sleeps between dispatches let each abort frame arrive *before* the next
+command went out, where it is harmlessly unmatched rather than misattributed. It
+would have sat in the suite looking like a guard. The two tests above discriminate;
+that one did not, so it is gone.
+
 ---
 
 # Part 1 — Repository Review: what remains
