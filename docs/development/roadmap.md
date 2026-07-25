@@ -167,28 +167,33 @@ Weakest first:
 
 | module | coverage | what is untested |
 |---|---|---|
-| `can_interface.py` | 56% | the hardware branch, which no test touches |
 | `digitizer/base_digitizer.py` | 61% | recording, the file formats, the error paths |
-| `multi_axis_controller.py` | 61% | `move_linearly_to`, `home_all_axes`, sequential (`concurrent=False`) execution |
+| `multi_axis_controller.py` | 62% | `move_linearly_to`, `home_all_axes`, sequential (`concurrent=False`) execution |
 | `axis.py` | 66% | homing, calibration, work-mode changes |
+| `can_interface.py` | 72% | the driver call itself; everything above it now runs on `python-can`'s `virtual` bus |
 | `low_level_api.py` | 78% | the `MotorError` branches, which need a motor that answers `status = 0` |
 | `digitizer/surface_mapping.py` | 80% | `interactive_height_mapping`, which needs a person at a keyboard |
 
-**Start with `can_interface.py`**, now the weakest. The hardware branch cannot
-be exercised without a bus, but its construction and error paths can:
-`interface_type`, bitrate handling, and what happens when `python-can` raises on
-open.
+**Start with `digitizer/base_digitizer.py`**, now the weakest, and the module
+that records and replays what a machine did.
 
 `low_level_api.py` (49% → 78%) gave L19 — the simulator acknowledging IO writes
 and discarding them. What is left there is mostly the `MotorError` branches,
 which need a motor that answers `status = 0`; the simulator has no way to be
 asked for one.
 
+`can_interface.py` (56% → 72%) is worth reading before assuming any module
+"needs hardware". Its hardware branch is now exercised for real over
+`python-can`'s `virtual` interface — an in-process bus two `CANInterface`
+instances can join — so `can.interface.Bus`, `can.Notifier`,
+`AsyncioCanListener` and the dispatch loop all run; only the driver underneath
+differs.
+
 Note that `multi_axis_controller.py`'s remaining gap is mostly
 `_execute_on_axes(concurrent=False)` and `move_all_relative_user`. The
-concurrent path recovers axis names by splitting the asyncio task name on the
-method name — worth a test with an axis whose name contains the method name,
-which would truncate it.
+concurrent path's name recovery is fixed — it was splitting the asyncio task
+name on the method name, which truncated any axis whose own name contained it;
+see L20.
 
 **Done when:** each module worked on has tests that fail against the code as it
 was, and any defect found is recorded in `REVIEW_NOTES.md` and `CHANGELOG.md`.

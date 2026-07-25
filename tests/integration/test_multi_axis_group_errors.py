@@ -250,3 +250,87 @@ class TestWaitForAllMovesToComplete:
         await live_controller.wait_for_all_moves_to_complete(timeout_per_axis=10.0)
 
         assert live_controller.are_all_moves_complete()
+
+
+class TestResultsAreAttributedToTheRightAxis:
+    """
+    Which axis a group operation's result belongs to.
+
+    `_execute_on_axes` names each task `f"{axis_name}_{method_name}"` and used to
+    recover the axis afterwards by splitting that string back on the method
+    name. An axis whose own name contains the method name is truncated by that
+    split, so its result is filed against an axis that does not exist - and the
+    axis that actually failed gets no entry at all. Two such axes overwrite each
+    other's result outright.
+
+    The names below are deliberately awkward, but nothing forbids them: an axis
+    name is whatever the caller passes.
+    """
+
+    @pytest_asyncio.fixture
+    async def awkwardly_named_controller(self, compliance_can_interface: CANInterface):
+        """
+        Three real motors, two of them named after the method being called.
+
+        `enable_motor` is the group operation used here, so "z_enable_motor" and
+        "spare_enable_motor_backup" both contain it.
+        """
+        controller = MultiAxisController(can_interface_manager=compliance_can_interface)
+        controller.add_axis(_axis(compliance_can_interface, 1, "z_enable_motor"))
+        controller.add_axis(
+            _axis(compliance_can_interface, 2, "spare_enable_motor_backup")
+        )
+        controller.add_axis(_axis(compliance_can_interface, 3, "plain"))
+        await controller.initialize_all_axes()
+
+        yield controller
+
+        try:
+            await controller.stop_all_axes()
+            await asyncio.sleep(0.2)
+        except Exception:  # pragma: no cover - best-effort teardown
+            pass
+
+    @pytest.mark.asyncio
+    async def test_every_axis_gets_its_own_result(self, awkwardly_named_controller):
+        """
+        One entry per axis, under the name the caller gave it.
+
+        Splitting on the method name returns "z" and "spare", so the real names
+        are absent and the dictionary is a fifth shorter than the axis list.
+        """
+        results = await awkwardly_named_controller._execute_on_axes(
+            "enable_motor", concurrent=True
+        )
+
+        assert set(results) == set(awkwardly_named_controller.axes), (
+            f"results are keyed {sorted(results)} for axes "
+            f"{sorted(awkwardly_named_controller.axes)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_failure_is_reported_against_the_axis_that_failed(
+        self, compliance_can_interface: CANInterface
+    ):
+        """
+        The case that matters: the error has to name the motor to go and look at.
+
+        The failing axis is the one whose name contains the method name, so a
+        misattributed error points at an axis nobody configured.
+        """
+        controller = MultiAxisController(can_interface_manager=compliance_can_interface)
+        controller.add_axis(_axis(compliance_can_interface, 1, "plain"))
+        controller.add_axis(
+            _axis(compliance_can_interface, DEAD_CAN_ID, "y_enable_motor_spare")
+        )
+
+        results = await controller._execute_on_axes("enable_motor", concurrent=True)
+
+        failures = {
+            name: result
+            for name, result in results.items()
+            if isinstance(result, Exception)
+        }
+        assert set(failures) == {"y_enable_motor_spare"}, (
+            f"the failure was reported against {sorted(failures)}"
+        )

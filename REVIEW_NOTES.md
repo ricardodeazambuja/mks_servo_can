@@ -847,6 +847,60 @@ without waiting, so nothing downstream can reject a truncated value.
 
 ---
 
+## L20. A group operation filed its results against the wrong axis — **fixed**
+
+`MultiAxisController._execute_on_axes` names each task
+`f"{axis_name}_{method_name}"` and then recovered the axis afterwards by
+splitting that string back on the method name:
+
+```python
+axis_name_from_task = task.get_name().split(f"_{method_name}")[0]
+```
+
+An axis whose own name contains the method name is truncated by that split.
+
+**Reproduction.** Three axes named `z_enable_motor`,
+`spare_enable_motor_backup` and `plain`, running `enable_motor`:
+
+```
+results are keyed ['plain', 'spare', 'z'] for axes
+                  ['plain', 'spare_enable_motor_backup', 'z_enable_motor']
+```
+
+Two of the three results are filed under axes that do not exist, and the axes
+that ran have no entry at all. With a failure, the error names a motor nobody
+configured:
+
+```
+the failure was reported against ['y']      # the axis is called y_enable_motor_spare
+```
+
+Two axes that truncate to the same prefix overwrite each other outright, so one
+result — possibly the only failure — is lost.
+
+This is L11's lesson a second time: **do not recover an association you already
+had.** L11 rebuilt a list after awaiting it and mapped results back by position;
+this rebuilt a name after awaiting a task and mapped results back by string
+surgery. Both were correct only for inputs that happened not to exercise them.
+
+**Fixed.** Each task is recorded against its axis when it is created, in a
+`task_owners` dict, and looked up there afterwards. There is no parsing left.
+
+**Covered by** `tests/integration/test_multi_axis_group_errors.py`, against
+three real simulated motors with deliberately awkward names. Nothing forbids
+those names: an axis name is whatever the caller passes.
+
+**Alongside it, `can_interface.py` went from 56% to 72%.** The untested half
+was the hardware branch, and "needs hardware" turned out to be false:
+`python-can` ships a `virtual` interface, an in-process bus that two
+`CANInterface` instances can join and exchange real `can.Message` frames over.
+`can.interface.Bus`, `can.Notifier`, `AsyncioCanListener`, the dispatch loop,
+`send_and_wait_for_response` and its timeout are all exercised for real in
+`tests/unit/test_can_interface_hardware.py`; only the driver underneath is
+different. No defect was found there.
+
+---
+
 # Part 1 — Repository Review: what remains
 
 ## Done

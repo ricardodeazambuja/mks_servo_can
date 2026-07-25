@@ -205,6 +205,14 @@ class MultiAxisController:
         """
         results: Dict[str, Any] = {}
         tasks = []
+        # Which axis each task belongs to, recorded when the task is created.
+        # Recovering it afterwards from the task's *name* - by splitting on the
+        # method name - misattributes the result for any axis whose own name
+        # contains it: an axis called "z_home_axis_backup" running `home_axis`
+        # gets a task named "z_home_axis_backup_home_axis", which splits to "z".
+        # The error is then filed against an axis that does not exist and the
+        # one that actually failed has no entry at all.
+        task_owners: Dict[asyncio.Task, str] = {}
 
         for axis_name, axis in self.axes.items():
             method_to_call = getattr(axis, method_name, None)
@@ -215,12 +223,12 @@ class MultiAxisController:
                 continue
 
             if concurrent:
-                tasks.append(
-                    asyncio.create_task( # Changed from self._loop.create_task
-                        method_to_call(*args, **kwargs),
-                        name=f"{axis_name}_{method_name}",
-                    )
+                task = asyncio.create_task( # Changed from self._loop.create_task
+                    method_to_call(*args, **kwargs),
+                    name=f"{axis_name}_{method_name}",
                 )
+                task_owners[task] = axis_name
+                tasks.append(task)
             else:  # Sequential execution
                 try:
                     results[axis_name] = await method_to_call(*args, **kwargs)
@@ -238,13 +246,7 @@ class MultiAxisController:
             )
             # Process results from completed tasks
             for task in done:
-                # Extract axis name from task name (assuming format "AxisName_methodName")
-                try:
-                    axis_name_from_task = task.get_name().split(f"_{method_name}")[0]
-                except Exception: # pylint: disable=broad-except
-                    # Fallback if task name doesn't match expected format
-                    axis_name_from_task = f"UnknownTask_{task.get_name()}"
-
+                axis_name_from_task = task_owners[task]
                 try:
                     results[axis_name_from_task] = task.result()
                 except Exception as e:  # Catch exceptions from tasks

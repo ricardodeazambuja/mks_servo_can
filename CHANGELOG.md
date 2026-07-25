@@ -28,6 +28,24 @@ Simulator observability, and the library defects that observability exposed.
 
 ### Fixed
 
+- **A group operation filed its results against the wrong axis (L20).**
+  `MultiAxisController._execute_on_axes` named each task
+  `f"{axis_name}_{method_name}"` and recovered the axis afterwards by splitting
+  that string back on the method name, so an axis whose own name contains the
+  method name was truncated. Three axes named `z_enable_motor`,
+  `spare_enable_motor_backup` and `plain` came back keyed `['plain', 'spare',
+  'z']`: two results filed against axes that do not exist, and the axes that ran
+  with no entry at all. A failure was reported against a motor nobody
+  configured, and two axes truncating to the same prefix overwrote each other, so
+  one result — possibly the only failure — was lost. This is L11's lesson a
+  second time: do not recover an association you already had. Each task is now
+  recorded against its axis when it is created.
+  Alongside it, `can_interface.py` went from 56% to 72%. "The hardware branch
+  needs hardware" turned out to be false: `python-can` ships a `virtual`
+  interface, an in-process bus that two `CANInterface` instances can join and
+  exchange real frames over, so `can.interface.Bus`, `can.Notifier`,
+  `AsyncioCanListener`, the dispatch loop and `send_and_wait_for_response` are
+  now exercised for real. No defect was found there.
 - **The simulator acknowledged IO port writes and discarded them (L19).** The
   `0x36` handler in `motor_model.py` had its whole decode commented out under a
   "Simplified: just acknowledge" note, so `write_io_port` returned `status = 1`
