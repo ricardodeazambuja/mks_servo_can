@@ -2,8 +2,8 @@
 
 Repository: `/home/ricardodeazambuja/backup/GitStuff/mks_servo_can`
 Branch: `library-hardening`, **nothing pushed** (no upstream tracking branch).
-Baseline: commit `d989efd`, 561 tests passing / 30 skipped, `ruff check .` clean,
-library coverage 66%, documentation baseline at 26 known problems.
+Baseline: 561 tests passing / 30 skipped, `ruff check .` clean, library coverage
+66%, **documentation baseline empty** (63 → 26 → 0 known problems).
 
 Context: a Python library for MKS SERVO42D/57D stepper drivers over CAN, plus a
 simulator that emulates the same protocol so the library can be developed with no
@@ -105,65 +105,44 @@ answer contradicts what the simulator does, in which case the simulator changes.
 
 ---
 
-## Item 2 — Finish the documentation: 26 pages that were never written
-
-Every API mismatch is gone (63 problems down to 26). What remains is a backlog of
-missing documents, all linked from `docs/README.md` and already marked
-*(planned)* there, all tracked as `dead-link` in
-`tests/fixtures/docs_known_issues.json`.
-
-Each is a **decision**, not a repair: write the page, or drop the index entry.
-Grouped so it can be decided in one pass:
-
-| group | files | suggested call |
-|---|---|---|
-| API reference | `api_reference/library/{axis,can_interface,constants,exceptions,kinematics,low_level_api,multi_axis_controller}.md`, `api_reference/simulator/{cli,motor_model,virtual_can_bus}.md` | Generate from docstrings, or drop the entries and point at the modules — the docstrings already carry the design rationale and cannot drift |
-| tutorials | `tutorials/{single_axis_sim,single_axis_hw,cartesian_robot_example,rrr_arm_example,two_link_planar_arm_example}.md` | Point at the runnable scripts in `examples/`, which are tested; a prose copy would drift |
-| development | `development/{setup,running_tests,contributing,coding_standards}.md` | Worth writing — short, and the material is in `README.md`, `pyproject.toml` and the CI workflow already |
-| simulator guides | `user_guides/simulator/{cli_options,logs,advanced_simulation}.md` | Worth writing — derivable from `--help` and the debug API |
-| appendices & strays | `appendices/{glossary,mks_parameters}.md`, `user_guides/library/movement.md`, `user_guides/library/robot_control.md` | `movement.md` is a stale duplicate of `movements.md` — drop it. `mks_parameters.md` duplicates the packaged manual spec — point at it. `robot_control.md` is worth writing from `robot_kinematics.py` |
-
-**Workflow:** fix or delete, run `pytest tests/test_docs_api.py`, then delete the
-entries it reports as stale. The gate is a ratchet — a new finding fails the
-build and a baseline entry that no longer occurs *also* fails, so the count can
-only shrink. Do not add entries.
-
-**Done when:** the baseline is empty and `docs/README.md` has no *(planned)*
-markers left, or the remaining entries are ones a maintainer has explicitly
-decided to keep as debt with a note saying why.
-
----
-
-## Item 3 — Publish to PyPI *(needs maintainer decisions and credentials)*
+## Item 2 — Publish to PyPI *(needs credentials at the last step)*
 
 `pip install mks-servo-can` still fails; installation means cloning and two
 editable installs from subdirectories. `REVIEW_NOTES.md` Part 1 ranks this as the
 largest remaining barrier to anyone else using the library. L7 — the packaged
 manual spec — was its prerequisite and is done.
 
-What has to happen first, in order:
+**The maintainer's decision is made: the simulator becomes an extra of the
+library, `mks-servo-can[simulator]`, not a separate distribution.** It already
+hard-depends on the library, so a second distribution bought nothing but a
+second version number to drift. This unblocks the rest.
 
-1. **A `pyproject.toml` per distribution**, replacing the two `setup.py` files.
-   Keep `package_data`/`MANIFEST.in` behaviour: `mks_servo_can/data/*.json` must
-   stay in both the wheel and the sdist.
+What has to happen, in order:
+
+1. **One `pyproject.toml`**, replacing both `setup.py` files, declaring the
+   `simulator` extra (`click`, `rich`, `fastapi`, `uvicorn`) and keeping the
+   `mks_servo_simulator` console-script entry points. Keep
+   `package_data`/`MANIFEST.in` behaviour: `mks_servo_can/data/*.json` must stay
+   in both the wheel and the sdist.
 2. **One source of the version number.** It is currently parsed out of
-   `__init__.py` by a regex in each `setup.py`, and the two distributions can
-   drift apart.
-3. **A decision:** does the simulator stay a separate distribution, or become an
-   extra of the library (`mks-servo-can[simulator]`)? It already hard-depends on
-   the library. *This is the maintainer's call and blocks the rest.*
-4. **A CI job that builds both and runs the suite against the installed
-   packages**, not the source tree. This is what would have caught L7, and it is
-   the only guard that keeps packaging honest.
-5. Then publish — needs credentials this work cannot supply.
+   `__init__.py` by a regex in each `setup.py`.
+3. **A CI job that builds the distribution and runs the suite against the
+   installed package**, not the source tree. This is what would have caught L7,
+   and it is the only guard that keeps packaging honest.
+4. Then publish — needs credentials this work cannot supply.
+
+Note: `mks_servo_can_library/build/` is a stale artefact directory checked into
+the working tree. It shadows nothing at runtime but will confuse a packaging
+change; delete it.
 
 **Done when:** `pip install mks-servo-can` works in a clean virtualenv on a
-machine that has never seen the repository, and the simulator starts from that
-install with a non-empty `/commands`.
+machine that has never seen the repository, and
+`pip install mks-servo-can[simulator]` starts a simulator from that install with
+a non-empty `/commands`.
 
 ---
 
-## Item 4 — Coverage where it is thinnest
+## Item 3 — Coverage where it is thinnest
 
 Library coverage is 66%, up from 58%. The digitizer's base class went from 11% to
 61% and turned up four defects (recorded as L9) — expect the same from the rest.
@@ -198,7 +177,7 @@ effects.
 
 ---
 
-## Item 5 — Deterministic simulated time *(largest; do last)*
+## Item 4 — Deterministic simulated time *(largest; do last)*
 
 `tests/determinism/` has been an empty placeholder since May 2025 — the same
 state `tests/hil/` was in before it was built out. Every simulator test paces
@@ -229,10 +208,19 @@ documented in the simulator guide.
 
 1. **Item 1 whenever the bench is free** — it is asynchronous on everything else
    and is the only item that can invalidate work already done.
-2. **Items 2 and 3 together** as a release-readiness pass. Item 3 step 3 needs a
-   maintainer decision before the rest can proceed.
-3. **Item 4** continuously, a module at a time.
-4. **Item 5** when the rest is quiet; it touches the simulator's core loop.
+2. **Item 2** as a release-readiness pass; the decision that blocked it is made.
+3. **Item 3** continuously, a module at a time.
+4. **Item 4** when the rest is quiet; it touches the simulator's core loop.
+
+### Done and removed from this list
+
+- **Documentation.** The `docs_known_issues.json` baseline is empty: every
+  Python block in `docs/` and `README.md` names an API that exists and every
+  internal link resolves. Nine pages were written (`development/*`,
+  `user_guides/simulator/*`, `user_guides/library/robot_control.md`,
+  `appendices/glossary.md`) and the rest of the index was repointed at the
+  source, the docstrings and the scripts in `examples/` — things that cannot
+  drift. See `CHANGELOG.md` `[Unreleased]` → Documentation.
 
 ## Definition of done — the standard the fixed defects were held to
 

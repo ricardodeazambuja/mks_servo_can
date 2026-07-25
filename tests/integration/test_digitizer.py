@@ -19,9 +19,8 @@ import json
 import pytest
 import pytest_asyncio
 
-from mks_servo_can import Axis, CANInterface, RotaryKinematics
+from mks_servo_can import Axis, CANInterface, RotaryKinematics, exceptions
 from mks_servo_can import constants as const
-from mks_servo_can import exceptions
 from mks_servo_can.digitizer import MotorDigitizer
 from mks_servo_can.digitizer.data_structures import (
     DigitizedPoint,

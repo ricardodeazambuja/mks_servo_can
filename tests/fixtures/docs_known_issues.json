@@ -1,31 +1,4 @@
 {
-  "_comment": "Documentation problems that predate the check in tests/test_docs_api.py. This list may only shrink: fix a doc, run the test, and delete the entries the test reports as stale. Never add to this file - a new finding means the documentation you just wrote references something that does not exist.",
-  "known_issues": [
-    "dead-link|docs/README.md|api_reference/library/axis.md",
-    "dead-link|docs/README.md|api_reference/library/can_interface.md",
-    "dead-link|docs/README.md|api_reference/library/constants.md",
-    "dead-link|docs/README.md|api_reference/library/exceptions.md",
-    "dead-link|docs/README.md|api_reference/library/kinematics.md",
-    "dead-link|docs/README.md|api_reference/library/low_level_api.md",
-    "dead-link|docs/README.md|api_reference/library/multi_axis_controller.md",
-    "dead-link|docs/README.md|api_reference/simulator/cli.md",
-    "dead-link|docs/README.md|api_reference/simulator/motor_model.md",
-    "dead-link|docs/README.md|api_reference/simulator/virtual_can_bus.md",
-    "dead-link|docs/README.md|appendices/glossary.md",
-    "dead-link|docs/README.md|appendices/mks_parameters.md",
-    "dead-link|docs/README.md|development/coding_standards.md",
-    "dead-link|docs/README.md|development/contributing.md",
-    "dead-link|docs/README.md|development/running_tests.md",
-    "dead-link|docs/README.md|development/setup.md",
-    "dead-link|docs/README.md|tutorials/cartesian_robot_example.md",
-    "dead-link|docs/README.md|tutorials/rrr_arm_example.md",
-    "dead-link|docs/README.md|tutorials/single_axis_hw.md",
-    "dead-link|docs/README.md|tutorials/single_axis_sim.md",
-    "dead-link|docs/README.md|tutorials/two_link_planar_arm_example.md",
-    "dead-link|docs/README.md|user_guides/library/movement.md",
-    "dead-link|docs/README.md|user_guides/library/robot_control.md",
-    "dead-link|docs/README.md|user_guides/simulator/advanced_simulation.md",
-    "dead-link|docs/README.md|user_guides/simulator/cli_options.md",
-    "dead-link|docs/README.md|user_guides/simulator/logs.md"
-  ]
+  "_comment": "Documentation problems that predate the check in tests/test_docs_api.py. This list may only shrink: fix a doc, run the test, and delete the entries the test reports as stale. Never add to this file - a new finding means the documentation you just wrote references something that does not exist. The list is now EMPTY, which is the point it was always aiming at: every Python block in docs/ and README.md refers to an API that exists, and every internal link resolves. There is no longer any such thing as an acceptable pre-existing problem here - a failure of test_no_new_problems is something you just wrote.",
+  "known_issues": []
 }

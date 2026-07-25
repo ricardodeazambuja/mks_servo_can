@@ -167,7 +167,34 @@ Simulator observability, and the library defects that observability exposed.
   baseline entry that no longer occurs also fails, with an instruction to delete
   it. So the documentation cannot get worse and the debt can only shrink.
 - **The documentation index no longer advertises documents that do not exist.**
-  Entries with no file behind them are marked *(planned)*, and the index says so.
+  Every link in `docs/README.md` now resolves, and the *(planned)* markers are
+  gone. The 26 remaining dead links were closed by deciding each one rather than
+  by writing 26 pages: nine were worth writing and are new documents, and the
+  rest were replaced by pointers to something executable.
+  **Written:** `development/setup.md`, `development/running_tests.md`,
+  `development/coding_standards.md`, `development/contributing.md`,
+  `user_guides/simulator/cli_options.md`, `user_guides/simulator/logs.md`,
+  `user_guides/simulator/advanced_simulation.md`,
+  `user_guides/library/robot_control.md`, `appendices/glossary.md`.
+  **Repointed:** the eight planned API-reference pages now link to the modules
+  themselves — the docstrings already carry the signatures *and* the reasoning
+  behind them, and cannot drift; the five planned tutorials now link to the
+  scripts in `examples/`, which are linted and run; `mks_parameters.md` would
+  have summarised `mks_servo_can/data/manual_commands_v106.json`, which is what
+  the code is actually checked against, so it links there instead; and
+  `user_guides/library/movement.md` was a stale duplicate of the `movements.md`
+  that exists.
+- **The documentation baseline is empty.**
+  `tests/fixtures/docs_known_issues.json` went 63 → 26 → 0. Every Python block
+  in `docs/` and `README.md` names an API that exists and every internal link
+  resolves, so `test_no_new_problems` failing now means the text was written in
+  that change. Verified by mutation: a dead link and a call to a non-existent
+  `Axis` method were added and both were caught.
+- **Documented the simulator's boundary of proof.** The new simulator guides say
+  plainly what a green run against it does *not* establish — it was written from
+  the same reading of the manual as the library, so it agrees with a shared
+  misreading as readily as with a correct implementation, and it models no
+  physics (no heating, lost steps, stall, supply sag or bus EMI).
 - **Added `docs/development/roadmap.md`** — the open defects, the order to
   address them in, and how to verify each. `docs/README.md` had reserved a link
   for this since the beginning; it was one of the 27 dead ones.
@@ -183,10 +210,7 @@ Part 0) are all fixed above. Two things remain open:
   0xF5 emit an abort frame when re-targeted mid-move, is the sign convention
   really CCW-positive, and does CanRSP suppress replies to reads as well as to
   the run commands. The fixes above are written to be correct under either
-  answer to the first and third. See `docs/development/roadmap.md` item 2.
-- **Documentation debt.** 63 known problems remain in
-  `tests/fixtures/docs_known_issues.json`. The gate stops it growing; burning it
-  down is item 3.
+  answer to the first and third. See `docs/development/roadmap.md` item 1.
 
 ## [0.3.0] - 2026-07-24
 

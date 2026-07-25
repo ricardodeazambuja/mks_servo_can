@@ -160,16 +160,44 @@ It was reachable rather than theoretical: the homing predicate registered by
   `tests/unit/test_regressions.py` extended to cover all of them, so the next one
   cannot slip back in.
 
-## L6. Documentation does not match the API — **fixed; 26 unwritten pages remain**
+## L6. Documentation does not match the API — **fixed; baseline now empty**
 
 `tests/test_docs_api.py` enforces this, as a ratchet over
 `tests/fixtures/docs_known_issues.json`: new problems fail the build and the
 baseline can only shrink.
 
-**Every API mismatch is now fixed — 63 findings down to 26.** What remains is 26
-documents that were never written, all linked from `docs/README.md` and marked
-*(planned)* there; see `docs/development/roadmap.md` item 2, which groups them by
-the decision each one needs.
+**Closed. 63 findings → 26 → 0.** The API mismatches were fixed first; the 26
+that remained were documents that had been outlined in `docs/README.md` and never
+written. Each was decided rather than mechanically produced:
+
+- **Nine were worth writing** and now exist — `development/setup.md`,
+  `development/running_tests.md`, `development/coding_standards.md`,
+  `development/contributing.md`, `user_guides/simulator/cli_options.md`,
+  `user_guides/simulator/logs.md`,
+  `user_guides/simulator/advanced_simulation.md`,
+  `user_guides/library/robot_control.md`, `appendices/glossary.md`.
+- **The rest were repointed at something executable**, which is the more durable
+  answer: the eight planned API-reference pages link to the modules, whose
+  docstrings carry both the signatures and the reasoning; the five planned
+  tutorials link to the scripts in `examples/`, which are linted and run;
+  `mks_parameters.md` would have summarised
+  `mks_servo_can/data/manual_commands_v106.json`, which is what the code is
+  checked against, so it links there; and `movement.md` was a stale duplicate of
+  the `movements.md` that exists.
+
+The gate was verified by mutation with the baseline empty: a dead link and a
+call to a non-existent `Axis` method were added to a page and both were caught.
+
+Writing the simulator guides surfaced one behaviour worth recording, because it
+is the house defect's shape and is not a code change: **`--config-profile`
+silently overrides the flags beside it on the same command line.** It is applied
+after parsing and overwrites `--host`, `--port`, `--latency-ms`,
+`--refresh-rate`, `--no-color`, `--json-output`, `--debug-api` and
+`--textual-dashboard`, and the motor list is taken wholly from the profile — so
+`--config-profile bench --num-motors 6` does not give six motors and does not
+say so. Documented in `user_guides/simulator/cli_options.md` rather than
+changed, since a profile overriding the command line is a defensible design; but
+a caller who does not know it will be debugging the wrong thing.
 
 The original finding, for reference. A mechanical check of the code blocks in
 `docs/` and `README.md` found **26 references to things that do not exist**
@@ -264,7 +292,9 @@ from 223 tests at 53% coverage to 478 at 58%.
 
 2. **Publish to PyPI.** `pip install mks-servo-can` still fails; installation
    means cloning and two editable installs from subdirectories. This is the
-   largest remaining barrier to anyone else using the library.
+   largest remaining barrier to anyone else using the library. The decision that
+   blocked it has been made: the simulator becomes an extra,
+   `mks-servo-can[simulator]`, rather than a second distribution.
 
 3. **Test the digitizer.** `base_digitizer.py` is at 11% coverage and
    `surface_mapping.py` at 17% — by far the weakest area, and the one most
