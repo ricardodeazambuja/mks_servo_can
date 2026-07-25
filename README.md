@@ -85,10 +85,13 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 
 ## Project Structure
 
-The project is organized into two main Python packages and supporting directories:
+Two Python packages in one distribution (`mks-servo-can`, with the simulator as
+its `[simulator]` extra), plus supporting directories:
 
 ```text
 mks_servo_can/
+├── pyproject.toml                   # Packaging and tooling for the whole repo
+├── MANIFEST.in                      # Keeps the manual transcription in the sdist
 ├── mks_servo_can_library/           # The installable Python library (mks_servo_can)
 │   ├── mks_servo_can/               # Source code for the library
 │   │   ├── kinematics/              # Kinematic transformation modules
@@ -108,7 +111,6 @@ mks_servo_can/
 │   │   ├── constants.py
 │   │   ├── crc.py
 │   │   └── exceptions.py
-│   └── setup.py                     # Packaging script for the library
 ├── mks_servo_simulator/             # The CLI simulator (mks_servo_simulator)
 │   ├── mks_simulator/               # Source code for the simulator
 │   │   ├── init.py
@@ -124,7 +126,6 @@ mks_servo_can/
 │   │   │   ├── sdk_client.py        # Client helper for the debug API
 │   │   │   └── http_debug_server.py # HTTP REST API for programmatic access
 │   │   └── main.py                  # Entry point for the simulator CLI
-│   └── setup.py                     # Packaging script for the simulator
 ├── tests/                           # Test suite (478 tests)
 │   ├── unit/                        # Fast, mocked; no simulator needed
 │   ├── integration/                 # Against a live simulator
@@ -160,7 +161,10 @@ mks_servo_can/
 
 ### Prerequisites
 
-* Python 3.8 or higher.
+* Python 3.9 or higher. 3.9 is the floor and it is tested — the CI matrix runs
+  3.9 through 3.13 and `tests/unit/test_regressions.py` asserts the package
+  still imports on the oldest. (The old packaging metadata claimed 3.8; nothing
+  ever tested it.)
 * It is highly recommended to use a Python virtual environment.
 
 **For real hardware interaction:**
@@ -191,34 +195,38 @@ pip install -r requirements.txt
 
 ### Installation
 
-**1. MKS Servo CAN Library (`mks-servo-can`)**
+There is **one** distribution, `mks-servo-can`. The simulator is an extra of it,
+not a separate package:
 
-It's recommended to install the library in editable mode for development. From the project root directory:
 ```bash
-cd mks_servo_can_library
-pip install -e .
-```
-For a standard installation:
-```bash
-pip install .
+pip install .                # the library alone
+pip install .[simulator]     # library + the mks-servo-simulator command
+pip install -e .[dev]        # editable, plus the test tooling; for working on it
 ```
 
-**2. MKS Servo Simulator (`mks-servo-simulator`)**
+from the repository root. (Not yet on PyPI — see `docs/development/roadmap.md`
+item 2 for what is left.)
 
-Similarly, install the simulator in editable mode for development. From the project root directory:
-```bash
-cd mks_servo_simulator
-pip install -e .
-```
-This makes the `mks-servo-simulator` command available in your environment. For a standard installation:
-```bash
-pip install .
-```
+The extras, and why they are separate:
 
-**Development Note on `PYTHONPATH`:**
-If you are developing and have not installed the library in a way that's discoverable by the simulator (e.g., not using `pip install -e .` for the library, or complex project structures), you might need to adjust your `PYTHONPATH`. For instance, when running the simulator from the project root, you might use:
-`PYTHONPATH=$(pwd) mks-servo-simulator [options]`
-Using editable installs (`pip install -e .`) for both packages within the same virtual environment is generally the smoothest approach for development.
+| extra | pulls in | needed for |
+|---|---|---|
+| `simulator` | click, rich, fastapi, uvicorn | the `mks-servo-simulator` command, its browser dashboard and its HTTP debug API |
+| `dashboard` | textual | only the legacy `--textual-dashboard` TUI |
+| `monitoring` | psutil | only the advanced performance-monitoring panels |
+| `dev` | all of the above, plus pytest and ruff | running the test suite |
+
+Everything the supported surfaces need is in `simulator`. `dashboard` and
+`monitoring` are genuinely optional: without them you lose one flag and a few
+panels respectively, and nothing else.
+
+The library and simulator used to be two distributions installed from two
+subdirectories, each with its own `setup.py` and its own version number. They
+are now one, because the simulator hard-depends on the library — it shares its
+constants, CRC and motion model rather than reimplementing them — so a second
+distribution bought nothing but a version that could drift away from the first.
+No `PYTHONPATH` fiddling is needed any more; a single install puts both packages
+in the same environment by construction.
 
 ## Usage
 
@@ -543,12 +551,12 @@ index. Alongside it:
 
 ### Dependencies for Development
 
-Install development dependencies (for linting, testing, etc.) using the `[dev]` extra. From the project root:
+One command, from the project root:
 ```bash
-pip install -e ./mks_servo_can_library[dev]
-pip install -e ./mks_servo_simulator[dev]
+pip install -e .[dev]
 ```
-Alternatively, if a combined `requirements-dev.txt` is created, use that.
+`[dev]` includes `[simulator]`, `[dashboard]` and `[monitoring]`, so the whole
+suite is runnable from that one install.
 
 ### Running Tests
 

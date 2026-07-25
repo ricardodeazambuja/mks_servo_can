@@ -18,9 +18,7 @@ and enough.
 
 ## Clone and install
 
-The repository holds two distributions in subdirectories — the library in
-`mks_servo_can_library/` and the simulator in `mks_servo_simulator/`. Both are
-installed editable into the same virtual environment:
+One distribution, one command:
 
 ```bash
 git clone https://github.com/ricardodeazambuja/mks_servo_can.git
@@ -29,18 +27,32 @@ cd mks_servo_can
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
-pip install -e ./mks_servo_can_library[dev]
-pip install -e ./mks_servo_simulator
+pip install -e .[dev]
 ```
 
-Install the library **first**. The simulator declares a hard dependency on it —
-it shares the library's constants, CRC and motion model rather than
-reimplementing them — and installing the library from the checkout first stops
-pip reaching out to PyPI for it.
+The two packages still live in subdirectories — the library in
+`mks_servo_can_library/mks_servo_can/` and the simulator in
+`mks_servo_simulator/mks_simulator/` — but they are built and installed as one
+distribution, `mks-servo-can`, declared in the root `pyproject.toml`. There is
+no `setup.py` in either subdirectory any more, and installing from one of them
+will not work.
 
-The simulator also needs `click`, `rich`, `fastapi` and `uvicorn`; they come in
-via its own `install_requires`. `psutil` is optional and only enables the
-advanced performance-monitoring panels.
+`[dev]` is the extra to use while working on the project: it pulls in every
+other extra plus the test tooling, so the whole suite is runnable from that one
+install. The extras exist so that a *user* need not take what they do not use:
+
+| extra | pulls in | needed for |
+|---|---|---|
+| `simulator` | click, rich, fastapi, uvicorn | the `mks-servo-simulator` command, its browser dashboard and its debug API |
+| `dashboard` | textual | only the legacy `--textual-dashboard` TUI |
+| `monitoring` | psutil | only the advanced performance-monitoring panels |
+| `dev` | all of the above + pytest, ruff | the test suite |
+
+`dashboard` and `monitoring` are genuinely optional and
+`tests/unit/test_optional_dependencies.py` keeps them that way — it blocks each
+module at import time and asserts the simulator still starts. That test exists
+because `textual` was once imported at module scope and declared nowhere, which
+made a clean install of the simulator fail before it parsed an argument.
 
 ## Check it works
 
@@ -68,18 +80,11 @@ under `[tool.ruff]`. There is no per-package configuration and no separate
 ever enforced. Point your editor at `ruff` and it will agree with CI. See
 [Coding Standards](coding_standards.md).
 
-## A note on `PYTHONPATH`
-
-If the simulator cannot find `mks_servo_can`, the usual cause is that the two
-packages were installed into different environments, or that the library was
-never installed at all and you are relying on the current working directory.
-Editable installs of both into one virtualenv is the arrangement everything else
-here assumes; reach for `PYTHONPATH` only if you have a reason not to.
-
 ## Where things live
 
 | path | what it is |
 |---|---|
+| `pyproject.toml` | packaging, extras, entry points, ruff and coverage config — all of it |
 | `mks_servo_can_library/mks_servo_can/` | the library |
 | `mks_servo_can_library/mks_servo_can/data/` | the packaged transcription of the MKS manual, read at runtime by both the simulator and the conformance tests |
 | `mks_servo_simulator/mks_simulator/` | the simulator |

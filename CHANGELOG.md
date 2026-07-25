@@ -113,6 +113,75 @@ Simulator observability, and the library defects that observability exposed.
 - **`record_error` had no callers anywhere**, so the `errors` array was
   permanently empty and every error display was decorative.
 
+### Packaging
+
+- **One distribution.** `mks-servo-can` and `mks-servo-simulator` were two
+  distributions installed from two subdirectories with a `setup.py` each. They
+  are now one: `pip install mks-servo-can[simulator]`. The simulator hard-depends
+  on the library — it shares its constants, CRC and motion model rather than
+  reimplementing them — so a second distribution bought nothing but a second
+  version number, which had already drifted (the simulator said 0.1.0 while the
+  library said 0.3.0). `mks_simulator.__version__` now re-exports the library's,
+  and the packaging job asserts they agree.
+- **Everything moved into the root `pyproject.toml`**, replacing both `setup.py`
+  files and `mks_servo_can_library/MANIFEST.in`. The packages keep their
+  historical directories, mapped through `package-dir`; moving them into a
+  `src/` tree would have rewritten every import path in the tests and examples
+  for no packaging benefit. `mks_servo_can/data/*.json` stays in both the wheel
+  (via `package-data`) and the sdist (via a root `MANIFEST.in`), which is
+  defect L7's guard at the artefact level.
+- **`requires-python` is now `>=3.9`.** Both `setup.py` files claimed 3.8, which
+  nothing had ever tested; 3.9 is the floor the CI matrix and
+  `tests/unit/test_regressions.py` actually enforce.
+- **The wheel no longer installs a top-level `examples` package.** The
+  simulator's `setup.py` used `find_packages()`, which picked up
+  `mks_servo_simulator/examples/` because it has an `__init__.py` — so
+  installing the simulator put a generically-named `examples` package into
+  site-packages, where it would shadow or be shadowed by anyone else's. The
+  package list is now explicit.
+- **Optional extras that are genuinely optional.** `simulator` (click, rich,
+  fastapi, uvicorn) is everything the supported surfaces need; `dashboard`
+  (textual) buys only the legacy `--textual-dashboard` TUI; `monitoring`
+  (psutil) only the advanced performance panels; `dev` pulls in all of them plus
+  pytest and ruff.
+- **A CI job that builds the distribution and runs the suite against the
+  installed package**, not the source tree — plus checks that the manual
+  transcription is in both artefacts, that the simulator starts from the install
+  and serves a non-empty `/commands`, and that the metadata passes
+  `twine check`. This is the only job that can catch a packaging defect, and it
+  caught one the moment it was written (L10, below). Both L7 and L10 were
+  invisible to the existing job, because an editable install of a checkout has
+  the whole repository on hand.
+
+### Fixed (packaging)
+
+- **`pip install mks-servo-can[simulator]` produced a simulator that could not
+  start (L10).** `cli.py` imported the legacy Textual dashboard at module scope,
+  making `textual` a hard requirement of the entire simulator — including
+  `--debug-api` and `--json-output`, which have nothing to do with a TUI — while
+  it was declared in no install requirement anywhere. `mks-servo-simulator` died
+  with `ModuleNotFoundError: No module named 'textual'` before parsing a single
+  argument. The import now happens inside the `--textual-dashboard` branch and
+  fails there with a message naming the extra to install.
+  Nothing had caught it because every environment that has ever run this suite
+  had `textual` installed for `tests/test_textual_dashboard.py` — a dependency
+  present for an unrelated reason in every environment that tested it.
+  `tests/unit/test_optional_dependencies.py` blocks each optional module at
+  import time in a subprocess and asserts the simulator still starts; it
+  includes a test that the block itself works, so the others cannot pass
+  vacuously.
+- **`tests/simulator_compliance/test_simulator_cli.py` tested whichever
+  simulator was first on `PATH`.** It resolved the console script with
+  `shutil.which`, which need not belong to the interpreter running the tests, so
+  on a machine with an older install elsewhere it exercised that one and
+  reported on code nobody was looking at. It now prefers the script beside
+  `sys.executable`. Found by running the suite against a wheel in a fresh
+  virtualenv, where the failure first looked like a packaging defect.
+- **`tests/unit/test_digitizer_integration.py` put the source tree on
+  `sys.path`.** That made it import `mks_servo_can` from the checkout no matter
+  what was installed, so the packaging job it now runs under would have silently
+  tested the source tree and passed either way. Removed.
+
 ### Changed
 
 - **Feedback polling costs one round trip per axis instead of three.**

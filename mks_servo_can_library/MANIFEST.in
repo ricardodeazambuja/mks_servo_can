@@ -1,4 +1,0 @@
-# The manual's command transcription must be in the source distribution as well
-# as the wheel: the simulator reads it at import time, so a build without it
-# produces a package whose command reference is silently empty (L7).
-include mks_servo_can/data/*.json

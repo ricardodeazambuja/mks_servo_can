@@ -32,11 +32,10 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          # The simulator depends on the library, so install the library first
-          # from the local checkout rather than letting pip reach for PyPI.
-          pip install -e ./mks_servo_can_library[dev]
-          pip install --no-deps -e ./mks_servo_simulator
-          pip install click rich fastapi uvicorn httpx pytest-cov
+          # One distribution now; the simulator is an extra of it. The [dev]
+          # extra pulls in [simulator], [dashboard] and [monitoring] as well as
+          # the test tooling, so the whole suite is runnable from one install.
+          pip install -e .[dev]
 
       - name: Run tests
         # HIL tests skip automatically without MKS_HIL_CHANNEL set.
@@ -50,6 +49,114 @@ jobs:
         with:
           name: coverage
           path: coverage.xml
+
+  # Builds the distribution and runs the suite against the *installed* package,
+  # not the source tree. This is the only job that can catch a packaging defect,
+  # and two have shipped for want of it:
+  #   L7  - the manual transcription was read out of tests/, which an installed
+  #         wheel does not have, so /commands was silently empty.
+  #   L10 - `textual` was imported at module scope by cli.py and declared in no
+  #         install requirement, so `mks-servo-simulator` from a clean install
+  #         died before parsing an argument. Every environment that ran the
+  #         tests happened to have textual installed for a different reason.
+  # Both were invisible to the `test` job because an editable install of a
+  # checkout has the whole repository on hand.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build the distribution
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: The manual transcription must be in both artefacts
+        # Guards L7 at the artefact level. tests/unit/test_manual_spec_packaging.py
+        # checks the loader; this checks that there is anything to load.
+        run: |
+          python - <<'EOF'
+          import pathlib, tarfile, zipfile
+
+          wheel = next(pathlib.Path("dist").glob("*.whl"))
+          sdist = next(pathlib.Path("dist").glob("*.tar.gz"))
+
+          in_wheel = [n for n in zipfile.ZipFile(wheel).namelist()
+                      if n.endswith("manual_commands_v106.json")]
+          in_sdist = [n for n in tarfile.open(sdist).getnames()
+                      if n.endswith("manual_commands_v106.json")]
+
+          assert in_wheel, f"the manual transcription is missing from {wheel.name}"
+          assert in_sdist, f"the manual transcription is missing from {sdist.name}"
+          print("wheel:", in_wheel)
+          print("sdist:", in_sdist)
+          EOF
+
+      - name: Install the wheel into a clean environment
+        # No checkout on sys.path: the venv is created outside the working
+        # directory and the wheel is installed by path.
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/venv/bin/pip" install "$(echo dist/*.whl)[dev]"
+          "$RUNNER_TEMP/venv/bin/python" -c "
+          import mks_servo_can, mks_simulator
+          print(mks_servo_can.__file__)
+          assert 'site-packages' in mks_servo_can.__file__, 'testing the source tree, not the install'
+          assert mks_servo_can.__version__ == mks_simulator.__version__, 'the two packages disagree about the version'
+          "
+
+      - name: The simulator must start and serve a non-empty /commands
+        # The end-to-end statement of L7: an installed simulator that answers
+        # /commands with an empty list is the exact failure this guards.
+        run: |
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/mks-servo-simulator" \
+              --num-motors 2 --port 6899 --debug-api --debug-api-port 8899 \
+              > "$RUNNER_TEMP/sim.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/sim.pid"
+          "$RUNNER_TEMP/venv/bin/python" - <<'EOF'
+          import json, sys, time, urllib.error, urllib.request
+
+          for _ in range(60):
+              try:
+                  payload = json.load(urllib.request.urlopen(
+                      "http://127.0.0.1:8899/commands", timeout=2))
+                  break
+              except (urllib.error.URLError, OSError, TimeoutError):
+                  time.sleep(0.5)
+          else:
+              sys.exit("the simulator never answered on the debug API")
+
+          commands = payload.get("commands", payload)
+          assert commands, "/commands is empty - defect L7 has returned"
+          print(f"{len(commands)} commands served from the installed package")
+          EOF
+          kill "$(cat "$RUNNER_TEMP/sim.pid")" || true
+
+      - name: Show the simulator log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/sim.log" || true
+
+      - name: Run the suite against the installed package
+        # The repository is on disk but `mks_servo_can` is not importable from
+        # its root - the packages live in subdirectories - so these imports
+        # resolve to site-packages. HIL tests skip without MKS_HIL_CHANNEL.
+        run: "$RUNNER_TEMP/venv/bin/python -m pytest -q"
+
+      - name: Check the metadata is publishable
+        run: |
+          python -m pip install twine
+          python -m twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
 
   lint:
     runs-on: ubuntu-latest

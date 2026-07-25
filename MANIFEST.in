@@ -1,0 +1,10 @@
+# The manual's command transcription must be in the source distribution as well
+# as the wheel: the simulator and the conformance tests read it at runtime, so a
+# build without it produces a package whose command reference is silently empty
+# (defect L7). package-data in pyproject.toml covers the wheel; this covers the
+# sdist.
+include mks_servo_can_library/mks_servo_can/data/*.json
+
+include LICENSE.txt
+include README.md
+include CHANGELOG.md

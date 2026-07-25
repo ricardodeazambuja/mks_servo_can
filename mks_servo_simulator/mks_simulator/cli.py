@@ -6,16 +6,27 @@ import asyncio
 import logging
 import signal
 import threading
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import click  # Ensure 'click' is in your requirements for the simulator
 
 from .interface.config_manager import ConfigurationManager, LiveConfigurationInterface
 from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
 from .interface.llm_debug_interface import LLMDebugInterface
-from .interface.textual_dashboard import TextualDashboard
 from .motor_model import SimulatedMotor
 from .virtual_can_bus import VirtualCANBus
+
+# The Textual dashboard is imported inside the --textual-dashboard branch, not
+# here. It is the legacy surface - the supported ones are the browser dashboard
+# under --debug-api and --json-output - and `textual` is a heavy dependency that
+# nothing else needs. Importing it at module scope made it a hard requirement of
+# the whole simulator: a clean `pip install mks-servo-can[simulator]` produced a
+# `mks-servo-simulator` command that died with ModuleNotFoundError before
+# parsing a single argument, because `textual` was declared in no install
+# requirement anywhere. Nothing caught it, because every environment that ran
+# the tests had textual installed for tests/test_textual_dashboard.py.
+if TYPE_CHECKING:
+    from .interface.textual_dashboard import TextualDashboard
 
 # Strong references to background tasks, so they are not garbage collected.
 _keepalive_tasks: set = set()
@@ -519,7 +530,21 @@ def main(
         if textual_dashboard:
             try:
                 logger.info("Starting Textual dashboard...")
-                textual_app = TextualDashboard(bus)
+                try:
+                    # Aliased so it does not shadow the TYPE_CHECKING import of
+                    # the same name, which the annotation above refers to.
+                    from .interface.textual_dashboard import (
+                        TextualDashboard as _TextualDashboard,
+                    )
+                except ImportError as exc:
+                    # Say what to install and carry on. The CAN side and the
+                    # debug API are unaffected by the TUI being unavailable, and
+                    # exiting here would take them down with it.
+                    raise ImportError(
+                        "the Textual dashboard needs the 'dashboard' extra: "
+                        "pip install mks-servo-can[dashboard]"
+                    ) from exc
+                textual_app = _TextualDashboard(bus)
 
                 # On its own thread, with its own event loop. Sharing the
                 # simulator's loop put the TUI's render and input handling in

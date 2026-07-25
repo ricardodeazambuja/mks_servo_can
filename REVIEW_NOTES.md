@@ -5,10 +5,11 @@ been acted on** — see `CHANGELOG.md` for what changed and why. This file is ke
 for the design reasoning in Part 2, and for the outstanding items below.
 
 A second review on 2026-07-24, against `b28dded`, found the defects in Part 0.
-All of them have since been fixed, along with one more (L8) found while building
-a test for another. Each entry keeps its original reproduction, because the
-evidence is what makes the fix checkable; `docs/development/roadmap.md` says what
-remains.
+All of them have since been fixed, along with L8 and L9 found while building
+tests for others, and L10 found the moment the suite was first run against an
+installed package rather than the source tree. Each entry keeps its original
+reproduction, because the evidence is what makes the fix checkable;
+`docs/development/roadmap.md` says what remains.
 
 ---
 
@@ -256,6 +257,75 @@ The original finding, for reference:
 directory, so `/commands` and `available_commands` were empty for anyone who did
 not clone the repository.
 
+## L10. An installed simulator could not start at all — **fixed**
+
+Found the moment the packaging work gave the repository its first check that
+runs against an *installed* package rather than the source tree. L7's sibling,
+and a purer example of the same failure: the thing works for everyone who has
+the repository, and for nobody else.
+
+**Reproduction.** Build the distribution, install it into an empty virtualenv
+with the extra that is supposed to provide the simulator, and run the command it
+advertises:
+
+```
+python -m build
+python -m venv /tmp/v && /tmp/v/bin/pip install "dist/mks_servo_can-0.3.0-py3-none-any.whl[simulator]"
+/tmp/v/bin/mks-servo-simulator --num-motors 2 --debug-api
+```
+
+```
+Traceback (most recent call last):
+  File ".../bin/mks-servo-simulator", line 5, in <module>
+    from mks_simulator.main import main
+  File ".../mks_simulator/__init__.py", line 11, in <module>
+    from .cli import main as run_simulator_cli
+  File ".../mks_simulator/cli.py", line 16, in <module>
+    from .interface.textual_dashboard import TextualDashboard
+  File ".../mks_simulator/interface/textual_dashboard.py", line 16, in <module>
+    from textual.app import App, ComposeResult
+ModuleNotFoundError: No module named 'textual'
+```
+
+It never parsed an argument. Not the TUI — the whole simulator, including
+`--debug-api` and `--json-output`, which have nothing to do with a terminal
+dashboard. `textual` was declared in neither `setup.py`, nor `requirements.txt`,
+nor anywhere else.
+
+**Why nothing caught it.** Every environment that has ever run this suite had
+`textual` installed, because `tests/test_textual_dashboard.py` needs it. The
+dependency was present for an unrelated reason in every environment that could
+have detected its absence. That is the shape to watch for, and it is why the
+guard below blocks the module rather than trusting that some environment
+somewhere will lack it.
+
+**Fixed.** The import moved inside the `--textual-dashboard` branch, where its
+failure names the extra to install (`mks-servo-can[dashboard]`) instead of
+producing a traceback from three frames down. `textual` is now an extra of its
+own, deliberately *not* part of `simulator`: the supported human surface is the
+browser dashboard served under `--debug-api`, and the TUI is legacy.
+
+**Covered by** `tests/unit/test_optional_dependencies.py`, which installs an
+import hook in a subprocess that makes the optional module unimportable, then
+asserts `mks_simulator.cli` still imports and `--help` still works. It includes
+`test_the_block_actually_blocks`, so a broken harness cannot let the rest pass
+vacuously. Verified by mutation: restoring the module-scope import turns both
+`textual` cases red.
+
+Two smaller findings came out of the same work, both instances of a test
+measuring something other than what it claims:
+
+- `tests/simulator_compliance/test_simulator_cli.py` resolved the simulator
+  command with `shutil.which`, i.e. whatever was first on `PATH` — not
+  necessarily the environment the test had imported `mks_simulator` from. Run
+  against a wheel in a fresh virtualenv it exercised a stale install elsewhere
+  on the machine, and the failure looked like a packaging defect. It now prefers
+  the console script beside `sys.executable`.
+- `tests/unit/test_digitizer_integration.py` inserted the source tree onto
+  `sys.path`, so it imported the library from the checkout regardless of what
+  was installed. Left in place, it would have made the new packaging job report
+  success while testing the source tree. Removed.
+
 ---
 
 # Part 1 — Repository Review: what remains
@@ -290,11 +360,12 @@ from 223 tests at 53% coverage to 478 at 58%.
      abort frame for the superseded one? The whole streaming design and the
      gimbal example rest on this.
 
-2. **Publish to PyPI.** `pip install mks-servo-can` still fails; installation
-   means cloning and two editable installs from subdirectories. This is the
-   largest remaining barrier to anyone else using the library. The decision that
-   blocked it has been made: the simulator becomes an extra,
-   `mks-servo-can[simulator]`, rather than a second distribution.
+2. **Publish to PyPI.** The packaging is done — one distribution declared in the
+   root `pyproject.toml`, with the simulator as its `[simulator]` extra, and a
+   CI job that builds it and runs the suite against the installed package. What
+   remains is the upload itself, which needs credentials. Until then
+   `pip install mks-servo-can` still fails and installation means cloning, but
+   it is now a single `pip install .[simulator]` from the root.
 
 3. **Test the digitizer.** `base_digitizer.py` is at 11% coverage and
    `surface_mapping.py` at 17% — by far the weakest area, and the one most
@@ -307,9 +378,12 @@ from 223 tests at 53% coverage to 478 at 58%.
    separate repo, or an `applications/` subtree, would let the core read as what
    it is.
 
-5. **Publish the docs.** `docs/` has 27 markdown files in a sensible tree and
-   `setup.py` declares a `[docs]` extra with Sphinx, but there is no `conf.py`
-   and nothing is built. Point Sphinx or MkDocs at it and ship to Read the Docs.
+5. **Publish the docs.** `docs/` is now a complete tree with no dead links and a
+   test that keeps it that way, which makes it worth publishing. Nothing builds
+   it: point MkDocs or Sphinx at it and ship to Read the Docs. (The old `[docs]`
+   extra declaring Sphinx went with the `setup.py` files — it had no `conf.py`
+   behind it and never built anything, so it was removed rather than carried
+   into `pyproject.toml`. Add it back alongside a real build.)
 
 6. **Motion profile primitives.** No jerk-limited or S-curve planning.
    `move_linearly_to()` scales per-axis speeds but cannot compensate for the

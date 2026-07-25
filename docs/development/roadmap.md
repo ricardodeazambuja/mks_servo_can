@@ -105,40 +105,42 @@ answer contradicts what the simulator does, in which case the simulator changes.
 
 ---
 
-## Item 2 — Publish to PyPI *(needs credentials at the last step)*
+## Item 2 — Publish to PyPI *(one step left; needs credentials)*
 
-`pip install mks-servo-can` still fails; installation means cloning and two
-editable installs from subdirectories. `REVIEW_NOTES.md` Part 1 ranks this as the
-largest remaining barrier to anyone else using the library. L7 — the packaged
-manual spec — was its prerequisite and is done.
+**The packaging is done.** One distribution declared in the root
+`pyproject.toml`, with the simulator as its `[simulator]` extra — the
+maintainer's decision, taken because the simulator hard-depends on the library
+and a second distribution bought nothing but a second version number, which had
+already drifted (0.1.0 against 0.3.0). Both `setup.py` files and the old
+`MANIFEST.in` are gone.
 
-**The maintainer's decision is made: the simulator becomes an extra of the
-library, `mks-servo-can[simulator]`, not a separate distribution.** It already
-hard-depends on the library, so a second distribution bought nothing but a
-second version number to drift. This unblocks the rest.
+Verified end to end: a wheel built, installed into an empty virtualenv, and the
+simulator started from it serving 18 commands on `/commands`; the whole suite
+run against the installed package rather than the source tree. That check is now
+the `package` job in CI, and it found L10 the moment it existed — see
+`REVIEW_NOTES.md`.
 
-What has to happen, in order:
+**What remains is the upload itself, which needs credentials this work cannot
+supply.** When you have them:
 
-1. **One `pyproject.toml`**, replacing both `setup.py` files, declaring the
-   `simulator` extra (`click`, `rich`, `fastapi`, `uvicorn`) and keeping the
-   `mks_servo_simulator` console-script entry points. Keep
-   `package_data`/`MANIFEST.in` behaviour: `mks_servo_can/data/*.json` must stay
-   in both the wheel and the sdist.
-2. **One source of the version number.** It is currently parsed out of
-   `__init__.py` by a regex in each `setup.py`.
-3. **A CI job that builds the distribution and runs the suite against the
-   installed package**, not the source tree. This is what would have caught L7,
-   and it is the only guard that keeps packaging honest.
-4. Then publish — needs credentials this work cannot supply.
+```bash
+python -m build
+python -m twine check dist/*
+python -m twine upload dist/*      # test.pypi.org first
+```
 
-Note: `mks_servo_can_library/build/` is a stale artefact directory checked into
-the working tree. It shadows nothing at runtime but will confuse a packaging
-change; delete it.
+Two things to decide at that point, neither blocking:
+
+1. **The version to release under.** `mks_servo_can/__init__.py` says `0.3.0`
+   and is now the single source; `CHANGELOG.md` `[Unreleased]` holds a
+   substantial amount of change since it, including behavioural fixes, so this
+   probably wants to go out as `0.4.0` with the `[Unreleased]` section renamed.
+2. **Whether to automate it.** A `release` job on tag push, using PyPI trusted
+   publishing, would avoid a long-lived token. The `package` job already builds
+   and `twine check`s the artefacts, so this is a small addition.
 
 **Done when:** `pip install mks-servo-can` works in a clean virtualenv on a
-machine that has never seen the repository, and
-`pip install mks-servo-can[simulator]` starts a simulator from that install with
-a non-empty `/commands`.
+machine that has never seen the repository.
 
 ---
 
@@ -221,6 +223,9 @@ documented in the simulator guide.
   `appendices/glossary.md`) and the rest of the index was repointed at the
   source, the docstrings and the scripts in `examples/` — things that cannot
   drift. See `CHANGELOG.md` `[Unreleased]` → Documentation.
+- **Packaging** (item 2's steps 1–3). One distribution, one version number, one
+  `pyproject.toml`, and a CI `package` job that builds it and runs the suite
+  against the installed package. Only the upload is left, above.
 
 ## Definition of done — the standard the fixed defects were held to
 

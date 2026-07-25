@@ -5,14 +5,13 @@ These tests verify that the digitizer module integrates properly
 with the main library and can be imported correctly.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 
-# Add the library to the path for testing
-lib_path = Path(__file__).parent.parent.parent / "mks_servo_can_library"
-sys.path.insert(0, str(lib_path))
+# No sys.path manipulation here. Pointing the path at the source tree would mean
+# this file always imports mks_servo_can from the checkout, so a run against an
+# *installed* package - which is what the packaging CI job exists to check -
+# would silently test the source tree instead and report success either way.
+# The library is installed; if the import fails, that is the finding.
 
 
 class TestDigitizerImports:

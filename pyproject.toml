@@ -1,12 +1,116 @@
-# Project-wide tooling configuration.
+# Packaging and tooling for the whole repository.
 #
-# The two distributions (mks-servo-can and mks-servo-simulator) keep their own
-# setup.py because they are published separately; this file holds everything
-# that applies across the repository.
+# There is one distribution, `mks-servo-can`, and the simulator is an extra of
+# it: `pip install mks-servo-can[simulator]`. The two used to be separate
+# distributions with a setup.py each, which bought nothing - the simulator
+# hard-depends on the library, sharing its constants, CRC and motion model
+# rather than reimplementing them - and cost a second version number that could
+# drift away from the first.
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "mks-servo-can"
+dynamic = ["version"]
+description = "Python library to control MKS SERVO42D/57D motors via CAN bus, with a protocol-accurate simulator."
+readme = "README.md"
+license = { file = "LICENSE.txt" }
+authors = [{ name = "Ricardo de Azambuja" }]
+# 3.9 is the floor and it is enforced: tests/unit/test_regressions.py asserts
+# the package imports there, and the CI matrix runs it. The old setup.py files
+# claimed 3.8, which was never tested against.
+requires-python = ">=3.9"
+keywords = [
+    "mks", "servo", "canbus", "motor", "control", "robotics",
+    "automation", "servo42d", "servo57d", "asyncio", "simulator",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+    "Topic :: Software Development :: Testing :: Simulation",
+    "Topic :: System :: Emulators",
+]
+dependencies = [
+    "python-can>=3.0.0,<5.0.0",
+]
+
+[project.optional-dependencies]
+# Everything the `mks-servo-simulator` command needs. psutil is left out
+# deliberately: performance_monitor.py guards its import and degrades to fewer
+# panels without it, so it belongs in `monitoring`, not here.
+simulator = [
+    "click>=7.0",
+    "rich>=12.0.0",
+    "fastapi>=0.68.0",
+    "uvicorn>=0.15.0",
+]
+monitoring = ["psutil>=5.8.0"]
+# The legacy Textual TUI (`--textual-dashboard`). Deliberately not part of
+# `simulator`: the supported human surface is the browser dashboard served under
+# --debug-api, and textual is a heavy dependency the rest of the simulator does
+# not touch. cli.py imports it inside the --textual-dashboard branch, so its
+# absence costs you that one flag and nothing else.
+dashboard = ["textual>=0.40.0"]
+dev = [
+    "mks-servo-can[simulator,dashboard,monitoring]",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.20.0",
+    "pytest-mock>=3.0.0",
+    "pytest-cov",
+    # FastAPI's TestClient needs it, so tests/test_http_debug_server.py does.
+    "httpx",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/ricardodeazambuja/mks_servo_can"
+Source = "https://github.com/ricardodeazambuja/mks_servo_can"
+"Bug Reports" = "https://github.com/ricardodeazambuja/mks_servo_can/issues"
+Documentation = "https://github.com/ricardodeazambuja/mks_servo_can/tree/main/docs"
+
+[project.scripts]
+mks-servo-simulator = "mks_simulator.main:main"
+mks_servo_simulator = "mks_simulator.main:main"
+
+# The single source of the version number. `mks_simulator.__version__` re-exports
+# this one rather than declaring its own.
+[tool.setuptools.dynamic]
+version = { attr = "mks_servo_can.__version__" }
+
+# The two packages keep their historical directories rather than being moved
+# into one src/ tree: moving them would rewrite every import path in the tests
+# and examples for no packaging benefit.
+[tool.setuptools]
+package-dir = { mks_servo_can = "mks_servo_can_library/mks_servo_can", mks_simulator = "mks_servo_simulator/mks_simulator" }
+packages = [
+    "mks_servo_can",
+    "mks_servo_can.data",
+    "mks_servo_can.digitizer",
+    "mks_servo_can.kinematics",
+    "mks_simulator",
+    "mks_simulator.interface",
+]
+
+[tool.setuptools.package-data]
+# The manual's command transcription is read at runtime by both the simulator
+# and the conformance tests, and an installed wheel has no tests/ directory to
+# fall back on. Shipping without it produces a package whose command reference
+# is silently empty - that was defect L7, and tests/unit/test_manual_spec_packaging.py
+# guards it.
+mks_servo_can = ["data/*.json"]
 
 [tool.ruff]
 # Replaces black + isort + flake8 + pylint, all four of which were configured

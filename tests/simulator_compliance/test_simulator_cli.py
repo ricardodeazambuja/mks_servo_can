@@ -17,6 +17,7 @@ up. They are slower than a unit test and they are the only kind that would have
 caught any of the above.
 """
 import json
+import pathlib
 import shutil
 import socket
 import subprocess
@@ -27,7 +28,33 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-SIMULATOR_CMD = "mks-servo-simulator"
+SCRIPT_NAME = "mks-servo-simulator"
+
+
+def _simulator_command() -> str:
+    """
+    Returns the console script belonging to the interpreter running the tests.
+
+    Deliberately *not* a bare PATH lookup. `shutil.which` finds whichever
+    `mks-servo-simulator` happens to come first on PATH, which need not belong
+    to the environment the test imported `mks_simulator` from - so a machine
+    with an old install elsewhere would exercise that one and report on code
+    nobody is looking at. That is not hypothetical: it is what happened the
+    first time this suite was run against an installed wheel in a fresh
+    virtualenv, and the failure looked like a packaging defect rather than a
+    test looking in the wrong place.
+
+    Returns:
+        Path to the script beside `sys.executable` if it exists, else whatever
+        is on PATH, else None.
+    """
+    beside_interpreter = pathlib.Path(sys.executable).parent / SCRIPT_NAME
+    if beside_interpreter.exists():
+        return str(beside_interpreter)
+    return shutil.which(SCRIPT_NAME)
+
+
+SIMULATOR_CMD = _simulator_command()
 
 
 def _free_port() -> int:
@@ -40,8 +67,8 @@ def _free_port() -> int:
 @pytest.fixture(autouse=True)
 def _require_simulator():
     """Skips these tests where the console script is not installed."""
-    if shutil.which(SIMULATOR_CMD) is None:
-        pytest.skip(f"{SIMULATOR_CMD} is not on PATH")
+    if SIMULATOR_CMD is None:
+        pytest.skip(f"{SCRIPT_NAME} is not installed for {sys.executable}")
 
 
 def _run_briefly(args, seconds=6.0):
