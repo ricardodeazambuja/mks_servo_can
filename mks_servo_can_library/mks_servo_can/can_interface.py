@@ -269,7 +269,15 @@ class CANInterface:
         """
         self.use_simulator = use_simulator
         self.bus: Optional[can.BusABC] = None # type: ignore[name-defined]
-        self._loop = loop if loop else asyncio.get_event_loop()
+        # Deliberately not resolved here, the same way `Axis` does not resolve
+        # it: `asyncio.get_event_loop()` outside a running loop is deprecated on
+        # Python 3.12+ and raises on 3.14+, and it raises *today* once anything
+        # in the thread has called `set_event_loop(None)` - which every asyncio
+        # test framework does at teardown, and which any program that finishes
+        # one `asyncio.run` before constructing an interface for the next may do
+        # too. Every use of the loop below happens after `connect()`, which by
+        # definition runs inside one.
+        self._explicit_loop = loop
         self._message_handlers: Dict[
             int, List[Callable[[can.Message], None]] # type: ignore[name-defined]
         ] = {}  # CAN ID -> list of handlers
@@ -310,6 +318,24 @@ class CANInterface:
             logger.info(
                 f"CANInterface configured for hardware: {interface_type} on {channel} @ {bitrate} bps"
             )
+
+    @property
+    def _loop(self) -> asyncio.AbstractEventLoop:
+        """
+        The event loop this interface schedules work on.
+
+        Resolved lazily so that constructing an interface outside a running loop
+        stays valid. An explicit loop passed to the constructor always wins.
+
+        Returns:
+            The explicitly configured loop, or the currently running one.
+
+        Raises:
+            RuntimeError: If no loop was configured and none is running.
+        """
+        if self._explicit_loop is not None:
+            return self._explicit_loop
+        return asyncio.get_running_loop()
 
     async def connect(self):
         """

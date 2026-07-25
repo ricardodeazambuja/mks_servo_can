@@ -206,7 +206,11 @@ class SteppedClock:
         if seconds <= 0:
             return
         deadline_ns = self._now_ns + round(seconds * 1e9)
-        waiter = asyncio.get_event_loop().create_future()
+        # This is inside a coroutine, so a loop is always running; asking for
+        # the running one avoids `get_event_loop()`, which is deprecated outside
+        # a loop on 3.12+ and raises once anything has called
+        # `set_event_loop(None)`.
+        waiter = asyncio.get_running_loop().create_future()
         self._sleepers.append((deadline_ns, waiter))
         try:
             await waiter

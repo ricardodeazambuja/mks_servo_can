@@ -897,7 +897,53 @@ was the hardware branch, and "needs hardware" turned out to be false:
 `can.interface.Bus`, `can.Notifier`, `AsyncioCanListener`, the dispatch loop,
 `send_and_wait_for_response` and its timeout are all exercised for real in
 `tests/unit/test_can_interface_hardware.py`; only the driver underneath is
-different. No defect was found there.
+different.
+
+---
+
+## L21. Constructing a `CANInterface` depended on what had run before it — **fixed**
+
+Found by the run that the whole "definition of done" exists for: the suite
+against an **installed wheel** rather than the source tree. Ten tests failed
+there that pass here, purely because the order differed.
+
+**Reproduction.**
+
+```python
+>>> import asyncio
+>>> from mks_servo_can import CANInterface
+>>> asyncio.run(asyncio.sleep(0))     # any completed asyncio program
+>>> CANInterface(use_simulator=True)
+RuntimeError: There is no current event loop in thread 'MainThread'.
+```
+
+`__init__` called `asyncio.get_event_loop()`. That raises once anything in the
+thread has called `set_event_loop(None)` — which every asyncio test framework
+does at teardown, and which a program that finishes one `asyncio.run()` before
+building an interface for the next hits as well. It is also deprecated outside a
+running loop on Python 3.12 and an error on 3.14, so this was going to break on
+its own schedule regardless.
+
+Nothing needs the loop at construction: every use of `self._loop` happens after
+`connect()`, which by definition runs inside one.
+
+**Fixed.** The loop is resolved lazily through a `_loop` property that returns
+an explicitly passed loop if there is one and `asyncio.get_running_loop()`
+otherwise — exactly the shape `Axis` already used and documented, and which
+`CANInterface` had not been given. The same `get_event_loop()` call in
+`mks_simulator/clock.py` is now `get_running_loop()`; it is inside a coroutine,
+so a loop is always running there.
+
+**Covered by** `test_an_interface_can_be_built_with_no_loop_in_the_thread`,
+which clears the thread's loop first, and
+`test_an_explicit_loop_is_used_when_one_is_given`, so the lazy resolution cannot
+quietly start ignoring a caller's loop.
+
+**The lesson is about the harness, not the code.** These tests passed in
+development for the same reason L10 did: an editable install of a checkout, with
+pytest-asyncio having left a loop lying around, is a friendlier environment than
+the one a user gets. The wheel job is the only thing that runs in the unfriendly
+one.
 
 ---
 

@@ -92,6 +92,39 @@ class TestConstruction:
 
         assert interface.use_simulator is True
 
+    def test_an_interface_can_be_built_with_no_loop_in_the_thread(self):
+        """
+        Constructing must not require an event loop to already exist.
+
+        The constructor called `asyncio.get_event_loop()`, which raises
+        `RuntimeError: There is no current event loop` the moment anything in
+        the thread has called `set_event_loop(None)` — which every asyncio test
+        framework does at teardown, and which any program that finishes one
+        `asyncio.run()` before building an interface for the next hits too.
+        Whether construction worked therefore depended on what had run before
+        it; the failure surfaced only when the suite was run against an
+        installed wheel, where the order differed.
+        """
+        asyncio.set_event_loop(None)
+        try:
+            simulator = CANInterface(use_simulator=True)
+            hardware = CANInterface(interface_type="virtual", channel="later")
+
+            assert simulator.use_simulator is True
+            assert hardware.channel == "later"
+        finally:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_loop_is_used_when_one_is_given(self):
+        """A caller who passes a loop must get that loop, not the running one."""
+        given = asyncio.new_event_loop()
+        try:
+            interface = CANInterface(use_simulator=True, loop=given)
+            assert interface._loop is given
+        finally:
+            given.close()
+
 
 class TestConnectionErrors:
     """Failures that happen on the way to a bus."""

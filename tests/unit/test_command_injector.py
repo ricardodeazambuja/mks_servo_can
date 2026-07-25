@@ -28,6 +28,28 @@ from mks_simulator.interface.debug_tools import CommandInjector
 from mks_simulator.motor_model import SimulatedMotor
 from mks_simulator.virtual_can_bus import VirtualCANBus
 
+# Loops created for the synchronous tests below, kept alive so they are not
+# collected while a bus holds a reference. Nothing is ever scheduled on them.
+_IDLE_LOOPS = []
+
+
+def _loop_for_tests():
+    """
+    Returns the running loop, or a fresh idle one for a synchronous test.
+
+    `asyncio.get_event_loop()` is not usable here: it is deprecated outside a
+    running loop on Python 3.12+, and it raises today once anything in the
+    thread has called `set_event_loop(None)` - which pytest-asyncio does at the
+    end of every async test, so whether a synchronous test worked depended on
+    what had run before it.
+    """
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        _IDLE_LOOPS.append(loop)
+        return loop
+
 
 def _make_injector(clock=None, can_id=1):
     """
@@ -40,7 +62,7 @@ def _make_injector(clock=None, can_id=1):
     Returns:
         A `(injector, motor)` pair.
     """
-    loop = asyncio.get_event_loop()
+    loop = _loop_for_tests()
     bus = VirtualCANBus(loop)
     motor = SimulatedMotor(can_id=can_id, loop=loop, clock=clock)
     motor.is_enabled = True

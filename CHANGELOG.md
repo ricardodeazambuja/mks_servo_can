@@ -28,6 +28,20 @@ Simulator observability, and the library defects that observability exposed.
 
 ### Fixed
 
+- **Constructing a `CANInterface` depended on what had run before it (L21).**
+  `__init__` called `asyncio.get_event_loop()`, which raises
+  `RuntimeError: There is no current event loop` once anything in the thread has
+  called `set_event_loop(None)` — which every asyncio test framework does at
+  teardown, and which a program that finishes one `asyncio.run()` before
+  building an interface for the next hits too. It is also deprecated outside a
+  running loop on Python 3.12 and an error on 3.14. Nothing needs the loop at
+  construction: every use happens after `connect()`, which runs inside one. It
+  is now resolved lazily through a `_loop` property that prefers an explicitly
+  passed loop, the shape `Axis` already used. The same call in
+  `mks_simulator/clock.py` became `get_running_loop()`.
+  Found by running the suite against an installed wheel rather than the source
+  tree, where the test order differs — the same kind of environment difference
+  that hid L7 and L10.
 - **A group operation filed its results against the wrong axis (L20).**
   `MultiAxisController._execute_on_axes` named each task
   `f"{axis_name}_{method_name}"` and recovered the axis afterwards by splitting
