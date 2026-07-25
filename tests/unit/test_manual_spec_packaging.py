@@ -19,7 +19,12 @@ import sys
 import pytest
 
 import mks_servo_can
-from mks_servo_can import get_manual_commands, get_manual_errata, load_manual_spec
+from mks_servo_can import (
+    constants,
+    get_manual_commands,
+    get_manual_errata,
+    load_manual_spec,
+)
 
 LIB_ROOT = pathlib.Path(mks_servo_can.__file__).resolve().parent
 
@@ -117,3 +122,42 @@ def test_repeated_loads_return_the_same_object():
 def test_commands_the_streaming_api_depends_on_are_present(command_code):
     """A truncated specification must not pass unnoticed."""
     assert command_code in get_manual_commands()
+
+
+def test_every_implemented_command_is_transcribed():
+    """
+    The specification must describe every command the library can send.
+
+    It once described eighteen of forty-nine. That is not a documentation gap:
+    this file is what `tests/simulator_compliance/` checks the wire format
+    against and what the simulator's `/commands` and command injector are built
+    from, so thirty-one commands' framing was verified against nothing, and
+    `/inject` answered `Unknown command code` for commands the library uses on
+    every connection.
+
+    A command may be left out only by saying so in `deliberately_absent`.
+    """
+    spec = load_manual_spec()
+    transcribed = {int(code, 16) for code in spec["commands"]}
+    excused = {int(code, 16) for code in spec.get("deliberately_absent", {})}
+
+    missing = {
+        name: f"0x{value:02X}"
+        for name, value in vars(constants).items()
+        if name.startswith("CMD_")
+        and isinstance(value, int)
+        and value not in transcribed
+        and value not in excused
+    }
+    assert not missing, (
+        "these commands are implemented but not transcribed from the manual: "
+        f"{missing}"
+    )
+
+
+def test_absences_are_explained_rather_than_silent():
+    """Anything left out carries the reason it was left out."""
+    spec = load_manual_spec()
+    for code, reason in spec.get("deliberately_absent", {}).items():
+        int(code, 16)
+        assert len(reason) > 40, f"{code} is excused without an explanation"

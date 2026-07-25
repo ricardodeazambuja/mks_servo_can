@@ -8,6 +8,37 @@
     "uplink_format": "CAN_ID | DLC | Command_Code | Response_Data | CRC"
   },
   "commands": {
+    "0x00": {
+      "name": "read_system_parameter",
+      "category": "status",
+      "description": "Read a system parameter, addressed by the command code that sets it",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x00 | code(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "code",
+            "type": "uint8",
+            "description": "Command code of the parameter to read, e.g. 0x82 for the work mode"
+          }
+        ]
+      },
+      "response": {
+        "format": "CAN_ID | n+1 | code | param(n-1 bytes) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "bytes1-n": "parameter_value",
+          "byte_last": "crc"
+        },
+        "variable_dlc": true
+      },
+      "notes": [
+        "The echoed code in byte0 is the parameter's own command code, not 0x00",
+        "The parameter is returned in the same layout used to set it, so the response DLC varies by parameter and is not fixed",
+        "A parameter that cannot be read answers DLC 4 with 0xFF 0xFF in place of the value",
+        "Manual section 5.9; added in firmware V1.0.6"
+      ]
+    },
     "0x30": {
       "name": "read_encoder_carry",
       "category": "status",
@@ -103,6 +134,28 @@
         "Manual V1.0.6, command 0x32: 'if it run CCW, the speed > 0 (RPM); if it run CW, the speed < 0 (RPM)'"
       ]
     },
+    "0x33": {
+      "name": "read_pulses_received",
+      "category": "status",
+      "description": "Read the number of pulses received",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x33 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 6,
+        "format": "CAN_ID | 6 | 0x33 | pulses(int32) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "bytes1-4": "pulses_int32",
+          "byte5": "crc"
+        }
+      },
+      "notes": [
+        "Counts command pulses, not raw encoder counts; the screen shows the same figure as 0clk"
+      ]
+    },
     "0x34": {
       "name": "read_io_ports",
       "category": "status",
@@ -129,26 +182,26 @@
     "0x35": {
       "name": "read_encoder_raw",
       "category": "status",
-      "description": "Read RAW data of encoder",
+      "description": "Read the raw encoder value (addition), before calibration correction",
       "request": {
         "dlc": 2,
         "format": "CAN_ID | 2 | 0x35 | CRC",
         "parameters": []
       },
       "response": {
-        "dlc": 4,
-        "format": "CAN_ID | 4 | 0x35 | raw_data(uint16) | CRC",
+        "dlc": 8,
+        "format": "CAN_ID | 8 | 0x35 | value(int48) | CRC",
         "fields": {
           "byte0": "command_echo",
-          "bytes1-2": "raw_encoder_uint16",
-          "byte3": "crc"
+          "bytes1-6": "value_int48",
+          "byte7": "crc"
         }
       },
       "notes": [
         "After one turn CCW, the value += 0x4000",
         "After one turn CW, the value -= 0x4000",
         "Manual V1.0.6 is self-contradictory here: the prose summary states the opposite, but the worked example ('current value 0x3FF0, after one turn CCW the value(+0x4000) is 0x7FF0') and the sign note on 0x32 both give CCW positive. The examples are taken as authoritative.",
-        "Returns unprocessed encoder data",
+        "Same layout as 0x31, but the encoder's raw accumulator rather than the corrected one",
         "Added in firmware V1.0.6"
       ]
     },
@@ -180,6 +233,52 @@
         "Allows writing to configurable IO ports",
         "Added in firmware V1.0.6"
       ]
+    },
+    "0x39": {
+      "name": "read_shaft_angle_error",
+      "category": "status",
+      "description": "Read the error between the commanded and the real shaft angle",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x39 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 6,
+        "format": "CAN_ID | 6 | 0x39 | error(int32) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "bytes1-4": "error_int32",
+          "byte5": "crc"
+        }
+      },
+      "notes": [
+        "0 to 51200 corresponds to 0 to 360 degrees, so one degree of error reads as 51200/360 = 142",
+        "The error is the commanded angle minus the real-time angle"
+      ]
+    },
+    "0x3A": {
+      "name": "read_en_pin_status",
+      "category": "status",
+      "description": "Read the state of the En pin",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x3A | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x3A | enable(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "enable_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "disabled",
+        "1": "enabled"
+      }
     },
     "0x3B": {
       "name": "read_power_on_zero_status",
@@ -255,6 +354,33 @@
         "1": "protected"
       }
     },
+    "0x3F": {
+      "name": "restore_default_parameters",
+      "category": "configuration",
+      "description": "Restore the factory default parameters",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0x3F | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x3F | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "restore fail",
+        "1": "restore success"
+      },
+      "notes": [
+        "The motor reboots afterwards and has to be recalibrated",
+        "Holding Next while powering on does the same thing"
+      ]
+    },
     "0x41": {
       "name": "restart_motor",
       "category": "control",
@@ -283,9 +409,15 @@
       "category": "configuration",
       "description": "Motor calibration command",
       "request": {
-        "dlc": 2,
-        "format": "CAN_ID | 2 | 0x80 | CRC",
-        "parameters": []
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x80 | 0x00 | CRC",
+        "parameters": [
+          {
+            "name": "reserved",
+            "type": "uint8",
+            "description": "Always 0x00; the manual shows no other value"
+          }
+        ]
       },
       "response": {
         "dlc": 3,
@@ -297,8 +429,487 @@
         }
       },
       "notes": [
-        "Executes motor calibration sequence",
-        "Referenced as example in manual CRC calculation"
+        "The motor must be unloaded while calibrating",
+        "Same as the Cal option on screen",
+        "Referenced as the example in the manual's CRC calculation"
+      ],
+      "status_codes": {
+        "0": "calibrating",
+        "1": "calibrated success",
+        "2": "calibrating fail"
+      }
+    },
+    "0x82": {
+      "name": "set_work_mode",
+      "category": "configuration",
+      "description": "Set the working mode",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x82 | mode(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "mode",
+            "type": "uint8",
+            "description": "0 CR_OPEN, 1 CR_CLOSE, 2 CR_vFOC, 3 SR_OPEN, 4 SR_CLOSE, 5 SR_vFOC"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x82 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "OPEN modes cap at 400 RPM, CLOSE at 1500 RPM, vFOC at 3000 RPM",
+        "The CAN command set in Part 6 of the manual requires a serial mode (SR_OPEN, SR_CLOSE or SR_vFOC)"
+      ]
+    },
+    "0x83": {
+      "name": "set_working_current",
+      "category": "configuration",
+      "description": "Set the working current in milliamps",
+      "request": {
+        "dlc": 4,
+        "format": "CAN_ID | 4 | 0x83 | ma(uint16) | CRC",
+        "parameters": [
+          {
+            "name": "ma",
+            "type": "uint16",
+            "description": "Working current in mA, big-endian"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x83 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "Maximum 3000 mA on the SERVO42D/28D/35D and 5200 mA on the SERVO57D",
+        "The value is a current in milliamps, not a percentage"
+      ]
+    },
+    "0x84": {
+      "name": "set_subdivision",
+      "category": "configuration",
+      "description": "Set the microstepping subdivision",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x84 | micstep(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "micstep",
+            "type": "uint8",
+            "description": "Subdivision, 0x00 to 0xFF"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x84 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "The speed parameter is calibrated for 16, 32 and 64 subdivisions; other subdivisions scale from 16"
+      ]
+    },
+    "0x85": {
+      "name": "set_en_pin_active_level",
+      "category": "configuration",
+      "description": "Set the active level of the En pin",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x85 | enable(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "enable",
+            "type": "uint8",
+            "description": "0 active low, 1 active high, 2 active always (hold)"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x85 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      }
+    },
+    "0x86": {
+      "name": "set_motor_direction",
+      "category": "configuration",
+      "description": "Set the direction of rotation",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x86 | dir(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "dir",
+            "type": "uint8",
+            "description": "0 CW, 1 CCW"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x86 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "Applies to the pulse interface only; in serial mode the direction is carried in each motion command"
+      ]
+    },
+    "0x87": {
+      "name": "set_auto_screen_off",
+      "category": "configuration",
+      "description": "Turn the automatic screen blanking on or off",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x87 | enable(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "enable",
+            "type": "uint8",
+            "description": "0 disabled, 1 enabled"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x87 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "When enabled the screen blanks after about 15 seconds and any key wakes it"
+      ]
+    },
+    "0x88": {
+      "name": "set_stall_protection",
+      "category": "configuration",
+      "description": "Turn locked-rotor protection on or off",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x88 | enable(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "enable",
+            "type": "uint8",
+            "description": "0 disabled, 1 enabled"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x88 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "Once triggered it is released by the Enter key, by command 0x3D, or by dropping En in pulse-interface mode"
+      ]
+    },
+    "0x89": {
+      "name": "set_subdivision_interpolation",
+      "category": "configuration",
+      "description": "Turn subdivision interpolation on or off",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x89 | enable(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "enable",
+            "type": "uint8",
+            "description": "0 disabled, 1 enabled"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x89 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      }
+    },
+    "0x8A": {
+      "name": "set_can_bitrate",
+      "category": "configuration",
+      "description": "Set the CAN bit rate",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x8A | bitRate(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "bitRate",
+            "type": "uint8",
+            "description": "0 125K, 1 250K, 2 500K, 3 1M"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x8A | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      }
+    },
+    "0x8B": {
+      "name": "set_can_id",
+      "category": "configuration",
+      "description": "Set the motor's CAN ID",
+      "request": {
+        "dlc": 4,
+        "format": "CAN_ID | 4 | 0x8B | ID(uint16) | CRC",
+        "parameters": [
+          {
+            "name": "ID",
+            "type": "uint16",
+            "description": "New CAN ID, 0x000 to 0x7FF, big-endian"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x8B | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "0 is the broadcast address",
+        "The new address appears in the CanID menu option"
+      ]
+    },
+    "0x8C": {
+      "name": "set_slave_respond_active",
+      "category": "configuration",
+      "description": "Choose whether the motor answers commands, and whether it reports completion unprompted",
+      "request": {
+        "dlc": 4,
+        "format": "CAN_ID | 4 | 0x8C | respon(uint8) | active(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "respon",
+            "type": "uint8",
+            "description": "0 no reply at all, 1 reply to commands (default)"
+          },
+          {
+            "name": "active",
+            "type": "uint8",
+            "description": "0 no unprompted frames, 1 report completion unprompted (default)"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x8C | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "respon=0: the motor returns nothing, whatever active is set to; poll it with 0xF1 instead",
+        "respon=1, active=0: the motor acknowledges a motion command immediately with 'starting' or 'fail', and says nothing when the move ends",
+        "respon=1, active=1 (default): the immediate acknowledgement, then a second frame carrying 'complete' or 'end limit stopped' when the move ends",
+        "Same as the CanRSP menu option; revised in firmware V1.0.4 to add the active byte"
+      ]
+    },
+    "0x8D": {
+      "name": "set_group_id",
+      "category": "configuration",
+      "description": "Set the group address the motor also answers to",
+      "request": {
+        "dlc": 4,
+        "format": "CAN_ID | 4 | 0x8D | ID(uint16) | CRC",
+        "parameters": [
+          {
+            "name": "ID",
+            "type": "uint16",
+            "description": "Group address, 0x001 to 0x7FF, big-endian"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x8D | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "A command sent to a group address moves every motor in that group",
+        "The motor does not answer a command addressed to a group, exactly as for the broadcast address",
+        "Added in firmware V1.0.1"
+      ]
+    },
+    "0x8F": {
+      "name": "set_key_lock",
+      "category": "configuration",
+      "description": "Lock or unlock the front-panel keys",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x8F | enable(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "enable",
+            "type": "uint8",
+            "description": "0 unlock, 1 lock"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x8F | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "Added in firmware V1.0.3"
+      ]
+    },
+    "0x90": {
+      "name": "set_home_parameters",
+      "category": "configuration",
+      "description": "Set the homing trigger level, direction, speed and limit behaviour",
+      "request": {
+        "dlc": 8,
+        "format": "CAN_ID | 8 | 0x90 | homeTrig(uint8) | homeDir(uint8) | homeSpeed(uint16) | EndLimit(uint8) | mode(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "homeTrig",
+            "type": "uint8",
+            "description": "Effective level of the end stop: 0 low, 1 high"
+          },
+          {
+            "name": "homeDir",
+            "type": "uint8",
+            "description": "Direction of travel when homing: 0 CW, 1 CCW"
+          },
+          {
+            "name": "homeSpeed",
+            "type": "uint16",
+            "description": "Homing speed 0-3000 RPM, big-endian"
+          },
+          {
+            "name": "EndLimit",
+            "type": "uint8",
+            "description": "0 disable the endstop limit, 1 enable it"
+          },
+          {
+            "name": "mode",
+            "type": "uint8",
+            "description": "0 home against a limit switch, 1 home without one"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x90 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "Homing is required after enabling EndLimit for the first time or changing the limit parameters",
+        "With EndLimit=1 the shaft is unlocked when homing reaches the left limit switch; set EndLimit=0 to keep it locked"
       ]
     },
     "0x91": {
@@ -351,6 +962,264 @@
         "Added in firmware V1.0.1",
         "Sets current position as the zero reference point"
       ]
+    },
+    "0x94": {
+      "name": "set_nolimit_home_params",
+      "category": "configuration",
+      "description": "Set the return angle and current for homing without a limit switch",
+      "request": {
+        "dlc": 8,
+        "format": "CAN_ID | 8 | 0x94 | retValue(uint32) | ma(uint16) | CRC",
+        "parameters": [
+          {
+            "name": "retValue",
+            "type": "uint32",
+            "description": "Reverse angle in encoder counts, big-endian; 0x4000 is a full turn, 0x2000 the default half turn"
+          },
+          {
+            "name": "ma",
+            "type": "uint16",
+            "description": "Homing current in mA, big-endian"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x94 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "Corresponds to the Hm_Mode and Hm_Ma menu options; used with 0x90 and 0x91",
+        "Added in firmware V1.0.5"
+      ]
+    },
+    "0x9A": {
+      "name": "set_zero_mode_parameters",
+      "category": "configuration",
+      "description": "Set the power-on return-to-zero behaviour",
+      "request": {
+        "dlc": 6,
+        "format": "CAN_ID | 6 | 0x9A | mode(uint8) | enable(uint8) | speed(uint8) | dir(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "mode",
+            "type": "uint8",
+            "description": "0 disable, 1 DirMode (return with direction), 2 NearMode (return by the smaller angle)"
+          },
+          {
+            "name": "enable",
+            "type": "uint8",
+            "description": "0 clear the zero point, 1 set it here, 2 leave it unchanged"
+          },
+          {
+            "name": "speed",
+            "type": "uint8",
+            "description": "0 slowest to 4 fastest"
+          },
+          {
+            "name": "dir",
+            "type": "uint8",
+            "description": "0 CW, 1 CCW"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x9A | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "The zero-return travel covers at most 359 degrees",
+        "Added in firmware V1.0.3"
+      ]
+    },
+    "0x9B": {
+      "name": "set_holding_current_percentage",
+      "category": "configuration",
+      "description": "Set the holding current as a percentage of the working current",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x9B | holdMa(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "holdMa",
+            "type": "uint8",
+            "description": "0x00 is 10%, rising in 10% steps to 0x08 for 90%"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x9B | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "Effective in OPEN and CLOSE modes only; vFOC ignores it",
+        "Added in firmware V1.0.4"
+      ]
+    },
+    "0x9D": {
+      "name": "set_en_trigger_pos_error_protection",
+      "category": "configuration",
+      "description": "Configure En-triggered single-turn zeroing and position-error protection",
+      "request": {
+        "dlc": 7,
+        "format": "CAN_ID | 7 | 0x9D | flags(uint8) | times(uint16) | errors(uint16) | CRC",
+        "parameters": [
+          {
+            "name": "flags",
+            "type": "uint8",
+            "description": "bit1 = En-triggered zeroing, bit0 = position-error protection; bits 7:2 reserved and zero"
+          },
+          {
+            "name": "times",
+            "type": "uint16",
+            "description": "Length of the error statistics window, big-endian; one unit is about 15 ms"
+          },
+          {
+            "name": "errors",
+            "type": "uint16",
+            "description": "Position error that triggers protection, big-endian; 28000 is a full turn out of position"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x9D | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "write fail",
+        "1": "write success"
+      },
+      "notes": [
+        "With En-triggered zeroing on, the motor no longer zeroes at power-on; a pulse of about 200 ms on En triggers it instead",
+        "Position-error protection and stall protection are independent; the screen shows Wrong2 for the former and Wrong for the latter",
+        "Added in firmware V1.0.6"
+      ]
+    },
+    "0x9E": {
+      "name": "set_limit_port_remap",
+      "category": "configuration",
+      "description": "Remap the limit inputs onto the En and Dir ports",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x9E | enable(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "enable",
+            "type": "uint8",
+            "description": "0 disabled, 1 enabled"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0x9E | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      },
+      "notes": [
+        "Serial control mode only; it gives the 28D/35D/42D a right-hand limit they otherwise lack",
+        "Left limit maps to the En port and right limit to the Dir port, and Com must be tied high",
+        "With remapping on, 0x34 reports IN_1 as En and IN_2 as Dir",
+        "Added in firmware V1.0.4"
+      ]
+    },
+    "0xF1": {
+      "name": "query_motor_status",
+      "category": "status",
+      "description": "Query what the motor is currently doing",
+      "request": {
+        "dlc": 2,
+        "format": "CAN_ID | 2 | 0xF1 | CRC",
+        "parameters": []
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xF1 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "query fail",
+        "1": "motor stop",
+        "2": "motor speed up",
+        "3": "motor speed down",
+        "4": "motor full speed",
+        "5": "motor is homing",
+        "6": "motor is calibrating"
+      },
+      "notes": [
+        "The way to follow a motor whose uplink frames have been switched off with 0x8C"
+      ]
+    },
+    "0xF3": {
+      "name": "enable_motor",
+      "category": "control",
+      "description": "Enable or disable the motor",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xF3 | en(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "en",
+            "type": "uint8",
+            "description": "0 disable, 1 enable"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xF3 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "set fail",
+        "1": "set success"
+      }
     },
     "0xF4": {
       "name": "move_relative_axis",
@@ -444,6 +1313,61 @@
         "Re-targeting mid-move makes the motor emit a 'run fail' frame for the superseded move, carrying the same command byte as the acknowledgement of the new one",
         "Stop is encoded as this command with speed and absAxis both zero",
         "Bug fixed in V1.0.4"
+      ]
+    },
+    "0xF6": {
+      "name": "run_speed_mode",
+      "category": "motion",
+      "description": "Run continuously at a set speed and acceleration",
+      "request": {
+        "dlc": 5,
+        "format": "CAN_ID | 5 | 0xF6 | dir+speed_high(uint8) | speed_low(uint8) | acc(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "dir_speed_high",
+            "type": "uint8",
+            "description": "bit7 = direction (0 CCW, 1 CW), bits 3:0 = speed high nibble"
+          },
+          {
+            "name": "speed_low",
+            "type": "uint8",
+            "description": "Speed parameter low byte"
+          },
+          {
+            "name": "acc",
+            "type": "uint8",
+            "description": "Acceleration parameter 0-255"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xF6 | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "run fail, or stop fail",
+        "1": "run success, or stop starting",
+        "2": "stop complete"
+      },
+      "notes": [
+        "Speed 0 is the stop command: acc non-zero decelerates, acc 0 stops immediately",
+        "Manual worked example: 01 F6 01 40 02 3A runs forward at acc=2, speed=320 RPM; 01 F6 81 40 02 BA runs in reverse at the same speed",
+        "The uplink frame can be switched off with 0x8C or the CanRSP menu option"
+      ],
+      "examples": [
+        {
+          "description": "Forward at acc=2, speed parameter 0x140",
+          "frame": "01 F6 01 40 02 3A"
+        },
+        {
+          "description": "Reverse at acc=2, speed parameter 0x140",
+          "frame": "01 F6 81 40 02 BA"
+        }
       ]
     },
     "0xF7": {
@@ -563,6 +1487,39 @@
         "Pulses are command microsteps (base steps x MSTEP), not raw encoder counts",
         "Stop is encoded as this command with speed and absPulses both zero"
       ]
+    },
+    "0xFF": {
+      "name": "save_clean_speed_mode_params",
+      "category": "motion",
+      "description": "Save or clear the speed-mode parameters used at power-on",
+      "request": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xFF | state(uint8) | CRC",
+        "parameters": [
+          {
+            "name": "state",
+            "type": "uint8",
+            "description": "0xC8 save, 0xCA clean"
+          }
+        ]
+      },
+      "response": {
+        "dlc": 3,
+        "format": "CAN_ID | 3 | 0xFF | status(uint8) | CRC",
+        "fields": {
+          "byte0": "command_echo",
+          "byte1": "status_uint8",
+          "byte2": "crc"
+        }
+      },
+      "status_codes": {
+        "0": "fail",
+        "1": "success"
+      },
+      "notes": [
+        "With parameters saved, the motor turns at the saved constant speed as soon as it is powered on",
+        "0xC8 and 0xCA are values of this command's argument, not command codes of their own"
+      ]
     }
   },
   "categories": {
@@ -596,6 +1553,15 @@
   },
   "errata": {
     "sign_convention": "Counter-clockwise is positive for both encoder accumulation (0x31/0x35) and reported speed (0x32). The prose summaries above the 0x31 and 0x35 worked examples in manual V1.0.6 state the reverse; they are wrong, as shown by the examples immediately below them and by the 0x32 note.",
-    "command_naming": "Commands 0xF4 and 0xF5 act on the axis (raw encoder counts); 0xFD and 0xFE act on pulses (command microsteps). Earlier revisions of this fixture named 0xF4/0xF5 as pulse commands and gave them a pulses(int32)|speed(uint16) layout, which matches no command in the manual. It also mapped 0x3B to go_home; 0x3B reads the power-on zero status and 0x91 commands homing."
+    "command_naming": "Commands 0xF4 and 0xF5 act on the axis (raw encoder counts); 0xFD and 0xFE act on pulses (command microsteps). Earlier revisions of this fixture named 0xF4/0xF5 as pulse commands and gave them a pulses(int32)|speed(uint16) layout, which matches no command in the manual. It also mapped 0x3B to go_home; 0x3B reads the power-on zero status and 0x91 commands homing.",
+    "dlc_cells_contradict_byte_maps": "Three commands print a DLC that disagrees with the byte map beside it. 0x39's response is shown as DLC 4 over a map of code|error(int32)|CRC, which is 6. 0x94's request is shown as DLC 6 over a map of code|retValue(uint32)|ma(uint16)|CRC, which is 8. 0x9A's request is shown as DLC 5 over a map of code|mode|enable|speed|dir|CRC, which is 6. The byte maps are transcribed here; each is internally consistent with its field widths, and the DLC cells are not.",
+    "calibration_frame_length": "0x80's request is DLC 3 and carries a 0x00 data byte: the manual shows '01 3 80 00 CRC(81)', and the printed CRC confirms it, (0x01 + 0x80 + 0x00) & 0xFF = 0x81. Earlier revisions of this transcription recorded DLC 2 with no arguments.",
+    "printed_crc_typos": "Some worked examples print a CRC that does not follow from the frame. 0x34's downlink is given as '01 34 CRC(3B)' where (0x01 + 0x34) & 0xFF = 0x35; 0x3A's 'CRC(3B)' on the following page is correct, which is the likely source of the slip. The algorithm in Part 4 governs.",
+    "speed_mode_stop": "0xF6 is documented twice, once to run and once to stop, with the same frame layout: a stop is a run at speed 0. The two share a command code and differ only in their status codes, so they are one entry here.",
+    "raw_encoder_response_width": "0x35's response was transcribed here as DLC 4 carrying raw_data(uint16). The manual gives DLC 8 carrying value(int48), the same layout as 0x31, and the entry's own notes - a value that moves by 0x4000 per revolution - only make sense for an accumulator. Nothing checked it: 0x35 was absent from the read commands the response-DLC test drives."
+  },
+  "deliberately_absent": {
+    "0xC8": "Not a command. 0xC8 is the 'save' value of command 0xFF's state byte; constants.py exposes it as CMD_SAVE_SPEED_PARAMS.",
+    "0xCA": "Not a command. 0xCA is the 'clean' value of command 0xFF's state byte; constants.py exposes it as CMD_CLEAN_SPEED_PARAMS."
   }
 }

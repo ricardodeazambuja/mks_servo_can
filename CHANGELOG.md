@@ -10,6 +10,29 @@ Simulator observability, and the library defects that observability exposed.
 
 ### Fixed
 
+- **Protocol compliance covered 18 of the 49 commands the library implements
+  (L17).** `mks_servo_can/data/manual_commands_v106.json` is what the compliance
+  suite checks the wire format against, what `/commands` reports and what the
+  command injector builds its specifications from — and it described eighteen
+  commands. The framing of the other thirty-one, `0xF3` (enable), `0xF6` (speed
+  mode) and `0x8C` (CanRSP) among them, was verified against nothing, and the
+  test meant to catch exactly this could not: it looks for library methods
+  matching commands the specification lists, so a gap in the specification was a
+  gap in the check.
+  All 46 real commands are now transcribed from the V1.0.6 manual. `0xC8` and
+  `0xCA` are recorded in a `deliberately_absent` block, being values of `0xFF`'s
+  argument rather than commands of their own. Two entries were wrong: 0x35's
+  response was recorded as DLC 4 carrying a uint16 where the manual gives DLC 8
+  carrying an int48 — the entry's own notes, describing a value that moves by
+  0x4000 a revolution, contradicted it — and 0x80's request was recorded as a
+  two-byte frame where the manual shows three and the printed CRC confirms it.
+  Four contradictions inside the manual are recorded in `errata` rather than
+  resolved silently.
+  A new `TestRequestFraming` drives every command through the library and checks
+  both the outgoing and the returning frame against the manual; it is what caught
+  0x35. `test_every_implemented_command_is_transcribed` fails if a command is
+  ever implemented without being transcribed. The compliance suite went from 104
+  passing with 28 skipped to 142 passing with none skipped.
 - **The simulator's command injector had never injected a command (L16).**
   `/inject`, `/inject_template` and `/templates` only became reachable when L15
   was fixed, and every one of the eleven templates failed against a real motor.

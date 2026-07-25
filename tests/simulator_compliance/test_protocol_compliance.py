@@ -12,12 +12,112 @@ from typing import List
 
 import pytest
 
+from mks_servo_can import constants as const
 from mks_servo_can import exceptions, load_manual_spec
 
 # The manual's transcription ships with the library as package data.
 MANUAL_SPEC = load_manual_spec()
 
 MANUAL_COMMANDS = MANUAL_SPEC["commands"]
+
+
+def command_calls(api):
+    """
+    One library call per transcribed command, keyed by command code.
+
+    Two tests need this and each used to carry its own copy, which is how a
+    mapping can be right in one and wrong in the other. Every entry must call
+    the method that emits *this* opcode: three once did not - "0x3B" called
+    `go_home` (0x91), "0xF4" the relative-pulses method (0xFD) and "0xF5" the
+    absolute-pulses method (0xFE) - so the suite reported compliance for three
+    commands it never sent, including the two axis commands the streaming API
+    is built on.
+
+    Args:
+        api: A connected `LowLevelAPI`.
+
+    Returns:
+        A mapping of `"0xNN"` to a zero-argument coroutine function.
+    """
+    return {
+        "0x00": lambda: api.read_system_parameter(can_id=1, parameter_command_code=0x82),
+        "0x30": lambda: api.read_encoder_value_carry(can_id=1),
+        "0x31": lambda: api.read_encoder_value_addition(can_id=1),
+        "0x32": lambda: api.read_motor_speed_rpm(can_id=1),
+        "0x33": lambda: api.read_pulses_received(can_id=1),
+        "0x34": lambda: api.read_io_status(can_id=1),
+        "0x35": lambda: api.read_raw_encoder_value_addition(can_id=1),
+        "0x36": lambda: api.write_io_port(can_id=1, out1_value=0, out1_mask_action=1),
+        "0x39": lambda: api.read_shaft_angle_error(can_id=1),
+        "0x3A": lambda: api.read_en_pin_status(can_id=1),
+        "0x3B": lambda: api.read_power_on_zero_status(can_id=1),
+        "0x3D": lambda: api.release_stall_protection(can_id=1),
+        "0x3E": lambda: api.read_motor_protection_state(can_id=1),
+        "0x3F": lambda: api.restore_default_parameters(can_id=1),
+        "0x41": lambda: api.restart_motor(can_id=1),
+        "0x80": lambda: api.calibrate_encoder(can_id=1),
+        "0x82": lambda: api.set_work_mode(can_id=1, mode=const.MODE_SR_VFOC),
+        "0x83": lambda: api.set_working_current(can_id=1, current_ma=1600),
+        "0x84": lambda: api.set_subdivision(can_id=1, microsteps=16),
+        "0x85": lambda: api.set_en_pin_active_level(can_id=1, level_code=0x01),
+        "0x86": lambda: api.set_motor_direction(can_id=1, direction_code=0x00),
+        "0x87": lambda: api.set_auto_screen_off(can_id=1, enable=False),
+        "0x88": lambda: api.set_stall_protection(can_id=1, enable=True),
+        "0x89": lambda: api.set_subdivision_interpolation(can_id=1, enable=True),
+        "0x8A": lambda: api.set_can_bitrate(can_id=1, bitrate_code=0x02),
+        # Re-addressed to the address it already has, so the frame goes out in
+        # full and the motor stays reachable for the rest of the run.
+        "0x8B": lambda: api.set_can_id(current_can_id=1, new_can_id=1),
+        "0x8C": lambda: api.set_slave_respond_active(
+            can_id=1, respond_enabled=True, active_enabled=True
+        ),
+        "0x8D": lambda: api.set_group_id(can_id=1, group_id=0x50),
+        "0x8F": lambda: api.set_key_lock(can_id=1, lock_enabled=False),
+        "0x90": lambda: api.set_home_parameters(
+            can_id=1,
+            home_trig_level=0,
+            home_dir=0,
+            home_speed_rpm=60,
+            end_limit_enabled=False,
+            home_mode=0,
+        ),
+        "0x91": lambda: api.go_home(can_id=1),
+        "0x92": lambda: api.set_current_axis_to_zero(can_id=1),
+        "0x94": lambda: api.set_nolimit_home_params(
+            can_id=1, reverse_angle_pulses=0x2000, home_current_ma=800
+        ),
+        "0x9A": lambda: api.set_zero_mode_parameters(
+            can_id=1, mode=0, set_zero_action=2, speed_code=0, direction_code=0
+        ),
+        "0x9B": lambda: api.set_holding_current_percentage(can_id=1, percentage_code=4),
+        "0x9D": lambda: api.set_en_trigger_and_pos_error_protection(
+            can_id=1,
+            enable_en_trigger_zero=False,
+            enable_pos_error_protection=False,
+            error_detection_time_ms_units=100,
+            error_threshold_pulses=28000,
+        ),
+        "0x9E": lambda: api.set_limit_port_remap(can_id=1, enable_remap=False),
+        "0xF1": lambda: api.query_motor_status(can_id=1),
+        "0xF3": lambda: api.enable_motor(can_id=1, enable=True),
+        "0xF4": lambda: api.run_position_mode_relative_axis(
+            can_id=1, speed=500, acceleration=100, relative_axis=1000
+        ),
+        "0xF5": lambda: api.run_position_mode_absolute_axis(
+            can_id=1, speed=500, acceleration=100, absolute_axis=1000
+        ),
+        "0xF6": lambda: api.run_speed_mode(
+            can_id=1, ccw_direction=False, speed=100, acceleration=2
+        ),
+        "0xF7": lambda: api.emergency_stop(can_id=1),
+        "0xFD": lambda: api.run_position_mode_relative_pulses(
+            can_id=1, pulses=100, ccw_direction=False, speed=500, acceleration=100
+        ),
+        "0xFE": lambda: api.run_position_mode_absolute_pulses(
+            can_id=1, speed=500, acceleration=100, absolute_pulses=1500
+        ),
+        "0xFF": lambda: api.save_or_clean_speed_mode_params(can_id=1, save=False),
+    }
 
 
 @pytest.mark.compliance
@@ -222,33 +322,7 @@ class TestManualProtocolCompliance:
             pass  # Ignore if enable fails
 
         # Map of manual commands to library methods
-        command_mapping = {
-            "0x30": lambda: api.read_encoder_value_carry(can_id=1),
-            "0x31": lambda: api.read_encoder_value_addition(can_id=1),
-            "0x32": lambda: api.read_motor_speed_rpm(can_id=1),
-            "0x34": lambda: api.read_io_status(can_id=1),
-            "0x35": lambda: api.read_raw_encoder_value_addition(can_id=1),
-            "0x36": lambda: api.write_io_port(can_id=1, out1_value=0, out1_mask_action=1),
-            # Each entry must call the method that emits *this* opcode. Three
-            # of these previously did not: "0x3B" called go_home (which sends
-            # 0x91), "0xF4" called the relative-pulses method (0xFD) and "0xF5"
-            # called the absolute-pulses method (0xFE). The suite therefore
-            # reported compliance for 0x3B, 0xF4 and 0xF5 while never sending
-            # any of them - including the two axis commands the streaming API
-            # is built on.
-            "0x3B": lambda: api.read_power_on_zero_status(can_id=1),
-            "0x3D": lambda: api.release_stall_protection(can_id=1),
-            "0x3E": lambda: api.read_motor_protection_state(can_id=1),
-            "0x41": lambda: api.restart_motor(can_id=1),
-            "0x80": lambda: api.calibrate_encoder(can_id=1),
-            "0x91": lambda: api.go_home(can_id=1),
-            "0x92": lambda: api.set_current_axis_to_zero(can_id=1),
-            "0xF4": lambda: api.run_position_mode_relative_axis(can_id=1, speed=500, acceleration=100, relative_axis=1000),
-            "0xF5": lambda: api.run_position_mode_absolute_axis(can_id=1, speed=500, acceleration=100, absolute_axis=1000),
-            "0xF7": lambda: api.emergency_stop(can_id=1),
-            "0xFD": lambda: api.run_position_mode_relative_pulses(can_id=1, pulses=100, ccw_direction=False, speed=500, acceleration=100),
-            "0xFE": lambda: api.run_position_mode_absolute_pulses(can_id=1, speed=500, acceleration=100, absolute_pulses=1500),
-        }
+        command_mapping = command_calls(api)
 
         missing_commands = []
         failed_commands = []
@@ -289,10 +363,13 @@ class TestManualProtocolCompliance:
         # Test standard frame format requirements
         for cmd_code, cmd_spec in MANUAL_COMMANDS.items():
             request_dlc = cmd_spec["request"]["dlc"]
-            response_dlc = cmd_spec["response"]["dlc"]
-
-            # Verify DLC values are valid (1-8)
             assert 1 <= request_dlc <= 8, f"Invalid request DLC for {cmd_code}: {request_dlc}"
+
+            if cmd_spec["response"].get("variable_dlc"):
+                # 0x00 answers in the layout of whichever parameter was asked
+                # for, so its response length is not a constant.
+                continue
+            response_dlc = cmd_spec["response"]["dlc"]
             assert 1 <= response_dlc <= 8, f"Invalid response DLC for {cmd_code}: {response_dlc}"
 
     @pytest.mark.asyncio
@@ -351,39 +428,13 @@ class TestCommandResponseMapping:
                 pass  # Ignore enable failures
 
         # Map commands to API calls
-        command_calls = {
-            "0x30": lambda: api.read_encoder_value_carry(can_id=1),
-            "0x31": lambda: api.read_encoder_value_addition(can_id=1),
-            "0x32": lambda: api.read_motor_speed_rpm(can_id=1),
-            "0x34": lambda: api.read_io_status(can_id=1),
-            "0x35": lambda: api.read_raw_encoder_value_addition(can_id=1),
-            "0x36": lambda: api.write_io_port(can_id=1, out1_value=0, out1_mask_action=1),
-            # Each entry must call the method that emits *this* opcode. Three
-            # of these previously did not: "0x3B" called go_home (which sends
-            # 0x91), "0xF4" called the relative-pulses method (0xFD) and "0xF5"
-            # called the absolute-pulses method (0xFE). The suite therefore
-            # reported compliance for 0x3B, 0xF4 and 0xF5 while never sending
-            # any of them - including the two axis commands the streaming API
-            # is built on.
-            "0x3B": lambda: api.read_power_on_zero_status(can_id=1),
-            "0x3D": lambda: api.release_stall_protection(can_id=1),
-            "0x3E": lambda: api.read_motor_protection_state(can_id=1),
-            "0x41": lambda: api.restart_motor(can_id=1),
-            "0x80": lambda: api.calibrate_encoder(can_id=1),
-            "0x91": lambda: api.go_home(can_id=1),
-            "0x92": lambda: api.set_current_axis_to_zero(can_id=1),
-            "0xF4": lambda: api.run_position_mode_relative_axis(can_id=1, speed=500, acceleration=100, relative_axis=1000),
-            "0xF5": lambda: api.run_position_mode_absolute_axis(can_id=1, speed=500, acceleration=100, absolute_axis=1000),
-            "0xF7": lambda: api.emergency_stop(can_id=1),
-            "0xFD": lambda: api.run_position_mode_relative_pulses(can_id=1, pulses=100, ccw_direction=False, speed=500, acceleration=100),
-            "0xFE": lambda: api.run_position_mode_absolute_pulses(can_id=1, speed=500, acceleration=100, absolute_pulses=1500),
-        }
+        calls = command_calls(api)
 
-        if cmd_code not in command_calls:
+        if cmd_code not in calls:
             pytest.skip(f"Command {cmd_code} not mapped for testing")
 
         try:
-            result = await command_calls[cmd_code]()
+            result = await calls[cmd_code]()
 
             # Verify result type based on command specification
             if cmd_code == "0x30":

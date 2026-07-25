@@ -25,6 +25,8 @@ from mks_servo_can import constants as const
 from mks_servo_can import load_manual_spec
 from mks_servo_can.crc import calculate_crc, verify_crc
 
+from .test_protocol_compliance import command_calls
+
 try:
     from can import Message as CanMessage
 except ImportError:  # pragma: no cover - python-can is a hard dependency in CI
@@ -89,6 +91,10 @@ class TestResponseFraming:
     READ_COMMANDS = [
         (const.CMD_READ_ENCODER_CARRY, None),
         (const.CMD_READ_ENCODER_ADDITION, None),
+        # 0x35 was missing from this list, so nothing checked its framing. The
+        # transcription had its response at DLC 4 carrying a uint16 where the
+        # manual gives DLC 8 carrying an int48.
+        (const.CMD_READ_RAW_ENCODER_ADDITION, None),
         (const.CMD_READ_MOTOR_SPEED_RPM, None),
         (const.CMD_READ_PULSES_RECEIVED, None),
         (const.CMD_READ_IO_STATUS, None),
@@ -175,6 +181,22 @@ class TestFieldEncoding:
         """0x31: a single signed 48-bit accumulator, big-endian, DLC 8."""
         response = await exchange(
             compliance_can_interface, 1, const.CMD_READ_ENCODER_ADDITION
+        )
+        assert response.dlc == 8
+        value = decode_signed_be(response.data[1:7])
+        assert -(2**47) <= value < 2**47
+
+    @pytest.mark.asyncio
+    async def test_raw_encoder_addition_is_int48(self, compliance_can_interface):
+        """
+        0x35: the same layout as 0x31, over the encoder's uncorrected count.
+
+        The transcription had this at DLC 4 carrying a uint16, which the entry's
+        own notes contradicted - a value that moves by 0x4000 a revolution is an
+        accumulator, not a raw single-turn reading.
+        """
+        response = await exchange(
+            compliance_can_interface, 1, const.CMD_READ_RAW_ENCODER_ADDITION
         )
         assert response.dlc == 8
         value = decode_signed_be(response.data[1:7])
@@ -269,6 +291,111 @@ class TestSignConventions:
         assert abs(delta - one_rev) < one_rev * 0.2, (
             f"expected roughly +{one_rev} counts for one revolution, got {delta}"
         )
+
+
+class TestRequestFraming:
+    """
+    The frames the *library* emits, checked against the manual.
+
+    Everything above examines what the simulator answers. Nothing examined what
+    went out, and for thirty-one of the forty-nine commands nothing could: they
+    were absent from the transcription, so there was no layout to check them
+    against. A command whose request frame is the wrong length is accepted by
+    the simulator - it reads the payload it expects and ignores the rest - and
+    rejected by hardware.
+    """
+
+    @pytest.mark.asyncio
+    async def test_every_command_goes_out_with_the_manuals_layout(
+        self, compliance_api, compliance_can_interface
+    ):
+        """Every transcribed command, driven through the library, one frame at a time."""
+        sent = []
+        received = []
+        original_send = compliance_can_interface.send_message
+        original_receive = compliance_can_interface._process_received_message
+
+        async def recording_send(msg, *args, **kwargs):
+            """Records the outgoing frame, then sends it unchanged."""
+            sent.append(msg)
+            return await original_send(msg, *args, **kwargs)
+
+        async def recording_receive(msg, *args, **kwargs):
+            """Records the incoming frame, then hands it on untouched."""
+            received.append(msg)
+            return await original_receive(msg, *args, **kwargs)
+
+        compliance_can_interface.send_message = recording_send
+        compliance_can_interface._process_received_message = recording_receive
+        wrong = []
+        try:
+            for code, call in command_calls(compliance_api).items():
+                sent.clear()
+                received.clear()
+                try:
+                    await call()
+                except Exception as exc:  # framing is the subject, not the outcome
+                    if not sent:
+                        wrong.append(f"{code}: nothing was sent ({exc})")
+                        continue
+                if not sent:
+                    wrong.append(f"{code}: nothing was sent")
+                    continue
+
+                expected_dlc = MANUAL_COMMANDS[code]["request"]["dlc"]
+                frame = sent[0]
+                if frame.data[0] != int(code, 16):
+                    wrong.append(
+                        f"{code}: frame carries command byte "
+                        f"0x{frame.data[0]:02X}"
+                    )
+                elif len(frame.data) != expected_dlc:
+                    wrong.append(
+                        f"{code}: manual says DLC {expected_dlc}, library sent "
+                        f"{len(frame.data)} ({frame.data.hex()})"
+                    )
+                elif not verify_crc(frame.arbitration_id, list(frame.data)):
+                    wrong.append(f"{code}: bad CRC on {frame.data.hex()}")
+
+                wrong.extend(self._response_complaints(code, received))
+        finally:
+            compliance_can_interface.send_message = original_send
+            compliance_can_interface._process_received_message = original_receive
+
+        assert not wrong, "frames disagree with the manual:\n" + "\n".join(wrong)
+
+    @staticmethod
+    def _response_complaints(code, received):
+        """
+        Checks the replies to one command against the manual's uplink layout.
+
+        Args:
+            code: The command's `"0xNN"` key in the transcription.
+            received: Every frame that arrived while the command was in flight.
+
+        Returns:
+            A list of complaints, empty when the replies are well formed.
+        """
+        response_spec = MANUAL_COMMANDS[code]["response"]
+        if response_spec.get("variable_dlc"):
+            # 0x00's reply echoes the parameter's code and is as long as that
+            # parameter needs, so there is no fixed layout to check.
+            return []
+
+        echoes = [f for f in received if f.data and f.data[0] == int(code, 16)]
+        if not echoes:
+            return [f"{code}: the motor sent no frame echoing the command"]
+
+        complaints = []
+        for frame in echoes:
+            if len(frame.data) != response_spec["dlc"]:
+                complaints.append(
+                    f"{code}: manual says response DLC {response_spec['dlc']}, "
+                    f"motor sent {len(frame.data)} ({frame.data.hex()})"
+                )
+            if not verify_crc(frame.arbitration_id, list(frame.data)):
+                complaints.append(f"{code}: bad CRC on reply {frame.data.hex()}")
+        return complaints
 
 
 class TestErrorHandling:

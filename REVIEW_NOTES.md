@@ -651,6 +651,78 @@ with the relative one it used to send.
 
 ---
 
+## L17. Protocol compliance covered 18 commands of 49 — **fixed**
+
+`mks_servo_can/data/manual_commands_v106.json` is not documentation. It is what
+`tests/simulator_compliance/` checks the wire format against, what `/commands`
+reports, and what the command injector builds its specifications from. It
+transcribed **18 commands. `constants.py` defines 49.**
+
+**Reproduction.**
+
+```python
+>>> from mks_servo_can import constants as c, get_manual_commands
+>>> spec = {int(k, 16) for k in get_manual_commands()}
+>>> sorted(hex(v) for n, v in vars(c).items()
+...        if n.startswith("CMD_") and isinstance(v, int) and v not in spec)
+['0x0', '0x33', '0x39', '0x3a', '0x3f', '0x82', '0x83', '0x84', '0x85', '0x86',
+ '0x87', '0x88', '0x89', '0x8a', '0x8b', '0x8c', '0x8d', '0x8f', '0x90', '0x94',
+ '0x9a', '0x9b', '0x9d', '0x9e', '0xc8', '0xca', '0xf1', '0xf3', '0xf6', '0xff']
+```
+
+Among them `0xF3` (enable), `0xF6` (speed mode) and `0x8C` (CanRSP) — commands
+the library sends on every connection. So "protocol compliance" meant eighteen
+commands: **the framing of the other thirty-one was verified against nothing**,
+and `test_all_manual_commands_implemented` could not notice, because it only
+looks for library methods matching commands the specification lists. A gap in
+the specification was a gap in the test that was supposed to detect gaps.
+
+**Fixed.** All 46 real commands transcribed from
+`docs/MKS SERVO42&57D_CAN User Manual V1.0.6.pdf` — sections 5.1 to 5.9 and
+Part 6 — against the manual rather than against `constants.py`, so that the code
+still has something independent to be checked against. `0xC8` and `0xCA` are
+recorded in a new `deliberately_absent` block: they are values of `0xFF`'s
+argument byte, not commands, and `constants.py` merely names them.
+
+**Two disagreements found, both in the transcription rather than the library:**
+
+- **0x35's response was transcribed as DLC 4 carrying `raw_data(uint16)`.** The
+  manual gives DLC 8 carrying `value(int48)`, the same layout as 0x31, and the
+  entry contradicted itself: its own notes said the value moves by 0x4000 a
+  revolution, which describes an accumulator, not a single-turn reading. The
+  library and simulator were right; the reference was wrong. Nothing caught it
+  because 0x35 was absent from the `READ_COMMANDS` list the response-DLC test
+  drives.
+- **0x80's request was transcribed as DLC 2 with no arguments.** The manual
+  shows `01 3 80 00 CRC(81)` and the printed CRC settles it:
+  `(0x01 + 0x80 + 0x00) & 0xFF = 0x81`. The library sends the 0x00 byte.
+
+**Four contradictions inside the manual itself** are recorded in `errata` rather
+than resolved silently: 0x39, 0x94 and 0x9A each print a DLC that disagrees with
+the byte map beside it (the byte maps are internally consistent with their field
+widths, and are what is transcribed); and 0x34's worked example prints a CRC that
+does not follow from its own frame.
+
+**Covered by** three additions:
+
+- `tests/simulator_compliance/test_wire_format.py::TestRequestFraming` drives
+  every transcribed command through the library and checks the frame that went
+  out — command byte, DLC and CRC — and every frame that came back, against the
+  manual. This is what caught 0x35; it was written before the fix and failed on
+  it.
+- `tests/unit/test_manual_spec_packaging.py::test_every_implemented_command_is_transcribed`
+  fails if a command is ever implemented without being transcribed, and
+  `test_absences_are_explained_rather_than_silent` refuses an unexplained
+  omission.
+- `tests/simulator_compliance/test_protocol_compliance.py` now maps all 46
+  commands to library calls. The mapping lived in two copies, one per test; it
+  is a single `command_calls(api)` function now.
+
+The compliance suite went from 104 passing with 28 skipped to 142 passing with
+none skipped: the skips were commands with "no documented DLC".
+
+---
+
 # Part 1 — Repository Review: what remains
 
 ## Done

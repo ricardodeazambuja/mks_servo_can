@@ -78,18 +78,19 @@ class TestTemplates:
                 == const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES
             ), f"{name} does not send the absolute-position command"
 
-    def test_every_template_the_injector_knows_the_code_for_validates(self):
+    def test_every_template_validates(self):
         """
         A template that cannot survive validation can never be injected, and
-        eleven of eleven could not. Templates whose command is not yet in the
-        packaged manual specification are the subject of separate work; every
-        one that *is* transcribed has to pass.
+        eleven of eleven could not: five carried the wrong number of bytes and
+        five named a command the packaged manual specification did not cover.
         """
         injector, _ = _make_injector()
 
         for name, template in injector.get_available_templates().items():
-            if injector.get_command_spec(template["code"]) is None:
-                continue
+            assert injector.get_command_spec(template["code"]) is not None, (
+                f"template {name!r} sends 0x{template['code']:02X}, which the "
+                "packaged manual specification does not describe"
+            )
             is_valid, message = injector.validate_command(
                 template["code"], template["data"]
             )

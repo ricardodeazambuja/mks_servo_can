@@ -61,6 +61,10 @@ class TestCANFrameFormat:
         commands = MANUAL_SPEC["commands"]
 
         for cmd_code, cmd_spec in commands.items():
+            if cmd_spec["response"].get("variable_dlc"):
+                # 0x00 answers in the layout of whichever parameter was asked
+                # for, so its response length is not a constant.
+                continue
             request_dlc = cmd_spec["request"]["dlc"]
             response_dlc = cmd_spec["response"]["dlc"]
 
@@ -114,6 +118,8 @@ class TestCANFrameFormat:
         commands = MANUAL_SPEC["commands"]
 
         for cmd_code, cmd_spec in commands.items():
+            if cmd_spec["response"].get("variable_dlc"):
+                continue
             response_dlc = cmd_spec["response"]["dlc"]
             response_fields = cmd_spec["response"]["fields"]
 
@@ -171,7 +177,10 @@ class TestDataTypeCompliance:
             ("0x31", "value", "int48"),
             ("0x32", "speed", "int16"),
             ("0x34", "io_status", "uint8"),
-            ("0x35", "raw_encoder", "uint16"),
+            # 0x35 is an accumulator with the same layout as 0x31, not a
+            # single-turn uint16; the transcription said otherwise and nothing
+            # drove the command to notice.
+            ("0x35", "value", "int48"),
         ]
 
         for cmd_code, _field_name, expected_type in test_cases:
