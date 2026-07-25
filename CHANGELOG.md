@@ -10,6 +10,34 @@ Simulator observability, and the library defects that observability exposed.
 
 ### Fixed
 
+- **The simulator's command injector had never injected a command (L16).**
+  `/inject`, `/inject_template` and `/templates` only became reachable when L15
+  was fixed, and every one of the eleven templates failed against a real motor.
+  Three independent causes. `_load_command_specs` copied the manual's DLC into
+  `CommandSpec.data_length`, but DLC counts the command code and the CRC as well
+  as the arguments — so `validate_command` demanded two data bytes from every
+  command that takes none, and all eighteen transcribed commands were rejected.
+  `inject_command` then `await`ed `SimulatedMotor.process_command`, which is
+  synchronous and returns a `(can_id, payload)` tuple, and handed it a
+  one-argument completion callback where the motor calls a two-argument one; the
+  immediate reply was discarded. And eight of the eleven templates named one
+  command while sending another — `enable` sent `0x80`, which is encoder
+  calibration; the two positioning templates were described as moving *to* a
+  position and sent `0xFD`, relative pulses, with four bytes where the frame
+  takes six; the speed templates put the direction bit in the wrong byte; and
+  the current templates passed a percentage to a command that takes milliamps.
+  The hard-coded fallback specification table repeated the misnamings, so the
+  two ways of loading specifications agreed with each other and disagreed with
+  the manual.
+  Templates and the fallback table now take their codes from `constants`, DLC is
+  converted to a payload count, the callback has the signature the motor calls
+  and the previous one is restored afterwards (an injection used to divert a
+  connected client's completion frames to itself permanently), and an injection
+  that asked for a reply and got none reports failure rather than success.
+  Commands the packaged manual transcription does not yet cover — `0xF3`,
+  `0xF6`, `0x83` — still answer `Unknown command code`; completing that
+  transcription is item 5 in `docs/development/roadmap.md`. Covered by
+  `tests/unit/test_command_injector.py` against a real bus and a real motor.
 - **A multi-axis move reported success when the last axis failed (L11).**
   `MultiAxisController.wait_for_all_moves_to_complete` built its task list from
   the axes that were still moving, awaited them, and then *rebuilt* that list to

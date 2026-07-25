@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from mks_servo_can import constants as const
 from mks_servo_can import get_manual_commands
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,16 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from ..virtual_can_bus import VirtualCANBus
     from .llm_debug_interface import LLMDebugInterface
+
+
+def _payload_length(dlc: int) -> int:
+    """
+    Convert a manual DLC into a count of payload bytes.
+
+    The manual quotes DLC for the whole frame - command code, payload, CRC - so
+    a command that carries no arguments still reads as DLC 2.
+    """
+    return max(dlc - 2, 0)
 
 
 @dataclass
@@ -95,6 +106,13 @@ class CommandInjector:
         by hex code, so every lookup failed and the hard-coded fallback below was
         what actually ran. That fallback misnames several commands, so it is now
         genuinely a last resort and says so when it is used.
+
+        `data_length` and `response_length` count *payload* bytes - what the
+        caller of `inject_command` supplies and what comes back after the
+        command code. The manual's DLC counts the command code and the CRC as
+        well, so it is two larger; taking it verbatim made `validate_command`
+        demand two bytes for every command that takes none, and every single
+        injection was rejected.
         """
         try:
             commands = get_manual_commands()
@@ -106,8 +124,8 @@ class CommandInjector:
                     code=code,
                     name=cmd_data.get("name", f"Command_{code:02X}"),
                     description=cmd_data.get("description", ""),
-                    data_length=request.get("dlc", 0),
-                    response_length=response.get("dlc", 0),
+                    data_length=_payload_length(request.get("dlc", 0)),
+                    response_length=_payload_length(response.get("dlc", 0)),
                     category=cmd_data.get("category", "unknown"),
                     parameters=request.get("parameters", []),
                 )
@@ -120,20 +138,28 @@ class CommandInjector:
             self._setup_basic_command_specs()
 
     def _setup_basic_command_specs(self):
-        """Setup basic command specifications as fallback"""
+        """
+        Setup basic command specifications as fallback.
+
+        Names and lengths come from `constants` and the manual. The version
+        this replaces called 0x80 "Enable Motor" (it is encoder calibration;
+        enable is 0xF3), called 0x33 "Read Position" (it counts pulses
+        received), and had 0xFD and 0xFE the wrong way round.
+        """
         basic_commands = [
-            (0x30, "Read Encoder", "Read current encoder position", 0, 4, "status"),
-            (0x32, "Read Speed", "Read current motor speed", 0, 2, "status"),
-            (0x33, "Read Position", "Read current position in degrees", 0, 4, "status"),
-            (0xF1, "Query Motor Status", "Get motor enable/status", 0, 1, "status"),
-            (0xF6, "Speed Mode", "Set motor speed and direction", 4, 0, "motion"),
-            (0xFD, "Position Mode 1", "Move to absolute position", 4, 0, "motion"),
-            (0xFE, "Position Mode 2", "Move relative position", 4, 0, "motion"),
-            (0xF7, "Emergency Stop", "Stop motor immediately", 0, 0, "motion"),
-            (0x80, "Enable Motor", "Enable/disable motor", 1, 0, "control"),
-            (0x82, "Set Work Mode", "Set operating mode", 1, 0, "config"),
-            (0x83, "Set Current", "Set motor current", 2, 0, "config"),
-            (0x84, "Set Subdivision", "Set step subdivision", 1, 0, "config"),
+            (const.CMD_READ_ENCODER_CARRY, "Read Encoder", "Read encoder carry and value", 0, 6, "status"),
+            (const.CMD_READ_MOTOR_SPEED_RPM, "Read Speed", "Read current motor speed in RPM", 0, 2, "status"),
+            (const.CMD_READ_PULSES_RECEIVED, "Read Pulses Received", "Read the number of pulses received", 0, 4, "status"),
+            (const.CMD_QUERY_MOTOR_STATUS, "Query Motor Status", "Get motor enable/status", 0, 1, "status"),
+            (const.CMD_RUN_SPEED_MODE, "Speed Mode", "Run continuously at a speed and direction", 3, 1, "motion"),
+            (const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES, "Position Mode 1", "Move a relative number of pulses", 6, 1, "motion"),
+            (const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES, "Position Mode 2", "Move to an absolute pulse count", 6, 1, "motion"),
+            (const.CMD_EMERGENCY_STOP, "Emergency Stop", "Stop motor immediately", 0, 1, "motion"),
+            (const.CMD_ENABLE_MOTOR, "Enable Motor", "Enable or disable the motor", 1, 1, "control"),
+            (const.CMD_CALIBRATE_ENCODER, "Calibrate Encoder", "Run encoder calibration", 0, 1, "control"),
+            (const.CMD_SET_WORK_MODE, "Set Work Mode", "Set operating mode", 1, 1, "config"),
+            (const.CMD_SET_WORKING_CURRENT, "Set Working Current", "Set motor working current in mA", 2, 1, "config"),
+            (const.CMD_SET_SUBDIVISION, "Set Subdivision", "Set step subdivision", 1, 1, "config"),
         ]
 
         for code, name, desc, data_len, resp_len, category in basic_commands:
@@ -148,73 +174,102 @@ class CommandInjector:
             )
 
     def _setup_command_templates(self):
-        """Setup pre-defined command templates for common operations"""
+        """
+        Setup pre-defined command templates for common operations.
+
+        Every entry here is a frame that must survive `validate_command` and
+        then mean what its name says on a real motor, so the codes and payloads
+        come from `constants` and the manual rather than from round numbers.
+        Eight of the eleven were wrong: `enable` sent 0x80 (calibrate), the two
+        `move_*` templates sent 0xFD (relative pulses) while describing absolute
+        positions and carried four bytes where the frame takes six, the speed
+        templates put the direction bit in the wrong byte, and the current
+        templates passed a percentage to a command that takes milliamps.
+        """
+        # The simulator's default motor: 200 full steps at 1/16 microstepping.
+        pulses_per_rev = 200 * 16
+
+        def _abs_pulses(speed: int, accel: int, pulses: int) -> List[int]:
+            """Payload for 0xFE: speed(uint16 BE), accel(uint8), pulses(int24 BE)."""
+            return [
+                (speed >> 8) & 0xFF, speed & 0xFF, accel & 0xFF,
+                (pulses >> 16) & 0xFF, (pulses >> 8) & 0xFF, pulses & 0xFF,
+            ]
+
+        def _speed_mode(clockwise: bool, speed: int, accel: int) -> List[int]:
+            """Payload for 0xF6: bit7 of byte 0 is direction, 1 = clockwise."""
+            return [
+                (0x80 if clockwise else 0x00) | ((speed >> 8) & 0x0F),
+                speed & 0xFF,
+                accel & 0xFF,
+            ]
+
         self.command_templates = {
             "enable": {
                 "name": "Enable Motor",
-                "code": 0x80,
+                "code": const.CMD_ENABLE_MOTOR,
                 "data": [0x01],
                 "description": "Enable the selected motor"
             },
             "disable": {
                 "name": "Disable Motor",
-                "code": 0x80,
+                "code": const.CMD_ENABLE_MOTOR,
                 "data": [0x00],
                 "description": "Disable the selected motor"
             },
             "stop": {
                 "name": "Emergency Stop",
-                "code": 0xF7,
+                "code": const.CMD_EMERGENCY_STOP,
                 "data": [],
                 "description": "Stop motor immediately"
             },
             "read_position": {
                 "name": "Read Encoder Position",
-                "code": 0x30,
+                "code": const.CMD_READ_ENCODER_CARRY,
                 "data": [],
                 "description": "Read current encoder position"
             },
             "read_speed": {
                 "name": "Read Current Speed",
-                "code": 0x32,
+                "code": const.CMD_READ_MOTOR_SPEED_RPM,
                 "data": [],
                 "description": "Read current motor speed"
             },
             "move_cw_slow": {
                 "name": "Move Clockwise (Slow)",
-                "code": 0xF6,
-                "data": [0x00, 0x00, 0x32, 0x00],  # 50 RPM clockwise
-                "description": "Move clockwise at 50 RPM"
+                "code": const.CMD_RUN_SPEED_MODE,
+                "data": _speed_mode(clockwise=True, speed=50, accel=2),
+                "description": "Run clockwise at speed parameter 50"
             },
             "move_ccw_slow": {
                 "name": "Move Counter-Clockwise (Slow)",
-                "code": 0xF6,
-                "data": [0x01, 0x00, 0x32, 0x00],  # 50 RPM counter-clockwise
-                "description": "Move counter-clockwise at 50 RPM"
+                "code": const.CMD_RUN_SPEED_MODE,
+                "data": _speed_mode(clockwise=False, speed=50, accel=2),
+                "description": "Run counter-clockwise at speed parameter 50"
             },
             "move_home": {
                 "name": "Move to Home Position",
-                "code": 0xFD,
-                "data": [0x00, 0x00, 0x00, 0x00],  # Position 0
-                "description": "Move to home position (0 degrees)"
+                "code": const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES,
+                "data": _abs_pulses(speed=100, accel=2, pulses=0),
+                "description": "Move to absolute pulse 0"
             },
             "move_90deg": {
                 "name": "Move to 90 Degrees",
-                "code": 0xFD,
-                "data": [0x00, 0x40, 0x00, 0x00],  # 90 degrees (16384 steps / 4)
-                "description": "Move to 90 degree position"
+                "code": const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES,
+                "data": _abs_pulses(speed=100, accel=2, pulses=pulses_per_rev // 4),
+                "description": "Move to the absolute pulse count a quarter turn from zero"
             },
             "set_high_current": {
                 "name": "Set High Current",
-                "code": 0x83,
-                "data": [0x64, 0x00],  # 100% current
-                "description": "Set motor current to 100%"
+                "code": const.CMD_SET_WORKING_CURRENT,
+                "data": [0x06, 0x40],  # 1600 mA, big-endian
+                "description": "Set the working current to 1600 mA"
             },
             "set_low_current": {
                 "name": "Set Low Current",
-                "code": 0x83,
-                "data": [0x32, 0x00],  # 50% current
-                "description": "Set motor current to 50%"
+                "code": const.CMD_SET_WORKING_CURRENT,
+                "data": [0x03, 0x20],  # 800 mA, big-endian
+                "description": "Set the working current to 800 mA"
             }
         }
 
@@ -314,30 +369,51 @@ class CommandInjector:
             )
 
         try:
-            # Create a mock callback for response handling
-            response_data = None
+            # `process_command` is synchronous and hands back the immediate
+            # reply as a `(can_id, payload)` tuple; anything it answers later -
+            # a move completing, say - arrives through the callback instead.
+            # This used to `await` the call (a tuple is not awaitable) and pass
+            # a one-argument callback, so no injection had ever reached a motor.
+            async_response: Optional[bytes] = None
             response_received = asyncio.Event()
 
-            def response_callback(response_bytes: bytes):
-                nonlocal response_data
-                response_data = response_bytes
+            async def response_callback(_resp_can_id: int, resp_payload: bytes):
+                nonlocal async_response
+                async_response = resp_payload
                 response_received.set()
 
-            # Execute the command
-            await motor.process_command(
-                command_code=command_code,
-                data_from_payload=bytes(data_bytes),
-                send_completion_callback=response_callback if expect_response else None
+            # The motor keeps whichever callback it was last given, so an
+            # injection would otherwise divert a connected client's completion
+            # frames to us for good. Put the bus's callback back afterwards.
+            previous_callback = motor._send_completion_callback
+
+            response_tuple = motor.process_command(
+                command_code,
+                bytes(data_bytes),
+                response_callback,
             )
 
-            # Wait for response if expected
-            if expect_response and spec and spec.response_length > 0:
+            if response_tuple is not None:
+                response_data = response_tuple[1]
+            elif expect_response:
+                # Nothing came back immediately: the motor is answering through
+                # the callback, so give it a moment to do so.
                 try:
                     await asyncio.wait_for(response_received.wait(), timeout=1.0)
                 except asyncio.TimeoutError:
                     pass  # Continue without response
+                response_data = async_response
+            else:
+                response_data = None
+
+            motor._send_completion_callback = previous_callback
 
             execution_time = (time.time() - start_time) * 1000
+
+            # A command that asked for a reply and got none did not reach the
+            # motor in any useful sense; saying otherwise is how the injector
+            # looked healthy while injecting nothing.
+            answered = response_data is not None or not expect_response
 
             # Create command record
             command_record = InjectedCommand(
@@ -348,8 +424,8 @@ class CommandInjector:
                 data_bytes=bytes(data_bytes),
                 response_data=response_data,
                 execution_time_ms=execution_time,
-                success=True,
-                error_message=None
+                success=answered,
+                error_message=None if answered else "Motor sent no response",
             )
 
             # Add to history

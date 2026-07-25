@@ -568,11 +568,86 @@ simulator: `/performance` now returns real metrics (`uptime_seconds`,
 returned the "not enabled" message, and `/inject` returns a structured result
 rather than a 500.
 
-**Still outstanding, and separate:** the command injector's own table is empty —
-`/templates` returns nothing and `/inject` answers `Unknown command code: 0xF3`
-for a command that is plainly in the manual. That is a second defect behind the
-first, and could not be seen until the first was fixed. Recorded as work
-remaining in `docs/development/roadmap.md`.
+**A second defect behind the first**, invisible until this one was fixed:
+nothing the injector offered could actually be injected. See L16.
+
+---
+
+## L16. The command injector had never injected a command — **fixed**
+
+An earlier version of this note said "the command injector's table is empty".
+**That was wrong**, and it is recorded here rather than deleted because it sent
+the next reader to the wrong place. `_setup_command_templates` populates eleven
+templates and `/templates` returns them; the probe that read them as empty
+unwrapped a `{"templates": ...}` key the endpoint does not use — it returns the
+mapping directly.
+
+What was actually wrong is larger. Injecting every one of the eleven templates
+against a real motor fails, in three independent ways:
+
+```
+read_position      success=False err=Expected 2 data bytes, got 0
+stop               success=False err=Expected 2 data bytes, got 0
+enable             success=False err=Unknown command code: 0xF3
+move_home          success=False err=Expected 8 data bytes, got 4
+set_high_current   success=False err=Unknown command code: 0x83
+```
+
+**1. Frame lengths were read as payload lengths.** `_load_command_specs` copied
+the manual's DLC into `CommandSpec.data_length`, but DLC counts the command code
+and the CRC as well as the arguments. So `validate_command` demanded two data
+bytes from every command that takes none, and six-byte moves were asked for
+eight. All eighteen transcribed commands were rejected. The hard-coded fallback
+table, which uses genuine payload counts, is what shows the intended meaning.
+
+**2. `inject_command` could not reach a motor even if validation passed.** It
+`await`ed `SimulatedMotor.process_command`, which is synchronous and returns a
+`(can_id, payload)` tuple — `object tuple can't be used in 'await' expression` —
+and passed a one-argument completion callback where the motor calls a
+two-argument one. The immediate reply was discarded entirely.
+
+**3. Eight of the eleven templates named one command and sent another.**
+`enable` and `disable` sent `0x80`, which is encoder calibration, not enable
+(`0xF3`); `move_home` and `move_90deg` were described as moving *to* a position
+and sent `0xFD`, relative pulses, with four bytes where the frame takes six; the
+speed templates put the direction bit in the wrong byte; and the current
+templates passed a percentage to `0x83`, which takes milliamps. The fallback
+specification table repeated the misnamings — `0x80` as "Enable Motor", `0x33`
+as "Read Position" (it counts pulses received), and `0xFD`/`0xFE` swapped — so
+the two ways of loading specifications agreed with each other and disagreed with
+the manual.
+
+Injection also left its own callback installed on the motor afterwards, which
+would divert a connected client's move-completion frames to the injector for the
+rest of the session.
+
+**Fixed.** DLC is converted to a payload count; `process_command` is called
+synchronously and its immediate reply returned; the completion callback has the
+signature the motor calls and the previous one is put back; templates and the
+fallback table take their codes from `constants`. An injection that asked for a
+reply and got none now reports failure instead of `success=True`.
+
+After the fix, every command already in the packaged manual specification
+injects and answers:
+
+```
+move_90deg    ok=True  resp=fe0100
+move_home     ok=True  resp=fe0100
+read_position ok=True  resp=3000000000000031
+read_speed    ok=True  resp=32000033
+stop          ok=True  resp=f701f9
+```
+
+`enable`, `move_cw_slow`, `move_ccw_slow` and the two current templates still
+answer `Unknown command code`, because `0xF3`, `0xF6` and `0x83` are among the
+thirty-one commands `constants.py` defines that the packaged manual
+transcription does not yet cover. That is the next piece of work, not a
+different defect.
+
+**Covered by** `tests/unit/test_command_injector.py`, which drives a real
+`VirtualCANBus` and a real `SimulatedMotor`. The move test starts the motor away
+from zero so that the absolute command the template now sends cannot be confused
+with the relative one it used to send.
 
 ---
 

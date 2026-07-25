@@ -228,14 +228,57 @@ at zero.
 **Done when:** the three tests above run under stepped time, take no measurable
 wall-clock time, and assert exact values rather than tolerances.
 
-### Also found while doing this, and not yet fixed
+### Also found while doing this — **fixed, see L16**
 
-**The command injector's table is empty.** With L15 fixed, `/inject` and
-`/templates` are reachable for the first time — and `/templates` returns nothing,
-while `/inject` answers `Unknown command code: 0xF3` for a command plainly in the
-manual. A second defect that was hidden behind the first. The injector should be
-built from the packaged manual spec (`mks_servo_can.manual_spec`), which is
-already the single source everything else uses.
+An earlier version of this section said "the command injector's table is empty".
+That was wrong: `/templates` returns eleven templates, and the probe that read
+them as empty unwrapped a JSON key the endpoint does not use.
+
+What was actually true is worse — the injector had never injected anything.
+Frame DLCs were used as payload lengths, so validation rejected all eighteen
+transcribed commands; `inject_command` `await`ed a synchronous method and passed
+a callback with the wrong signature; and eight of the eleven templates sent a
+different command from the one they named. All of it is fixed and covered by
+`tests/unit/test_command_injector.py`.
+
+What remains of it is the transcription itself: `enable` (`0xF3`), the speed
+templates (`0xF6`) and the current templates (`0x83`) still answer `Unknown
+command code`, because those commands are not in the packaged manual spec. That
+is item 5 below, not a separate injector defect.
+
+---
+
+## Item 5 — Complete the packaged manual transcription
+
+`mks_servo_can/data/manual_commands_v106.json` transcribes **18 commands.
+`constants.py` defines 49.** Missing are `0xF3` (enable), `0xF6` (speed mode),
+`0x8C` (CanRSP — the command two of item 1's open questions turn on), `0x82`,
+`0x83`, `0x84`, `0x86`, `0x88`, `0x8A`, `0x33`, `0x3A`, `0x3F` and twenty more:
+
+```python
+from mks_servo_can import constants as c, get_manual_commands
+spec = {int(k, 16) for k in get_manual_commands()}
+missing = {n: hex(v) for n, v in vars(c).items()
+           if n.startswith("CMD_") and isinstance(v, int) and v not in spec}
+```
+
+The file is not documentation. It is what `tests/simulator_compliance/` checks
+the wire format against, and what `/commands` and the command injector are built
+from. So **the wire format of 31 of 49 commands is validated against nothing**,
+`/inject` rejects legal commands, and `/commands` under-reports what the
+simulator supports to the agent reading it.
+
+Transcribe from `docs/MKS SERVO42&57D_CAN User Manual V1.0.6.pdf`, against the
+manual rather than against `constants.py` — the point of the file is to be an
+independent record the code can be checked against. Where the manual is
+ambiguous or contradicts itself, add to the `errata` block rather than picking a
+reading silently. Expect it to find defects: every one of these commands is
+implemented in `low_level_api.py` and none has been checked.
+
+**Done when:** the transcription covers every command in `constants.py` or
+records why one is deliberately absent; `tests/simulator_compliance/` exercises
+the new entries; `/inject` accepts `0xF3`; and any encoding disagreement is fixed
+and recorded in `REVIEW_NOTES.md` and `CHANGELOG.md`.
 
 ---
 
@@ -243,9 +286,11 @@ already the single source everything else uses.
 
 1. **Item 1 whenever the bench is free** — it is asynchronous on everything else
    and is the only item that can invalidate work already done.
-2. **Item 2** as a release-readiness pass; the decision that blocked it is made.
-3. **Item 3** continuously, a module at a time.
-4. **Item 4** — the hard part is done; what remains is conversion work that can
+2. **Item 5** is the highest-value item that needs nothing but the manual, and
+   items 3 and 4 both get easier once the specification is complete.
+3. **Item 2** as a release-readiness pass; the decision that blocked it is made.
+4. **Item 3** continuously, a module at a time.
+5. **Item 4** — the hard part is done; what remains is conversion work that can
    be taken one test at a time.
 
 ### Done and removed from this list
