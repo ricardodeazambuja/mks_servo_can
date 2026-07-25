@@ -797,6 +797,56 @@ is what hid this in the first place). Coverage 17% → 80%.
 
 ---
 
+## L19. The simulator acknowledged IO writes and discarded them — **fixed**
+
+Found by writing an effect-based test for `low_level_api.write_io_port` while
+taking that module from 49% to 78%.
+
+**Reproduction.**
+
+```python
+>>> await api.write_io_port(1, out1_value=1, out1_mask_action=1)   # returns; status = 1
+>>> (await api.read_io_status(1))["OUT_1"]
+0
+```
+
+The simulator's `0x36` handler had the whole decode commented out:
+
+```python
+elif command_code == const.CMD_WRITE_IO_PORT: # 0x36
+    # Simplified: just acknowledge. Real sim would change self.io_out1/2_value
+    if data_from_payload and len(data_from_payload) >= 1:
+         # byte_val = data_from_payload[0]
+         # ...
+         # if out1_mask == 1: self.io_out1_value = out1_val_cmd
+        response_status_override = const.STATUS_SUCCESS
+```
+
+So the write was accepted, `status = 1` came back, and `io_out1_value` stayed
+where it was — the house defect, in the reference implementation people develop
+against. The compliance suite reported 0x36 as working because it only checked
+that a well-formed frame came back.
+
+**Fixed.** The decode is implemented per manual page 28: bits 7:6 are OUT_2's
+mask, 5:4 OUT_1's, bit 3 OUT_2's value and bit 2 OUT_1's; mask 1 means "write
+this value". The library's encoder was already correct.
+
+**Covered by** `tests/integration/test_low_level_commands.py`, which writes each
+port and reads it back with 0x34.
+
+**Alongside it, `low_level_api.py` went from 49% to 78%**, and the tests are
+effect-based rather than "did not raise": every setting that the simulator can
+report through 0x00 is written and read back, each boolean setting is set both
+ways (a setter that ignores its argument passes a test that only ever turns
+something on), the four motion commands are checked by where the motor ended up,
+the relative ones are commanded from a non-zero position so they cannot be
+confused with the absolute ones, and the stop form of each — none of which had
+ever been sent — is checked by the motor still being where it stopped a moment
+later. Argument validation is checked for the `_no_wait` variants too: they send
+without waiting, so nothing downstream can reject a truncated value.
+
+---
+
 # Part 1 — Repository Review: what remains
 
 ## Done

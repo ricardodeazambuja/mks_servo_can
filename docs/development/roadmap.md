@@ -167,18 +167,22 @@ Weakest first:
 
 | module | coverage | what is untested |
 |---|---|---|
-| `low_level_api.py` | 49% | the commands with no coverage at all |
 | `can_interface.py` | 56% | the hardware branch, which no test touches |
 | `digitizer/base_digitizer.py` | 61% | recording, the file formats, the error paths |
 | `multi_axis_controller.py` | 61% | `move_linearly_to`, `home_all_axes`, sequential (`concurrent=False`) execution |
 | `axis.py` | 66% | homing, calibration, work-mode changes |
+| `low_level_api.py` | 78% | the `MotorError` branches, which need a motor that answers `status = 0` |
 | `digitizer/surface_mapping.py` | 80% | `interactive_height_mapping`, which needs a person at a keyboard |
 
-**Start with `low_level_api.py`**, where whole commands have no coverage at all
-and the simulator can answer every one of them. Pair it with the manual
-transcription: a command that is now described in
-`manual_commands_v106.json` should have its `low_level_api` round trip tested,
-and the compliance suite already drives all 46 of them.
+**Start with `can_interface.py`**, now the weakest. The hardware branch cannot
+be exercised without a bus, but its construction and error paths can:
+`interface_type`, bitrate handling, and what happens when `python-can` raises on
+open.
+
+`low_level_api.py` (49% → 78%) gave L19 — the simulator acknowledging IO writes
+and discarding them. What is left there is mostly the `MotorError` branches,
+which need a motor that answers `status = 0`; the simulator has no way to be
+asked for one.
 
 Note that `multi_axis_controller.py`'s remaining gap is mostly
 `_execute_on_axes(concurrent=False)` and `move_all_relative_user`. The

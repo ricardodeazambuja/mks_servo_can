@@ -10,6 +10,22 @@ Simulator observability, and the library defects that observability exposed.
 
 ### Fixed
 
+- **The simulator acknowledged IO port writes and discarded them (L19).** The
+  `0x36` handler in `motor_model.py` had its whole decode commented out under a
+  "Simplified: just acknowledge" note, so `write_io_port` returned `status = 1`
+  and `read_io_status` reported the port unchanged, with nothing to explain the
+  difference. The compliance suite could not see it: it checked that a
+  well-formed frame came back, which one did. Implemented per manual page 28 —
+  bits 7:6 are OUT_2's mask, 5:4 OUT_1's, bit 3 OUT_2's value and bit 2 OUT_1's.
+  The library's encoder was already correct.
+  Found while taking `low_level_api.py` from 49% to 78%, with tests that assert
+  effects rather than absence of exceptions: every setting the simulator can
+  report through 0x00 is written and read back, each boolean setting is set both
+  ways, the four motion commands are checked by where the motor ended up (the
+  relative ones commanded from a non-zero position, so they cannot be confused
+  with the absolute ones), and the stop form of each — none of which had ever
+  been sent — is checked by the motor still being where it stopped a moment
+  later.
 - **`automated_grid_mapping` had never mapped anything (L18).** It called
   `MultiAxisController.wait_for_all_axes`, which does not exist and never has —
   the method is `wait_for_all_moves_to_complete` — so the first point of every

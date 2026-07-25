@@ -885,15 +885,17 @@ class SimulatedMotor:
 
         # --- Part 5.3: Write IO Port ---
         elif command_code == const.CMD_WRITE_IO_PORT: # 0x36
-            # Simplified: just acknowledge. Real sim would change self.io_out1/2_value
+            # This used to acknowledge the write and leave the decode commented
+            # out, so a client wrote OUT_1 high, was told "status = 1", and read
+            # it back low from 0x34 with nothing to explain the difference.
+            # Manual page 28: bits 7:6 are OUT_2's mask, 5:4 OUT_1's, bit 3
+            # OUT_2's value and bit 2 OUT_1's; mask 1 means "write this value".
             if data_from_payload and len(data_from_payload) >= 1:
-                 # byte_val = data_from_payload[0]
-                 # out2_mask = (byte_val >> 6) & 0x03
-                 # out1_mask = (byte_val >> 4) & 0x03
-                 # out2_val_cmd = (byte_val >> 3) & 0x01
-                 # out1_val_cmd = (byte_val >> 2) & 0x01
-                 # if out2_mask == 1: self.io_out2_value = out2_val_cmd
-                 # if out1_mask == 1: self.io_out1_value = out1_val_cmd
+                byte_val = data_from_payload[0]
+                if ((byte_val >> 6) & 0x03) == 1:
+                    self.io_out2_value = (byte_val >> 3) & 0x01
+                if ((byte_val >> 4) & 0x03) == 1:
+                    self.io_out1_value = (byte_val >> 2) & 0x01
                 response_status_override = const.STATUS_SUCCESS
             else: response_status_override = const.STATUS_FAILURE
 
