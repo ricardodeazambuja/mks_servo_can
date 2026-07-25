@@ -2,23 +2,32 @@
 
 Repository: `/home/ricardodeazambuja/backup/GitStuff/mks_servo_can`
 Branch: `library-hardening`, **nothing pushed** (no upstream tracking branch).
-Baseline: 646 tests passing / 30 skipped, `ruff check .` clean, library coverage
-68%, **documentation baseline empty** (63 → 26 → 0 known problems).
+Baseline: 807 tests passing / 26 skipped, `ruff check .` clean, library coverage
+79%, **documentation baseline empty** (63 → 26 → 0 known problems). Green against
+the installed wheel as well as the source tree.
 
 Context: a Python library for MKS SERVO42D/57D stepper drivers over CAN, plus a
 simulator that emulates the same protocol so the library can be developed with no
 hardware attached. Two reviews found defects in both. **All of them are now
-fixed** — L1–L5 and L7 from the reviews, plus L8, L9, and L10–L15 found while
+fixed** — L1–L5 and L7 from the reviews, plus L8, L9 and L10–L21 found while
 testing the fixes and while doing the work below. `REVIEW_NOTES.md` Part 0
 records each with its original reproduction; `CHANGELOG.md` `[Unreleased]` says
 what changed and why.
 
 Note the pattern in those later numbers, because it is the most useful thing to
 know about this codebase: **every one of them was found by a change that made
-something previously invisible visible.** L10 by the first CI job to run against
-an installed package rather than the source tree; L13 by the L11 fix, which
-stopped a group operation discarding its errors. Nothing here was found by
-reading the code.
+something previously invisible visible.** L10 and L21 by running the suite
+against an installed package rather than the source tree; L13 by the L11 fix,
+which stopped a group operation discarding its errors; L18 by driving a grid
+mapper with real motors instead of the `AsyncMock` that had answered to two
+method names that do not exist; L19 by asking the simulator to read back a
+setting it had just accepted. Nothing here was found by reading the code.
+
+Two of them are the same defect twice, which is worth knowing before writing
+anything new: **L11 and L20** both recovered an association they already had —
+one by re-deriving a list's order after awaiting it, the other by parsing an
+axis name back out of a task's name. And **L12 and L18** both graded work by how
+accurately the part that ran was done, ignoring how much of it ran at all.
 
 **Where things are written down.** `REVIEW_NOTES.md` Part 0 is the source of
 truth for what was wrong and how it was proved — symptoms, reproductions,
