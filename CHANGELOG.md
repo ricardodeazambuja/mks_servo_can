@@ -10,6 +10,36 @@ Simulator observability, and the library defects that observability exposed.
 
 ### Fixed
 
+- **`automated_grid_mapping` had never mapped anything (L18).** It called
+  `MultiAxisController.wait_for_all_axes`, which does not exist and never has —
+  the method is `wait_for_all_moves_to_complete` — so the first point of every
+  grid raised `AttributeError`. A blanket `except Exception` swallowed it,
+  printed `✅ GRID MAPPING COMPLETE / Points measured: 0`, and then died with
+  `KeyError: 'point_count'` because a map of no points carried `statistics={}`.
+  `_probe_surface_height` had a second wrong name: `Axis.wait_for_move_complete`
+  is `wait_for_move_completion`. Neither was visible because the only thing that
+  had ever exercised this code used an `AsyncMock` controller, and a mock answers
+  to any name.
+  Four defects behind those: an empty map's statistics are now zeroed rather than
+  absent, so the shape is invariant; `_sequence_to_surface_map` guarded with
+  `if not sequence`, which a dataclass never satisfies, so a recording of nothing
+  became a map of a perfectly flat surface — it now refuses a missing sequence,
+  an empty one, and one whose points carry no X and Y; the serpentine alternated
+  on the count of points measured rather than the row index, so an even number of
+  columns meant every row ran left to right; and `_analyze_surface_mapping_precision`
+  graded on position error alone, so one point of five hundred hit accurately
+  graded EXCELLENT — L12's defect in a second place, now capped by completeness
+  and returned by `grade_surface_mapping_precision` rather than only printed.
+  A failure mid-grid now prints `GRID MAPPING FAILED` and re-raises rather than
+  being logged and swallowed.
+  `_probe_surface_height` has no contact detection: it moves the pen down and
+  adds a millimetre of `random.uniform` variation, and that number went into the
+  saved map as a height with nothing to say it was invented. Points now carry
+  `"simulated": True, "contact_detected": False`, the map carries
+  `"simulated_probe": True` alongside `planned_points`, `measured_points` and
+  `complete`, and the run says so on stdout.
+  `load_surface_map` was added; `save_surface_map` had no reader, so the file
+  format had nothing exercising it. Coverage 17% → 80%.
 - **Protocol compliance covered 18 of the 49 commands the library implements
   (L17).** `mks_servo_can/data/manual_commands_v106.json` is what the compliance
   suite checks the wire format against, what `/commands` reports and what the

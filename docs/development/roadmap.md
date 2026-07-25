@@ -154,30 +154,31 @@ machine that has never seen the repository.
 
 ## Item 3 — Coverage where it is thinnest
 
-Library coverage is 68%. The pattern holds without exception so far: every module
-taken from "untested" to "tested" has produced a defect, and in two cases the
-defect was the module's headline behaviour. `precision_analyzer.py` (35% → 98%)
-gave L12, `multi_axis_controller.py` (44% → 61%) gave L11, and L11's fix
-immediately exposed L13 in `axis.py`. These modules are untested because nobody
-has run them, not because they are simple.
+The pattern holds without exception so far: every module taken from "untested"
+to "tested" has produced a defect, and in three cases the defect was the
+module's headline behaviour. `precision_analyzer.py` (35% → 98%) gave L12,
+`multi_axis_controller.py` (44% → 61%) gave L11, L11's fix immediately exposed
+L13 in `axis.py`, and `surface_mapping.py` (17% → 80%) gave L18 — a grid mapper
+that had never mapped anything, because it called two methods that do not exist
+and a mock had answered to both. These modules are untested because nobody has
+run them, not because they are simple.
 
 Weakest first:
 
 | module | coverage | what is untested |
 |---|---|---|
-| `digitizer/surface_mapping.py` | 17% | probing patterns, the surface model, the file formats |
+| `low_level_api.py` | 49% | the commands with no coverage at all |
 | `can_interface.py` | 56% | the hardware branch, which no test touches |
-| `low_level_api.py` | 58% | the commands with no coverage at all |
 | `digitizer/base_digitizer.py` | 61% | recording, the file formats, the error paths |
 | `multi_axis_controller.py` | 61% | `move_linearly_to`, `home_all_axes`, sequential (`concurrent=False`) execution |
 | `axis.py` | 66% | homing, calibration, work-mode changes |
+| `digitizer/surface_mapping.py` | 80% | `interactive_height_mapping`, which needs a person at a keyboard |
 
-**Start with `surface_mapping.py`**, now by far the weakest and completely
-unexercised. It is also the one whose output a user acts on physically, so a
-wrong height map is a crash into a workpiece rather than a wrong number.
-
-**Then `low_level_api.py`**, where whole commands have no coverage at all and the
-simulator can answer every one of them.
+**Start with `low_level_api.py`**, where whole commands have no coverage at all
+and the simulator can answer every one of them. Pair it with the manual
+transcription: a command that is now described in
+`manual_commands_v106.json` should have its `low_level_api` round trip tested,
+and the compliance suite already drives all 46 of them.
 
 Note that `multi_axis_controller.py`'s remaining gap is mostly
 `_execute_on_axes(concurrent=False)` and `move_all_relative_user`. The

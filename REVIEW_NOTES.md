@@ -723,6 +723,80 @@ none skipped: the skips were commands with "no documented DLC".
 
 ---
 
+## L18. `automated_grid_mapping` had never mapped anything — **fixed**
+
+`digitizer/surface_mapping.py` sat at 17% coverage: 209 statements, 174 of them
+never executed. It is also the module whose output a user acts on physically — a
+height map is what tells a machine where a workpiece is.
+
+**Reproduction.** Three real motors on the simulator, a two-by-two grid:
+
+```
+🤖 AUTOMATED GRID MAPPING
+✅ GRID MAPPING COMPLETE
+   Points measured: 0
+ERROR SurfaceMapping: Error during automated mapping:
+      'MultiAxisController' object has no attribute 'wait_for_all_axes'
+
+📊 SURFACE MAP STATISTICS
+KeyError: 'point_count'
+```
+
+**`wait_for_all_axes` does not exist and never has.** The method is
+`wait_for_all_moves_to_complete`. The first point of every grid raised
+`AttributeError` — and the blanket `except Exception` swallowed it, printed
+`✅ GRID MAPPING COMPLETE`, `Points measured: 0`, and then died in
+`_display_surface_statistics` because a map of no points carried
+`statistics={}`. `_probe_surface_height` contained a second one:
+`Axis.wait_for_move_complete` is `wait_for_move_completion`.
+
+Neither was visible because the only thing that had ever run this code was a
+demo with an `AsyncMock` controller, and a mock answers to any name. This is the
+"`MagicMock(spec=X)` does not protect you" rule with a concrete cost attached.
+
+**Four more defects behind those two:**
+
+- **A map of no points carried `statistics={}`.** Every other map carries five
+  keys. Anything reading the statistics of an empty map — including this
+  module's own display routine, called immediately after "COMPLETE" is
+  printed — raised `KeyError`. Now zeroed, so the shape is invariant.
+- **`_sequence_to_surface_map` guarded with `if not sequence`**, which a
+  dataclass instance never satisfies. A recording of nothing produced an empty
+  map that reads as a perfectly flat surface. It now refuses a missing
+  sequence, an empty one, and one whose points carry no X and Y.
+- **The serpentine alternated on `len(surface_points) % 2`** — the number of
+  points measured so far rather than the row index. With an even number of
+  columns every row ran left to right and the pen crossed the whole workpiece
+  between them. It alternates on the row now.
+- **`_analyze_surface_mapping_precision` graded on position error alone.**
+  That is L12 again in a second place: one point of five hundred, hit
+  accurately, graded EXCELLENT on both height and XY. It now caps both grades by
+  completeness through `PrecisionAnalyzer._cap_by_completeness`, and the grading
+  is a returned value (`grade_surface_mapping_precision`) rather than something
+  only printed.
+
+**Also, and not a bug so much as a hazard:** `_probe_surface_height` has no
+contact detection. It moves the pen down by `max_depth` and adds a millimetre of
+`random.uniform` variation, and that number is written into the surface map as a
+height. Nothing said so — the map was saved to JSON, statistics and all,
+indistinguishable from a measurement. Every point now carries
+`"simulated": True, "contact_detected": False`, the map carries
+`"simulated_probe": True`, the metadata records `planned_points`,
+`measured_points` and `complete`, and the run prints the warning. Real contact
+detection needs hardware the library does not have.
+
+**Fixed also:** a failure mid-grid now prints `GRID MAPPING FAILED` with the
+count measured so far and re-raises, matching what L9 established for playback.
+`load_surface_map` was added, because `save_surface_map` had no reader and so
+the file format had nothing exercising it.
+
+**Covered by** `tests/unit/test_surface_mapping.py` (arithmetic, empty cases,
+grading, persistence) and `tests/integration/test_surface_mapping.py` (the grid
+walk and the precision playback, against three real simulated motors — a mock
+is what hid this in the first place). Coverage 17% → 80%.
+
+---
+
 # Part 1 — Repository Review: what remains
 
 ## Done
