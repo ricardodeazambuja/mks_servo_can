@@ -57,6 +57,9 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 * **Anomaly reporting**: surfaces protocol events a client cannot deduce from
   the wire — notably a superseded move, whose abort frame is indistinguishable
   from the acknowledgement of the command that superseded it.
+* **Simulated time you can step** (`--step`): the motors move only when
+  `POST /step` says so, so a test or an agent can command, step and read with no
+  sleeping and get the same answer every run.
 * **Configuration Management**: 
     * Save/load configuration profiles for different simulator setups.
     * Motor templates for quick motor configuration (SERVO42D, SERVO57D, high-precision, high-speed).
@@ -81,7 +84,10 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 
 ### General
 * **Determinism Focus**: Designed with considerations for analyzing and understanding timing behavior, aiding in applications with real-time constraints.
-* **Comprehensive Test Strategy**: Includes unit tests, integration tests (simulator-based), and examples for Hardware-In-the-Loop (HIL) and determinism/timing benchmarks.
+* **Comprehensive Test Strategy**: 805 tests — unit, integration against a live
+  simulator, wire-format compliance against the manual's transcription,
+  determinism under stepped simulated time, and hardware-in-the-loop tests that
+  skip without a bench.
 
 ## Project Structure
 
@@ -94,6 +100,8 @@ mks_servo_can/
 ├── MANIFEST.in                      # Keeps the manual transcription in the sdist
 ├── mks_servo_can_library/           # The installable Python library (mks_servo_can)
 │   ├── mks_servo_can/               # Source code for the library
+│   │   ├── data/                    # Package data
+│   │   │   └── manual_commands_v106.json  # The manual's command transcription
 │   │   ├── kinematics/              # Kinematic transformation modules
 │   │   ├── digitizer/               # Motor digitizing and precision testing
 │   │   │   ├── base_digitizer.py    # Core MotorDigitizer class
@@ -108,6 +116,7 @@ mks_servo_can/
 │   │   ├── realtime.py              # Fixed-rate streaming control + predictors
 │   │   ├── motor_profile.py         # Speed/accel parameters <-> engineering units
 │   │   ├── robot_kinematics.py      # High-level robot model kinematics
+│   │   ├── manual_spec.py           # Loads the packaged manual transcription
 │   │   ├── constants.py
 │   │   ├── crc.py
 │   │   └── exceptions.py
@@ -115,10 +124,12 @@ mks_servo_can/
 │   ├── mks_simulator/               # Source code for the simulator
 │   │   ├── init.py
 │   │   ├── cli.py                   # Command-line interface (using Click)
+│   │   ├── clock.py                 # Real-time and stepped simulated clocks
 │   │   ├── motor_model.py           # Simulates individual motor behavior
 │   │   ├── virtual_can_bus.py       # Manages simulated CAN traffic
 │   │   ├── interface/               # User interface modules
-│   │   │   ├── textual_dashboard.py # Interactive terminal dashboard
+│   │   │   ├── dashboard_page.py    # The self-contained browser dashboard
+│   │   │   ├── textual_dashboard.py # Legacy terminal dashboard (--textual-dashboard)
 │   │   │   ├── config_manager.py    # Configuration profiles and live adjustment
 │   │   │   ├── debug_tools.py       # Command injection and testing framework
 │   │   │   ├── performance_monitor.py # Performance tracking and monitoring
@@ -126,11 +137,13 @@ mks_servo_can/
 │   │   │   ├── sdk_client.py        # Client helper for the debug API
 │   │   │   └── http_debug_server.py # HTTP REST API for programmatic access
 │   │   └── main.py                  # Entry point for the simulator CLI
-├── tests/                           # Test suite (478 tests)
-│   ├── unit/                        # Fast, mocked; no simulator needed
+├── tests/                           # Test suite (805 tests)
+│   ├── unit/                        # Fast; no simulator subprocess needed
 │   ├── integration/                 # Against a live simulator
 │   ├── simulator_compliance/        # Wire-format conformance vs the manual
+│   ├── determinism/                 # Motor model under stepped simulated time
 │   ├── hil/                         # Hardware-in-the-loop; see tests/hil/
+│   ├── stepped_simulator.py         # In-process simulator on a stepped clock
 │   └── fixtures/                    # docs_known_issues.json (documentation ratchet)
 ├── examples/                        # Example scripts demonstrating library usage
 │   ├── camera_gimbal_tracker.py     # 3-axis gimbal tracking a fast target
@@ -150,7 +163,11 @@ mks_servo_can/
 │   ├── calligraphy_plotter.py       # Artistic calligraphy and text rendering
 │   └── calligraphy_plotter_manual_interpolation.py # Manual interpolation techniques
 ├── docs/                            # Detailed documentation
-│   └── README.md                    # Overview of documentation structure
+│   ├── README.md                    # Index of the documentation
+│   ├── images/                      # Screenshots referenced from the docs
+│   ├── user_guides/                 # Library and simulator guides
+│   ├── development/                 # Roadmap, contributing, testing
+│   └── appendices/                  # Glossary and reference material
 ├── CHANGELOG.md                     # Release history
 ├── README.md                        # Main project README (this file)
 ├── requirements.txt                 # Core Python dependencies
@@ -176,22 +193,16 @@ mks_servo_can/
     * Verify proper motor power supply.
     * Double-check CAN H and CAN L wiring.
 
-**For the simulator CLI:**
-* `click` library: `pip install click`
+**For the simulator and everything else:** nothing to install by hand. The
+extras below declare it, so `pip install .[simulator]` brings what the simulator
+needs and `pip install -e .[dev]` brings the lot. `requirements.txt` is kept only
+so that older instructions still do something sensible; `pyproject.toml` is the
+source of truth, and a second dependency list is a list that will disagree with
+the first.
 
-**For enhanced simulator features:**
-* `rich` library: `pip install rich` (for interactive dashboard and real-time displays)
-* `fastapi` and `uvicorn`: `pip install fastapi uvicorn` (for HTTP debug API)
-* `psutil`: `pip install psutil` (optional, for advanced performance monitoring)
-
-**For enhanced digitizer features (optional):**
-* `numpy` library: `pip install numpy` (for advanced surface calculations)
-* `matplotlib` library: `pip install matplotlib` (for visualization capabilities)
-
-You can install all core dependencies by running:
-```bash
-pip install -r requirements.txt
-```
+**Not declared anywhere, because only two example scripts want it:** `numpy`, for
+`examples/enhanced_svg_plotter.py` and `examples/height_map_generator_v2.py`.
+Install it yourself if you run those.
 
 ### Installation
 
@@ -256,6 +267,13 @@ the recent command log with commands resolved to their manual names, and an
 anomaly panel. The page is a single self-contained file with no CDN, no fonts
 and no external assets, so it works on a bench with no internet.
 
+![The simulator's browser dashboard: motor table, position-versus-target plot, command log and anomaly panel](docs/images/simulator-dashboard.png)
+
+Three motors tracking sine references at different rates. Solid lines are
+measured position, dashed are the commanded target; the gap between them is the
+lag the motion model produces. The anomaly panel on the right is showing
+`move_superseded` — see below.
+
 **For a program — JSON on stdout:**
 ```bash
 mks-servo-simulator --json-output --num-motors 2
@@ -284,6 +302,23 @@ same command byte* as the acknowledgement of the command that superseded it. A
 client that does not distinguish them sees a move fail for no visible reason.
 The simulator knows which frame is which and says so, in `/status`'s `errors`
 array and in the dashboard's anomaly panel.
+
+#### Simulated time you can step
+
+```bash
+mks-servo-simulator --step --num-motors 2
+# then: curl -X POST http://127.0.0.1:8765/step -d '{"seconds": 0.5}'
+```
+
+The motors do not move until told to. `POST /step` advances simulated time by
+the amount asked for and returns the resulting `/status` once every motor has
+finished the last sub-step, so a client can command, step and read with no
+sleeping anywhere and get the same answer on every run and every machine.
+
+`--step` implies `--debug-api`, since `/step` is the only way to drive it, and it
+governs the *motors*: bus latency and your own code still run in real time, so
+pair it with `--latency-ms 0` for an end-to-end measurement.
+`docs/user_guides/simulator/advanced_simulation.md` has the details.
 
 #### Configuration profiles
 
@@ -329,6 +364,8 @@ Refer to the scripts in the `examples/` directory for complete, runnable code:
 * `examples/height_map_generator_v2.py`: Enhanced surface mapping with digitizer integration.
 * `examples/enhanced_svg_plotter.py`: Advanced SVG plotting with path optimization.
 * `examples/calligraphy_plotter.py`: Artistic text rendering and calligraphy.
+
+https://github.com/user-attachments/assets/b7e87119-080f-4230-921d-b1fbb9b76aef
 
 **Real-Time Tracking:**
 * `examples/camera_gimbal_tracker.py`: A three-axis camera gimbal tracking a fast
@@ -543,9 +580,16 @@ index. Alongside it:
   specifics on CAN commands and motor behaviour. Its machine-readable
   transcription ships with the library as
   `mks_servo_can/data/manual_commands_v106.json`, reachable at runtime through
-  `mks_servo_can.load_manual_spec()`. It records an **errata** block: the manual
-  contradicts itself on sign convention, and the worked examples (CCW positive)
-  are the ones to trust.
+  `mks_servo_can.load_manual_spec()`. It covers all 46 commands the library
+  implements — `0xC8` and `0xCA` are recorded as deliberately absent, being
+  values of `0xFF`'s argument rather than commands — and it is what the
+  compliance suite checks the wire format against, so it is a specification
+  rather than documentation.
+  It also records an **errata** block, because the manual contradicts itself in
+  five places: the sign convention (the worked examples, CCW positive, are the
+  ones to trust), and three commands whose printed DLC disagrees with the byte
+  map beside it, plus a worked example whose printed CRC does not follow from
+  its own frame.
 
 ## Development and Testing
 
@@ -560,19 +604,23 @@ suite is runnable from that one install.
 
 ### Running Tests
 
-The project includes a `tests/` directory for unit, integration, HIL, and determinism tests. `pytest` is the recommended test runner.
+Unit, integration, wire-format compliance, determinism and hardware-in-the-loop
+tests all live under `tests/`, and `pytest` runs them.
 
-To run all tests (excluding HIL, which requires specific hardware setup):
 ```bash
-pytest
+pytest                          # everything except HIL, which is skipped without hardware
+pytest tests/unit               # fast; no simulator subprocess
+pytest tests/integration        # fixtures start and stop the simulator for you
+pytest tests/simulator_compliance   # every command's framing against the manual
+pytest tests/determinism        # the motor model under stepped simulated time, in under a second
 ```
-To run tests for a specific part:
-```bash
-# From project root, after installing dev dependencies
-pytest tests/unit
-pytest tests/integration # Requires the simulator to be running for some tests
-```
-(HIL tests require physical hardware and are typically run manually or in a dedicated CI environment.)
+
+Nothing needs a simulator started by hand: the fixtures in `tests/conftest.py`
+launch one per module on ports 6789/6790/6791 and stop it afterwards. A stray
+simulator left running on one of those ports will answer in its place and
+quietly change the results, so check for one if a run behaves oddly.
+
+HIL tests require physical hardware and are run manually; see `tests/hil/`.
 
 ### Documentation checks
 
@@ -598,7 +646,7 @@ remaining work is planned in.
 Contributions are welcome! Please follow these general guidelines:
 1.  **Fork the repository.**
 2.  **Create a new branch** for your feature or bug fix (e.g., `feature/my-new-feature` or `fix/issue-123`).
-3.  **Write clean, well-commented code** adhering to PEP 8 guidelines. Use a linter like Flake8.
+3.  **Write clean, well-commented code** adhering to PEP 8 guidelines. `ruff check .` is what CI runs, and it comes with `[dev]`.
 4.  **Include comprehensive docstrings** for all public modules, classes, and functions.
 5.  **Add unit tests** for new functionality and bug fixes. Ensure good test coverage.
 6.  **Ensure all tests pass** locally before submitting.
