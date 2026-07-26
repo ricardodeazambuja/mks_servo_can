@@ -2,235 +2,222 @@
 Simulated Motor Model for MKS SERVO42D/57D.
 Models the internal state and behavior of a motor responding to CAN commands.
 """
-from typing import Callable, List, Optional, Tuple, Dict, Any
-
 import asyncio
 import logging
+import math
 import struct
-import time
+from dataclasses import asdict, dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from .clock import RealTimeClock
 
 logger = logging.getLogger("SimulatedMotor") # Changed from __name__ for clarity if file is moved/copied
 
-# Attempt to import from the main library
+# The simulator emulates the very protocol this library speaks, and shares its
+# constants, CRC and motion model so the two cannot diverge. A stubbed fallback
+# here would let the simulator validate the library against a second, silently
+# different implementation - which is exactly the failure mode a simulator is
+# supposed to prevent. So this import is deliberately hard.
 try:
-    from mks_servo_can import constants as const_module
+    from mks_servo_can import constants as const
+    from mks_servo_can import motor_profile as _profile
     from mks_servo_can.crc import calculate_crc
-    # Assuming exceptions are not directly raised by the simulator to the lib,
-    # but used for internal logic if needed.
-    from mks_servo_can.exceptions import ConfigurationError
-
-    const = const_module
-except ImportError:
-    logger.warning(
-        "SIMULATOR WARNING: Could not import from mks_servo_can. Using placeholder constants/crc. Ensure library is installed or in PYTHONPATH."
-    )
-
-    class _ConstPlaceholder:
-        """
-        A placeholder class for MKS servo constants.
-        This class is used as a fallback when the main `mks_servo_can.constants`
-        module cannot be imported, ensuring the simulator can still run with
-        a basic set of predefined command codes and values.
-        """
-        # Part 5.1 - Read Status
-        CMD_READ_ENCODER_CARRY = 0x30
-        CMD_READ_ENCODER_ADDITION = 0x31
-        CMD_READ_MOTOR_SPEED_RPM = 0x32
-        CMD_READ_PULSES_RECEIVED = 0x33
-        CMD_READ_IO_STATUS = 0x34
-        CMD_READ_RAW_ENCODER_ADDITION = 0x35
-        CMD_READ_SHAFT_ANGLE_ERROR = 0x39
-        CMD_READ_EN_PIN_STATUS = 0x3A
-        CMD_READ_POWER_ON_ZERO_STATUS = 0x3B
-        CMD_RELEASE_STALL_PROTECTION = 0x3D
-        CMD_READ_MOTOR_PROTECTION_STATE = 0x3E
-
-        # Part 5.2 - Set System Parameters
-        CMD_CALIBRATE_ENCODER = 0x80
-        CMD_SET_WORK_MODE = 0x82
-        CMD_SET_WORKING_CURRENT = 0x83
-        CMD_SET_SUBDIVISION = 0x84
-        CMD_SET_EN_PIN_ACTIVE_LEVEL = 0x85
-        CMD_SET_MOTOR_DIRECTION = 0x86
-        CMD_SET_AUTO_SCREEN_OFF = 0x87
-        CMD_SET_STALL_PROTECTION = 0x88
-        CMD_SET_SUBDIVISION_INTERPOLATION = 0x89
-        CMD_SET_CAN_BITRATE = 0x8A
-        CMD_SET_CAN_ID = 0x8B
-        CMD_SET_SLAVE_RESPOND_ACTIVE = 0x8C
-        CMD_SET_GROUP_ID = 0x8D
-        CMD_SET_KEY_LOCK = 0x8F
-        CMD_SET_HOLDING_CURRENT_PERCENTAGE = 0x9B
-
-        # Part 5.3 - Write IO Port
-        CMD_WRITE_IO_PORT = 0x36
-
-        # Part 5.4 - Set Home Command
-        CMD_SET_HOME_PARAMETERS = 0x90
-        CMD_GO_HOME = 0x91
-        CMD_SET_CURRENT_AXIS_TO_ZERO = 0x92
-        CMD_SET_NOLIMIT_HOME_PARAMS = 0x94
-        CMD_SET_LIMIT_PORT_REMAP = 0x9E
-
-        # Part 5.5 - Set 0_Mode Command
-        CMD_SET_ZERO_MODE_PARAMETERS = 0x9A
-
-        # Part 5.6 - Restore Default Parameters
-        CMD_RESTORE_DEFAULT_PARAMETERS = 0x3F
-
-        # Part 5.7 - Restart Motor
-        CMD_RESTART_MOTOR = 0x41
-        
-        # Part 5.8 - En Triggers and Position Error Protection
-        CMD_SET_EN_TRIGGER_POS_ERROR_PROTECTION = 0x9D
-
-        # Part 5.9 - Read System Parameter
-        CMD_READ_SYSTEM_PARAMETER_PREFIX = 0x00
-
-        # Part 6 - Run Motor Commands
-        CMD_QUERY_MOTOR_STATUS = 0xF1
-        CMD_ENABLE_MOTOR = 0xF3
-        CMD_EMERGENCY_STOP = 0xF7
-        CMD_RUN_SPEED_MODE = 0xF6
-        CMD_SAVE_CLEAN_SPEED_MODE_PARAMS = 0xFF
-        SPEED_MODE_PARAM_SAVE = 0xC8
-        SPEED_MODE_PARAM_CLEAN = 0xCA
-        CMD_RUN_POSITION_MODE_RELATIVE_PULSES = 0xFD
-        CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES = 0xFE
-        CMD_RUN_POSITION_MODE_RELATIVE_AXIS = 0xF4
-        CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS = 0xF5
-
-        # Statuses
-        STATUS_SUCCESS = 0x01
-        STATUS_FAILURE = 0x00
-        STATUS_CALIBRATING = 0x00
-        STATUS_CALIBRATED_SUCCESS = 0x01
-        STATUS_CALIBRATING_FAIL = 0x02
-        
-        MOTOR_STATUS_QUERY_FAIL = 0x00
-        MOTOR_STATUS_STOPPED = 0x01
-        MOTOR_STATUS_SPEED_UP = 0x02
-        MOTOR_STATUS_SPEED_DOWN = 0x03
-        MOTOR_STATUS_FULL_SPEED = 0x04
-        MOTOR_STATUS_HOMING = 0x05
-        MOTOR_STATUS_CALIBRATING = 0x06 # Matches STATUS_CALIBRATING
-
-        POS_RUN_FAIL = 0x00
-        POS_RUN_STARTING = 0x01
-        POS_RUN_COMPLETE = 0x02
-        POS_RUN_END_LIMIT_STOPPED = 0x03
-
-        HOME_FAIL = 0x00
-        HOME_START = 0x01
-        HOME_SUCCESS = 0x02
-        
-        MODE_CR_OPEN = 0
-        MODE_SR_VFOC = 5
-        MAX_RPM_OPEN_MODE = 400
-        MAX_RPM_CLOSE_MODE = 1500
-        MAX_RPM_VFOC_MODE = 3000
-        ENCODER_PULSES_PER_REVOLUTION = 16384
-        EN_ACTIVE_LOW = 0x00
-        EN_ACTIVE_HIGH = 0x01
-        EN_ACTIVE_ALWAYS = 0x02
-        DIR_CW = 0x00
-        DIR_CCW = 0x01
-        CAN_BITRATE_500K = 0x02
-
-
-    const = _ConstPlaceholder()
-
-    def calculate_crc(can_id: int, data_bytes: list[int]) -> int:
-        """
-        Fallback CRC calculation used if the main library's CRC function is unavailable.
-        Calculates an 8-bit checksum: (CAN_ID + sum_of_data_bytes) & 0xFF.
-
-        Args:
-            can_id: The CAN ID.
-            data_bytes: A list of data bytes (command code + data).
-
-        Returns:
-            The calculated 8-bit CRC.
-        """
-        checksum = can_id
-        for byte_val in data_bytes:
-            checksum += byte_val
-        return checksum & 0xFF
-
-    class ParameterError(Exception): # Basic fallback
-        """Fallback exception for invalid parameters, used if main library exceptions are unavailable."""
-        pass
-    class LimitError(Exception): # Basic fallback
-        """Fallback exception for limit errors, used if main library exceptions are unavailable."""
-        pass
-    class MKSServoError(Exception): # Basic fallback
-        """Fallback base exception for MKS Servo errors, used if main library exceptions are unavailable."""
-        pass
-    class ConfigurationError(Exception): # Basic fallback
-        """Fallback exception for configuration errors."""
-        pass
+    from mks_servo_can.exceptions import ConfigurationError, MKSServoError
+except ImportError as exc:  # pragma: no cover - install-time failure
+    raise ImportError(
+        "mks-servo-simulator requires the mks-servo-can library. Install it "
+        "with 'pip install -e ./mks_servo_can_library' from the project root."
+    ) from exc
 
 SIM_TIME_STEP_MS = 10
+
+# Commands whose uplink frame CanRSP can suppress. Manual V1.0.6 sections
+# 6.4-6.8 only; every other command answers regardless.
+SUPPRESSIBLE_RESPONSE_COMMANDS = frozenset(
+    {
+        const.CMD_RUN_SPEED_MODE,                        # 6.4  0xF6
+        const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES,     # 6.5  0xFD
+        const.CMD_RUN_POSITION_MODE_ABSOLUTE_PULSES,     # 6.6  0xFE
+        const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS,       # 6.7  0xF4
+        const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,       # 6.8  0xF5
+    }
+)
 SIM_MAX_SPEED_PARAM = 3000 # Used for RPM conversion, matches VFOC for SR_VFOC
 SIM_MAX_ACCEL_PARAM = 255
+
+# Degrees of shaft rotation per revolution, for reporting angles.
+_DEGREES_PER_REV = 360.0
+
+
+def _json_safe(value: float) -> Optional[float]:
+    """
+    Returns `value`, or None if it cannot survive JSON.
+
+    `inf` and `nan` are legitimate results in the motion model - an
+    acceleration parameter of 0 means "no ramp", whose acceleration really is
+    infinite - but they are not JSON. Starlette serialises responses with
+    `allow_nan=False`, so one such value anywhere in a snapshot turns `/status`
+    into an HTTP 500 and takes the browser dashboard, which renders `/status`,
+    down with it.
+
+    Args:
+        value: The number to check.
+
+    Returns:
+        The value if finite, otherwise None.
+    """
+    return value if math.isfinite(value) else None
 
 
 def mks_speed_param_to_rpm(param: int, mode: int = const.MODE_SR_VFOC) -> float:
     """
-    Converts an MKS speed parameter (0-3000) to an approximate RPM value for simulation.
+    Converts an MKS speed parameter (0-3000) to motor RPM.
 
-    The conversion depends on the motor's work mode, as different modes have
-    different maximum RPMs associated with the 0-3000 parameter range.
+    Thin delegate to `mks_servo_can.motor_profile.speed_param_to_rpm` so that the
+    simulator cannot develop its own idea of what a speed parameter means. If the
+    library's model is wrong, the simulator is wrong in the same way and the
+    discrepancy shows up against real hardware rather than hiding here.
 
     Args:
         param: The MKS speed parameter (0-3000).
-        mode: The current work mode of the motor (e.g., `const.MODE_SR_VFOC`).
+        mode: The motor's work mode, which sets the RPM ceiling.
 
     Returns:
-        The approximate motor speed in RPM.
+        The motor speed in RPM.
     """
-    max_rpm_for_mode = const.MAX_RPM_VFOC_MODE # Default
-    if mode in [const.MODE_CR_OPEN, getattr(const, 'MODE_SR_OPEN', -1)]: # Check if SR_OPEN exists
-        max_rpm_for_mode = const.MAX_RPM_OPEN_MODE
-    elif mode in [getattr(const, 'MODE_CR_CLOSE', -1), getattr(const, 'MODE_SR_CLOSE', -1)]:
-        max_rpm_for_mode = const.MAX_RPM_CLOSE_MODE
-    
-    if SIM_MAX_SPEED_PARAM == 0: # Avoid division by zero
-        return 0.0
-    # The speed parameter (0-3000) maps to the max RPM of the current mode
-    return (param / SIM_MAX_SPEED_PARAM) * max_rpm_for_mode
+    # The simulator models the calibrated 16-microstep case; per-motor
+    # subdivision is applied by the caller where it matters.
+    return _profile.speed_param_to_rpm(param, microsteps=16, work_mode=mode)
 
 
 def mks_accel_param_to_rpm_per_sec_sq(
-    param: int, current_rpm: float, target_rpm: float
+    param: int, current_rpm: float = 0.0, target_rpm: float = 0.0
 ) -> float:
     """
-    Converts an MKS acceleration parameter (0-255) to an approximate acceleration
-    in RPM per second squared for simulation.
+    Converts an MKS acceleration parameter (0-255) to RPM per second.
 
-    A parameter of 0 implies instantaneous acceleration. The formula is based
-    on the MKS manual's description of acceleration timing.
+    Thin delegate to `mks_servo_can.motor_profile.accel_param_to_rpm_per_second`.
+    Manual section 6.1 defines the ramp as 1 RPM every (256 - acc) * 50 us, so
+    the parameter is an inverse rate rather than an acceleration.
 
     Args:
         param: The MKS acceleration parameter (0-255).
-        current_rpm: The current RPM of the motor (not directly used in this simplified model).
-        target_rpm: The target RPM of the motor (not directly used in this simplified model).
+        current_rpm: Unused; retained for call-site compatibility.
+        target_rpm: Unused; retained for call-site compatibility.
 
     Returns:
-        The approximate acceleration in RPM/s^2. Returns float('inf') for
-        instantaneous acceleration (param=0 or very high).
+        Acceleration in RPM/s, or float('inf') when param is 0 (no ramp).
     """
-    if param == 0: # Instantaneous
-        return float("inf") 
-    if param > SIM_MAX_ACCEL_PARAM:
-        param = SIM_MAX_ACCEL_PARAM
-    
-    # Time for 1 RPM change = (256 - acc_param) * 50 us
-    # So, RPMs per 1 second = 1 / ((256 - acc_param) * 50e-6)
-    time_for_1_rpm_change_sec = (256 - param) * 50e-6
-    if time_for_1_rpm_change_sec <= 1e-9: # effectively zero or negative, treat as infinite accel
-        return float("inf")
-    return 1.0 / time_for_1_rpm_change_sec
+    del current_rpm, target_rpm  # The MKS ramp rate does not depend on either.
+    return _profile.accel_param_to_rpm_per_second(
+        max(0, min(int(param), SIM_MAX_ACCEL_PARAM))
+    )
+
+
+@dataclass(frozen=True)
+class MotorSnapshot:
+    """
+    A complete, consistent reading of one simulated motor's state.
+
+    This is the *only* supported way to observe a `SimulatedMotor` from
+    outside. Every reporting surface - the JSON event stream, the HTTP debug
+    API, the browser dashboard - renders this and nothing else.
+
+    That rule exists because the alternative was tried and failed. Each surface
+    used to reach into the motor for whatever attribute names it assumed
+    existed, and none of them matched: the debug interface read `enabled`,
+    `encoder_position`, `current_speed` and thirteen other names the motor has
+    never had. Because those reads were wrapped in `getattr(..., default)`, the
+    mismatch did not raise - it reported zeros. The one field without a default,
+    `name`, turned the whole endpoint into an HTTP 500. Routing every observer
+    through one frozen dataclass makes that class of drift impossible: a renamed
+    attribute breaks this file loudly, in one place, instead of silently
+    degrading every report.
+
+    Angles are derived from the motor's own encoder resolution rather than
+    assumed, so a motor configured with a non-standard `steps_per_rev_encoder`
+    still reports truthfully.
+
+    Attributes:
+        can_id: The ID the motor was created with, and the one it answers on.
+        listening_can_id: The ID it currently listens on, which differs from
+            `can_id` after a successful 0x8B.
+        motor_type: The modelled hardware variant, e.g. "SERVO42D".
+        enabled: Whether the servo loop is engaged.
+        calibrated / homed: Encoder calibration and homing state.
+        status_code: Raw MKS status byte, as command 0xF1 would report it.
+        status_text: Human-readable rendering of `status_code`.
+        position_steps: Current position in raw encoder counts. Fractional
+            because the simulation integrates continuously.
+        position_degrees: `position_steps` expressed as shaft rotation.
+        target_position_steps: Target of the move in flight, or None when no
+            positional move is active.
+        target_position_degrees: `target_position_steps` in degrees, or None.
+        position_error_steps: Signed distance still to travel, or None.
+        current_rpm / target_rpm: Present and commanded shaft speed. Signed;
+            positive is counter-clockwise.
+        speed_deg_per_s: `current_rpm` expressed as shaft angular rate.
+        moving: True when the shaft is turning.
+        work_mode / work_mode_name: The 0x82 work mode.
+        microsteps: Subdivision setting, as set by 0x84.
+        steps_per_rev_encoder: Encoder counts per shaft revolution.
+        working_current_ma: Configured phase current.
+        holding_current_percent: Holding current as a percentage of working
+            current, decoded from the 0x9B register code.
+        stalled: The rotor is stalled right now.
+        protected: Stall or position-error protection has latched.
+        responses_enabled: CanRSP - whether run commands are acknowledged.
+        active_notifications_enabled: CanACT - whether asynchronous completion
+            frames are emitted.
+        accel_param: The acceleration parameter of the most recent move.
+        accel_deg_per_s2: `accel_param` converted to engineering units, or
+            None when `accel_param` is 0, which the manual defines as "no ramp,
+            jump straight to speed" - an infinite acceleration. `math.inf` is
+            the correct engineering answer and is what `motor_profile` returns,
+            but it is not representable in JSON: Starlette serialises with
+            `allow_nan=False`, so a single motor with accel_param 0 made
+            `/status` return HTTP 500 and took the browser dashboard down with
+            it. None says the same thing and survives the wire.
+    """
+
+    can_id: int
+    listening_can_id: int
+    motor_type: str
+    enabled: bool
+    calibrated: bool
+    homed: bool
+    status_code: int
+    status_text: str
+    position_steps: float
+    position_degrees: float
+    target_position_steps: Optional[float]
+    target_position_degrees: Optional[float]
+    position_error_steps: Optional[float]
+    current_rpm: float
+    target_rpm: float
+    speed_deg_per_s: float
+    moving: bool
+    work_mode: int
+    work_mode_name: str
+    microsteps: int
+    steps_per_rev_encoder: int
+    working_current_ma: int
+    holding_current_percent: int
+    stalled: bool
+    protected: bool
+    responses_enabled: bool
+    active_notifications_enabled: bool
+    accel_param: int
+    accel_deg_per_s2: Optional[float]
+
+    def as_dict(self) -> Dict[str, Any]:
+        """
+        Returns the snapshot as a plain JSON-serialisable dictionary.
+
+        Returns:
+            A mapping of field name to value, with no nesting.
+        """
+        return asdict(self)
 
 
 class SimulatedMotor:
@@ -253,6 +240,7 @@ class SimulatedMotor:
         mstep_value: int = 16,
         min_pos_limit_steps: Optional[int] = None,
         max_pos_limit_steps: Optional[int] = None,
+        clock=None,
     ):
         """
         Initializes a new simulated MKS servo motor instance.
@@ -269,13 +257,17 @@ class SimulatedMotor:
             mstep_value: The microstepping setting (e.g., 16).
             min_pos_limit_steps: Optional minimum software position limit in steps.
             max_pos_limit_steps: Optional maximum software position limit in steps.
+            clock: Where simulated time comes from. Defaults to a `RealTimeClock`,
+                   which is the behaviour this has always had. Pass a
+                   `SteppedClock` to make the motion model advance only when it
+                   is told to - see `mks_simulator.clock`.
         """
         self.can_id = can_id
         self.original_can_id = can_id
         self.motor_type = motor_type
         self._loop = loop
         self.is_running_task: Optional[asyncio.Task] = None
-        
+
         # Core state
         self.position_steps: float = float(initial_pos_steps)
         self.target_position_steps: Optional[float] = None
@@ -284,14 +276,22 @@ class SimulatedMotor:
         self.target_rpm: float = 0.0
         self.current_accel_rpm_per_sec_sq: float = 0.0
         self.target_accel_mks: int = 100
-        
+
         self.is_enabled: bool = False
         self.motor_status_code: int = const.MOTOR_STATUS_STOPPED
-        self._last_update_time: float = time.monotonic()
+        self._clock = clock if clock is not None else RealTimeClock(
+            step_seconds=SIM_TIME_STEP_MS / 1000.0
+        )
+        self._last_update_time: float = self._clock.now()
         self._current_move_task: Optional[asyncio.Future] = None
         self._current_move_command_code: Optional[int] = None
         self._send_completion_callback: Optional[
             Callable[[int, bytes], asyncio.Task]
+        ] = None
+        # Set by VirtualCANBus. Lets the motor surface protocol-level events
+        # that a client cannot see for itself - see report_anomaly().
+        self._anomaly_sink: Optional[
+            Callable[[int, str, str, Dict[str, Any]], None]
         ] = None
 
         # Parameters for command conversion
@@ -313,7 +313,7 @@ class SimulatedMotor:
         self.slave_active_initiation_enabled: bool = True
         self.group_id: int = 0x00
         self.is_key_locked: bool = False
-        
+
         self.io_out1_value: int = 0
         self.io_out2_value: int = 0
 
@@ -353,6 +353,50 @@ class SimulatedMotor:
         logger.info(
             f"SimulatedMotor CAN ID {self.can_id:03X} initialized. Pos: {self.position_steps} steps."
         )
+
+    def set_anomaly_sink(
+        self, sink: Optional[Callable[[int, str, str, Dict[str, Any]], None]]
+    ) -> None:
+        """
+        Registers where this motor reports protocol anomalies.
+
+        Args:
+            sink: Called as `sink(motor_id, type, description, context)`, or
+                None to disable reporting.
+        """
+        self._anomaly_sink = sink
+
+    def report_anomaly(
+        self, anomaly_type: str, description: str, **context: Any
+    ) -> None:
+        """
+        Records something the client would otherwise have no way to observe.
+
+        The motivating case is a superseded move. When a new positional command
+        arrives while one is still running, the motor abandons the old move and
+        emits a failure frame for it - and because the MKS protocol reuses one
+        command byte for both acknowledgements and completions, that frame is
+        indistinguishable on the wire from the acknowledgement of the command
+        that superseded it. A client that mismatches the two sees a move fail
+        for no visible reason.
+
+        The simulator knows exactly which frame is which, so it says so here.
+        That turns "my moves randomly fail" into a labelled event with the
+        superseding target attached, which is the difference between a
+        debugging tool and a black box.
+
+        Args:
+            anomaly_type: Short category, e.g. "move_superseded".
+            description: Human-readable explanation.
+            **context: Structured detail for a machine reader.
+        """
+        logger.debug(
+            "Motor %s: anomaly %s - %s", self.original_can_id, anomaly_type, description
+        )
+        if self._anomaly_sink is not None:
+            self._anomaly_sink(
+                self.original_can_id, anomaly_type, description, dict(context)
+            )
 
     def _command_microsteps_to_raw_encoder_steps(self, command_microsteps: float) -> float:
         """Converts command microsteps to equivalent raw encoder steps."""
@@ -428,7 +472,7 @@ class SimulatedMotor:
             await self._send_completion_callback(
                 self.original_can_id, response_can_payload
             )
-            
+
     def _pack_int24_be(self, value: int) -> List[int]:
         """Packs a signed 24-bit integer into 3 bytes, big-endian (MSB first)."""
         unsigned_val = value & 0xFFFFFF
@@ -471,8 +515,12 @@ class SimulatedMotor:
         This task is started by `start()` and cancelled by `stop_simulation()`.
         """
         while True:
-            await asyncio.sleep(SIM_TIME_STEP_MS / 1000.0)
-            current_time = time.monotonic()
+            # Both the pacing and the timebase come from the clock. Under
+            # `--step` this parks until `advance()` releases it, so the motion
+            # model integrates exactly the simulated interval it is given rather
+            # than however long the machine happened to take.
+            await self._clock.tick()
+            current_time = self._clock.now()
             delta_t = current_time - self._last_update_time
             if delta_t <= 0:
                 continue
@@ -489,7 +537,7 @@ class SimulatedMotor:
                         self._current_move_task.set_exception(MKSServoError(f"Move failed due to motor disable/stall/protection for motor {self.original_can_id}"))
                         self.target_position_steps = None
                 continue
-            
+
             # Acceleration/Deceleration
             if self.current_rpm != self.target_rpm:
                 self.current_accel_rpm_per_sec_sq = mks_accel_param_to_rpm_per_sec_sq(
@@ -505,7 +553,7 @@ class SimulatedMotor:
                     else: # target_rpm < self.current_rpm
                         self.current_rpm = max(self.target_rpm, self.current_rpm - rpm_change)
                         self.motor_status_code = const.MOTOR_STATUS_SPEED_DOWN
-                
+
                 if abs(self.current_rpm - self.target_rpm) < 0.1: # Close enough
                     self.current_rpm = self.target_rpm
                     if self.target_rpm == 0 and self.target_position_steps is None: # Stopped in speed mode
@@ -540,7 +588,7 @@ class SimulatedMotor:
                 elif abs(self.position_steps - self.target_position_steps) < 1.0 : # Close enough
                     if abs(self.current_rpm) < 1.0: # And nearly stopped
                         target_reached = True
-                
+
                 if target_reached:
                     logger.info(
                         f"Motor {self.original_can_id}: Target position {self.target_position_steps:.2f} reached. Current: {self.position_steps:.2f}"
@@ -549,7 +597,7 @@ class SimulatedMotor:
                     self.current_rpm = 0.0
                     self.target_rpm = 0.0
                     self.motor_status_code = const.MOTOR_STATUS_STOPPED
-                    
+
                     if self._current_move_task and not self._current_move_task.done():
                         self._current_move_task.set_result(True)
                     await self._send_completion_if_callback(self._current_move_command_code, const.POS_RUN_COMPLETE)
@@ -582,6 +630,22 @@ class SimulatedMotor:
         # (Existing _handle_positional_move logic - largely unchanged but uses original_can_id for logging)
         if self._current_move_task and not self._current_move_task.done():
             logger.warning(f"Motor {self.original_can_id}: Cancelling previous move for new one.")
+            self.report_anomaly(
+                "move_superseded",
+                (
+                    f"A move to {self.target_position_steps} was abandoned because a "
+                    f"new command retargeted to {target_pos_abs_steps:.0f}. The "
+                    f"abort frame for the old move carries command byte "
+                    f"0x{(self._current_move_command_code or 0):02X}, the same byte "
+                    "as the acknowledgement of the new one - a client that does "
+                    "not distinguish them will see the new move fail."
+                ),
+                superseded_command=self._current_move_command_code,
+                superseded_target_steps=self.target_position_steps,
+                new_command=command_code,
+                new_target_steps=target_pos_abs_steps,
+                position_steps=self.position_steps,
+            )
             await self._send_completion_if_callback(self._current_move_command_code, const.POS_RUN_FAIL)
             self._current_move_task.cancel("Superseded by new move command")
 
@@ -595,7 +659,7 @@ class SimulatedMotor:
             self.target_rpm = 0.0
             self.motor_status_code = const.MOTOR_STATUS_STOPPED
             self.target_position_steps = None
-            
+
             # For immediate completion, send STARTING then COMPLETE if active responses are on
             if self.slave_respond_enabled:
                  # Generate STARTING response from the original command call site
@@ -623,11 +687,11 @@ class SimulatedMotor:
         if abs(self.target_rpm) > 0.1:
             # Simplified duration: time to reach full speed + time at full speed + time to decel
             # For now, a simpler estimation:
-            avg_speed_rpm = abs(self.target_rpm) / 2.0 
+            avg_speed_rpm = abs(self.target_rpm) / 2.0
             avg_speed_steps_sec = (avg_speed_rpm / 60.0) * self.steps_per_rev_encoder
             if avg_speed_steps_sec > 0:
                 est_duration = (abs(delta_pos) / avg_speed_steps_sec)
-        
+
         est_duration = max(1.0, est_duration + 1.0) # Add buffer, min 1s
 
         logger.info(
@@ -692,7 +756,7 @@ class SimulatedMotor:
             if not data_from_payload or len(data_from_payload) < 1:
                 logger.error(f"Motor {self.original_can_id}: Read System Parameter (0x00) missing actual parameter code in data.")
                 return self._generate_simple_status_response(const.CMD_READ_SYSTEM_PARAMETER_PREFIX, False) # Or some other error indication
-            
+
             actual_param_cmd_code = data_from_payload[0]
             logger.info(f"Motor {self.original_can_id}: Read System Parameter for internal CMD 0x{actual_param_cmd_code:02X}")
             param_data = self._get_param_data_bytes(actual_param_cmd_code)
@@ -821,15 +885,17 @@ class SimulatedMotor:
 
         # --- Part 5.3: Write IO Port ---
         elif command_code == const.CMD_WRITE_IO_PORT: # 0x36
-            # Simplified: just acknowledge. Real sim would change self.io_out1/2_value
+            # This used to acknowledge the write and leave the decode commented
+            # out, so a client wrote OUT_1 high, was told "status = 1", and read
+            # it back low from 0x34 with nothing to explain the difference.
+            # Manual page 28: bits 7:6 are OUT_2's mask, 5:4 OUT_1's, bit 3
+            # OUT_2's value and bit 2 OUT_1's; mask 1 means "write this value".
             if data_from_payload and len(data_from_payload) >= 1:
-                 # byte_val = data_from_payload[0]
-                 # out2_mask = (byte_val >> 6) & 0x03
-                 # out1_mask = (byte_val >> 4) & 0x03
-                 # out2_val_cmd = (byte_val >> 3) & 0x01
-                 # out1_val_cmd = (byte_val >> 2) & 0x01
-                 # if out2_mask == 1: self.io_out2_value = out2_val_cmd
-                 # if out1_mask == 1: self.io_out1_value = out1_val_cmd
+                byte_val = data_from_payload[0]
+                if ((byte_val >> 6) & 0x03) == 1:
+                    self.io_out2_value = (byte_val >> 3) & 0x01
+                if ((byte_val >> 4) & 0x03) == 1:
+                    self.io_out1_value = (byte_val >> 2) & 0x01
                 response_status_override = const.STATUS_SUCCESS
             else: response_status_override = const.STATUS_FAILURE
 
@@ -849,12 +915,13 @@ class SimulatedMotor:
             self.motor_status_code = const.MOTOR_STATUS_HOMING
             # In a real scenario, this would trigger an async operation.
             # For now, just return "starting". Completion handled by active response.
-            response_status_override = const.HOME_START 
+            response_status_override = const.HOME_START
             # Simulate completion after a delay if active responses on
             if self.slave_active_initiation_enabled:
                 async def _complete_homing():
                     """Simulates the completion of the homing sequence."""
-                    await asyncio.sleep(0.5) # Simulate homing time
+                    # Simulated time, so `--step` does not leave homing on the wall clock.
+                    await self._clock.sleep(0.5)
                     self.is_homed = True
                     self.position_steps = 0.0
                     self.motor_status_code = const.MOTOR_STATUS_STOPPED
@@ -901,7 +968,7 @@ class SimulatedMotor:
             self.motor_status_code = const.MOTOR_STATUS_STOPPED
             self.is_enabled = False
             response_status_override = const.STATUS_SUCCESS
-            
+
         # --- Part 5.8: En Triggers and Position Error Protection ---
         elif command_code == const.CMD_SET_EN_TRIGGER_POS_ERROR_PROTECTION: # 0x9D
             if data_from_payload and len(data_from_payload) >= 5:
@@ -944,7 +1011,7 @@ class SimulatedMotor:
                 mks_speed_param = ((b2 & 0x0F) << 8) | b3
                 mks_accel_param = b4
                 is_ccw = (b2 & 0x80) == 0
-                
+
                 calculated_target_rpm = mks_speed_param_to_rpm(mks_speed_param, self.work_mode)
                 self.target_rpm = calculated_target_rpm if is_ccw else -calculated_target_rpm
                 self.target_accel_mks = mks_accel_param
@@ -953,7 +1020,7 @@ class SimulatedMotor:
                     self._current_move_task.cancel("Speed mode started")
                 response_status_override = const.POS_RUN_STARTING # Manual says 0 or 1
             else: response_status_override = const.POS_RUN_FAIL
-            
+
         elif command_code == const.CMD_SAVE_CLEAN_SPEED_MODE_PARAMS: # 0xFF
             if data_from_payload and len(data_from_payload) >= 1:
                 action_code = data_from_payload[0]
@@ -979,7 +1046,7 @@ class SimulatedMotor:
             mks_speed_val = 0
             mks_accel_val = 0
             parsed_ok = False
-            
+
             try:
                 if command_code == const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES:
                     if data_from_payload and len(data_from_payload) >= 6:
@@ -1038,7 +1105,7 @@ class SimulatedMotor:
                     # For absolute, stop also means speed=0, target_axis=0 (as per manual depiction for stop)
                     if mks_speed_val == 0 and target_pos_abs_final == 0: # Assuming stop means target axis 0
                         is_stop_command = True
-                
+
                 if is_stop_command:
                     logger.info(f"Motor {self.original_can_id}: Processing CMD {command_code:02X} as STOP. Accel: {mks_accel_val}")
                     self.target_rpm = 0.0 # Stop
@@ -1051,7 +1118,8 @@ class SimulatedMotor:
                     if self.slave_active_initiation_enabled:
                         async def _complete_stop():
                             """Simulates the completion of a stop command."""
-                            await asyncio.sleep(0.1 + (255 - mks_accel_val) * 0.001) # Sim stop time
+                            # Simulated time; see the homing delay above.
+                            await self._clock.sleep(0.1 + (255 - mks_accel_val) * 0.001)
                             await self._send_completion_if_callback(command_code, const.POS_RUN_COMPLETE) # "stop complete"
                         self._loop.create_task(_complete_stop())
                 else: # It's a move command
@@ -1064,6 +1132,21 @@ class SimulatedMotor:
         else:
             logger.warning(f"Motor {self.original_can_id}: Unhandled CMD 0x{command_code:02X}. Data: {data_from_payload.hex()}")
             return self._generate_simple_status_response(command_code, False) # Generic fail for unhandled
+
+        # CanRSP (0x8C byte1) suppresses the uplink frame, but only for the
+        # speed and position mode commands. Manual V1.0.6 attaches the note
+        # "the Uplink frame can be disabled by Menu CanRSP" to sections 6.4
+        # through 6.8 and to nothing else: reads (5.1), system parameter writes
+        # (5.2) and enable/query (6.2) always answer. Getting this wrong makes
+        # a "fire-and-forget" control loop still pay for every reply, and makes
+        # it impossible to re-enable responses once disabled.
+        if command_code in SUPPRESSIBLE_RESPONSE_COMMANDS and not self.slave_respond_enabled:
+            logger.debug(
+                "Motor %s: suppressing uplink for CMD %02X (CanRSP disabled)",
+                self.original_can_id,
+                command_code,
+            )
+            return None
 
         # Generate response based on override or default success/fail
         if response_status_override is not None:
@@ -1086,7 +1169,11 @@ class SimulatedMotor:
         if self.is_running_task and not self.is_running_task.done():
             logger.warning(f"Motor {self.original_can_id} simulation task already running.")
             return
-        self._last_update_time = time.monotonic()
+        self._last_update_time = self._clock.now()
+        # Registered before the task exists: a stepped clock must not advance
+        # past a motor that has been started but has not yet reached its first
+        # tick, or that motor misses an interval of simulated time.
+        self._clock.register()
         self.is_running_task = self._loop.create_task(self._update_state())
         logger.info(f"SimulatedMotor {self.original_can_id} update task started.")
 
@@ -1098,19 +1185,89 @@ class SimulatedMotor:
         """
         if self._current_move_task and not self._current_move_task.done():
             self._current_move_task.cancel("Simulation stopping")
-            await asyncio.sleep(0) 
-        self._current_move_task = None 
+            await asyncio.sleep(0)
+        self._current_move_task = None
 
         if self.is_running_task and not self.is_running_task.done():
             self.is_running_task.cancel()
+            # Withdraw from the barrier before awaiting the cancellation. A
+            # stepped clock waits for every registered motor to reach its tick;
+            # one that is being torn down never will, and would hang the next
+            # `advance()` forever.
+            self._clock.unregister()
             try:
-                await self.is_running_task 
+                await self.is_running_task
             except asyncio.CancelledError:
                 logger.info(f"SimulatedMotor {self.original_can_id} update task successfully cancelled.")
             except Exception as e:
                 logger.error(f"SimulatedMotor {self.original_can_id} update task error during stop: {e}")
         self.is_running_task = None
         logger.info(f"SimulatedMotor {self.original_can_id} update task stopped.")
+
+    def status_snapshot(self) -> MotorSnapshot:
+        """
+        Captures the motor's complete observable state.
+
+        Every value is read from a real attribute of this object; nothing is
+        defaulted or invented. See `MotorSnapshot` for why that guarantee is
+        stated so emphatically.
+
+        The read is synchronous and non-blocking, so it is safe to call from a
+        request handler or a render loop at any rate without perturbing the
+        simulation.
+
+        Returns:
+            A frozen `MotorSnapshot` describing this motor right now.
+        """
+        degrees_per_step = (
+            _DEGREES_PER_REV / self.steps_per_rev_encoder
+            if self.steps_per_rev_encoder
+            else 0.0
+        )
+        target_steps = self.target_position_steps
+        return MotorSnapshot(
+            can_id=self.original_can_id,
+            listening_can_id=self.can_id,
+            motor_type=self.motor_type,
+            enabled=self.is_enabled,
+            calibrated=self.is_calibrated,
+            homed=self.is_homed,
+            status_code=self.motor_status_code,
+            status_text=const.MOTOR_STATUS_MAP.get(
+                self.motor_status_code, f"Unknown ({self.motor_status_code})"
+            ),
+            position_steps=self.position_steps,
+            position_degrees=self.position_steps * degrees_per_step,
+            target_position_steps=target_steps,
+            target_position_degrees=(
+                None if target_steps is None else target_steps * degrees_per_step
+            ),
+            position_error_steps=(
+                None if target_steps is None else target_steps - self.position_steps
+            ),
+            current_rpm=self.current_rpm,
+            target_rpm=self.target_rpm,
+            speed_deg_per_s=(self.current_rpm / 60.0) * _DEGREES_PER_REV,
+            moving=self.current_rpm != 0.0,
+            work_mode=self.work_mode,
+            work_mode_name=self.work_mode_str,
+            microsteps=self.microsteps,
+            steps_per_rev_encoder=self.steps_per_rev_encoder,
+            working_current_ma=self.working_current_ma,
+            # The 0x9B register holds a code, not a percentage: 0 means 10%,
+            # rising in 10-point steps to 90% at code 8.
+            holding_current_percent=(self.holding_current_percentage_code + 1) * 10,
+            stalled=self.is_stalled,
+            protected=self.is_protected_by_stall or self.is_protected_by_pos_error,
+            responses_enabled=self.slave_respond_enabled,
+            active_notifications_enabled=self.slave_active_initiation_enabled,
+            accel_param=self.target_accel_mks,
+            accel_deg_per_s2=_json_safe(
+                _profile.accel_param_to_deg_per_s2(
+                    max(0, min(int(self.target_accel_mks), SIM_MAX_ACCEL_PARAM))
+                )
+            ),
+        )
 
     @property
     def kinematics_units(self) -> str:
@@ -1144,4 +1301,3 @@ class SimulatedMotor:
 
         # Fallback to the locally defined map
         return _work_modes_map.get(self.work_mode, f"Unknown ({self.work_mode})")
-        

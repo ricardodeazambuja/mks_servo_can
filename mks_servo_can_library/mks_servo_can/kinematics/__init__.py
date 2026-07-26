@@ -11,8 +11,8 @@ from .linear_kinematics import LinearKinematics
 from .rotary_kinematics import RotaryKinematics
 
 __all__ = [
+    "EccentricKinematics",
     "Kinematics",
     "LinearKinematics",
     "RotaryKinematics",
-    "EccentricKinematics",
 ]

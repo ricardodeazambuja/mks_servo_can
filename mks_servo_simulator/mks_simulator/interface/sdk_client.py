@@ -1,6 +1,7 @@
+from typing import Any, Dict, List, Optional, Union
+
 import requests
-import time
-from typing import Dict, Any, Optional, List, Union
+
 
 class SimulatorAPIError(Exception):
     """Custom exception for API errors."""
@@ -145,7 +146,7 @@ class MKSSimulatorClient:
         return self._request("POST", "/validate", json_data=expected_state)
 
     # --- Command Injection Endpoints ---
-    def inject_command(self, motor_id: int, command_code: int, data_bytes: List[int] = [], expect_response: bool = True) -> Dict[str, Any]:
+    def inject_command(self, motor_id: int, command_code: int, data_bytes: Optional[List[int]] = None, expect_response: bool = True) -> Dict[str, Any]:
         """
         Injects a raw command to a motor. (Note: expect_response is part of payload based on http_debug_server)
 
@@ -158,6 +159,7 @@ class MKSSimulatorClient:
         Returns:
             A dictionary containing the result of the command injection.
         """
+        data_bytes = list(data_bytes or [])
         payload = {
             "motor_id": motor_id,
             "command_code": command_code,
@@ -346,5 +348,5 @@ if __name__ == '__main__':
         print(f"An API error occurred: {e}")
         if e.response_data:
             print(f"Response data: {e.response_data}")
-    except requests.exceptions.ConnectionError as e:
+    except requests.exceptions.ConnectionError:
         print(f"Could not connect to the simulator at {client.base_url}. Ensure it's running.")

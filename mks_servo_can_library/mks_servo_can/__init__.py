@@ -9,70 +9,82 @@ and MultiAxisController objects, and utilities for kinematics and simulation.
 
 # Import the constants module and alias it as 'const' for patterned access
 from . import constants as const
+from . import motor_profile
 
 # Import other key components from submodules
 from .axis import Axis
 from .can_interface import CANInterface
-from .low_level_api import LowLevelAPI
-from .multi_axis_controller import MultiAxisController
-
-# Import kinematics classes
-from .kinematics import (
-    Kinematics,
-    LinearKinematics,
-    RotaryKinematics,
-    EccentricKinematics,
-)
-
-# Import robot kinematics classes
-from .robot_kinematics import (
-    RobotModelBase,
-    TwoLinkArmPlanar,
-    CartesianRobot,
-    RRRArm
-)
-
-# Import digitizer classes
-from .digitizer import (
-    MotorDigitizer,
-    DigitizedPoint,
-    DigitizedSequence,
-    PlaybackStats,
-    PrecisionAnalyzer,
-    SurfacePoint,
-    SurfaceMap,
-    EnhancedHeightMapGenerator,
-    create_linear_axis,
-    create_rotary_axis
-)
-
-# Import CRC functions explicitly if they are to be exported
-from .crc import calculate_crc, verify_crc
-
-# Import all exception classes explicitly if they are to be exported
-from .exceptions import (
-    MKSServoError,
-    CANError,
-    CRCError,
-    CommandError,
-    ParameterError,
-    MotorError,
-    CommunicationError,
-    MultiAxisError,
-    SimulatorError,
-    KinematicsError,
-    ConfigurationError,
-    HomingError,
-    CalibrationError,
-    LimitError,
-    StallError,
-)
 
 # Make all constants available directly in the package's namespace
 # This allows users to do 'from mks_servo_can import CAN_DEFAULT_BITRATE'
 from .constants import *
 
-__version__ = "0.2.0"  # Minor version bump for new digitizer feature
+# Import CRC functions explicitly if they are to be exported
+from .crc import calculate_crc, verify_crc
+
+# Import digitizer classes
+from .digitizer import (
+    DigitizedPoint,
+    DigitizedSequence,
+    EnhancedHeightMapGenerator,
+    MotorDigitizer,
+    PlaybackStats,
+    PrecisionAnalyzer,
+    SurfaceMap,
+    SurfacePoint,
+    create_linear_axis,
+    create_rotary_axis,
+)
+
+# Import all exception classes explicitly if they are to be exported
+from .exceptions import (
+    CalibrationError,
+    CANError,
+    CommandError,
+    CommunicationError,
+    ConfigurationError,
+    CRCError,
+    HomingError,
+    KinematicsError,
+    LimitError,
+    MKSServoError,
+    MotorError,
+    MultiAxisError,
+    ParameterError,
+    SimulatorError,
+    StallError,
+)
+from .firmware import FirmwareCapabilities, probe_firmware
+
+# Import kinematics classes
+from .kinematics import (
+    EccentricKinematics,
+    Kinematics,
+    LinearKinematics,
+    RotaryKinematics,
+)
+from .low_level_api import LowLevelAPI
+from .manual_spec import (
+    get_firmware_fixes,
+    get_firmware_history,
+    get_firmware_probes,
+    get_manual_commands,
+    get_manual_errata,
+    load_manual_spec,
+)
+from .multi_axis_controller import MultiAxisController
+from .realtime import (
+    AlphaBetaGammaTracker,
+    AlphaBetaTracker,
+    ServoStream,
+    StreamAxis,
+    StreamStats,
+)
+
+# Import robot kinematics classes
+from .robot_kinematics import CartesianRobot, RobotModelBase, RRRArm, TwoLinkArmPlanar
+
+__version__ = "0.3.0"
 
 __all__ = [
     # Export the 'const' alias for the constants module
@@ -83,6 +95,26 @@ __all__ = [
     "LowLevelAPI",
     "Axis",
     "MultiAxisController",
+
+    # Motion parameter model (speed/accel parameters <-> engineering units)
+    "motor_profile",
+
+    # The manual's command table, shipped with the package
+    "load_manual_spec",
+    "get_manual_commands",
+    "get_firmware_history",
+    "get_firmware_probes",
+    "get_firmware_fixes",
+    "FirmwareCapabilities",
+    "probe_firmware",
+    "get_manual_errata",
+
+    # Fixed-rate streaming control, for tracking a moving reference
+    "ServoStream",
+    "StreamAxis",
+    "StreamStats",
+    "AlphaBetaTracker",
+    "AlphaBetaGammaTracker",
 
     # Kinematics classes
     "Kinematics",
@@ -99,11 +131,11 @@ __all__ = [
     # Digitizer classes
     "MotorDigitizer",
     "DigitizedPoint",
-    "DigitizedSequence", 
+    "DigitizedSequence",
     "PlaybackStats",
     "PrecisionAnalyzer",
     "SurfacePoint",
-    "SurfaceMap", 
+    "SurfaceMap",
     "EnhancedHeightMapGenerator",
     "create_linear_axis",
     "create_rotary_axis",

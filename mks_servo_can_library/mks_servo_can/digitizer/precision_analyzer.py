@@ -6,10 +6,10 @@ for digitizer precision testing and system performance evaluation.
 """
 
 import math
-from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-from .data_structures import PlaybackStats, DigitizedSequence
+from .data_structures import DigitizedSequence, PlaybackStats
 
 
 @dataclass
@@ -30,46 +30,100 @@ class PrecisionAnalyzer:
     Provides statistical analysis, performance assessment, and
     automated precision scoring for digitizer systems.
     """
-    
-    # Precision assessment thresholds
+
+    # Precision assessment thresholds, best first. Every comparison is
+    # inclusive, so a value exactly on a threshold keeps the better grade.
     PRECISION_THRESHOLDS = {
         "EXCELLENT": {"position": 0.1, "max_position": 0.5, "timing": 0.05},
         "GOOD": {"position": 0.5, "max_position": 2.0, "timing": 0.1},
         "FAIR": {"position": 1.0, "max_position": 5.0, "timing": 0.2},
         "POOR": {"position": float('inf'), "max_position": float('inf'), "timing": float('inf')}
     }
-    
+
+    # How complete a playback must be to be *eligible* for each grade.
+    #
+    # The error statistics in PlaybackStats are computed only over the points
+    # that were actually executed, so they say nothing whatever about the points
+    # that were not. Grading on them alone meant a playback which managed one
+    # point of five hundred - and managed it accurately - was reported as
+    # EXCELLENT. That is the same defect as L9 one layer up: precise figures
+    # about a job that did not happen.
+    #
+    # These caps never promote, only demote: a complete run with poor errors
+    # stays poor.
+    COMPLETENESS_CAPS = (
+        (1.0, "EXCELLENT"),   # complete: no restriction
+        (0.999, "GOOD"),      # a point or two short of a thousand
+        (0.95, "FAIR"),
+    )
+
     @classmethod
     def assess_precision(cls, stats: PlaybackStats) -> str:
         """
         Assess overall precision performance.
-        
+
+        The grade reflects both how accurately the executed points were hit and
+        how much of the sequence was executed at all. A playback that stopped
+        early cannot earn a good grade on the strength of the part that ran -
+        see `COMPLETENESS_CAPS`.
+
         Args:
             stats: PlaybackStats from precision testing
-            
+
         Returns:
             Assessment string: "EXCELLENT", "GOOD", "FAIR", or "POOR"
         """
         # Calculate overall position error (average across all axes)
         avg_position_errors = list(stats.average_position_error.values())
         max_position_errors = list(stats.max_position_error.values())
-        
+
         if not avg_position_errors:
             return "POOR"
-            
+
         overall_avg_error = sum(avg_position_errors) / len(avg_position_errors)
         overall_max_error = max(max_position_errors) if max_position_errors else float('inf')
         timing_error = stats.average_timing_error
-        
+
         # Check thresholds in order of quality
+        accuracy_grade = "POOR"
         for assessment, thresholds in cls.PRECISION_THRESHOLDS.items():
-            if (overall_avg_error <= thresholds["position"] and 
-                overall_max_error <= thresholds["max_position"] and 
+            if (overall_avg_error <= thresholds["position"] and
+                overall_max_error <= thresholds["max_position"] and
                 timing_error <= thresholds["timing"]):
-                return assessment
-                
-        return "POOR"
-    
+                accuracy_grade = assessment
+                break
+
+        return cls._cap_by_completeness(accuracy_grade, stats)
+
+    @classmethod
+    def _cap_by_completeness(cls, accuracy_grade: str, stats: PlaybackStats) -> str:
+        """
+        Lowers a grade earned on accuracy to what the run's completeness allows.
+
+        Args:
+            accuracy_grade: The grade the error statistics alone would earn.
+            stats: The statistics, for `planned_points` and `executed_points`.
+
+        Returns:
+            The lower of `accuracy_grade` and the completeness cap.
+        """
+        grades = list(cls.PRECISION_THRESHOLDS)
+
+        if stats.planned_points <= 0:
+            # Nothing was asked for, so nothing was demonstrated. A sequence
+            # that recorded no points must not come back as a perfect run.
+            return "POOR"
+
+        completion = stats.executed_points / stats.planned_points
+        cap = "POOR"
+        for required_completion, allowed_grade in cls.COMPLETENESS_CAPS:
+            if completion >= required_completion:
+                cap = allowed_grade
+                break
+
+        # Grades are ordered best-first, so the worse of the two is the later.
+        return grades[max(grades.index(accuracy_grade), grades.index(cap))]
+
     @classmethod
     def calculate_path_complexity(cls, sequence: DigitizedSequence) -> float:
         """
@@ -83,45 +137,43 @@ class PrecisionAnalyzer:
         """
         if len(sequence.points) < 2:
             return 0.0
-            
+
         total_distance = 0.0
         direction_changes = 0
-        speed_changes = 0
-        
+
         for i in range(1, len(sequence.points)):
             prev_point = sequence.points[i-1]
             curr_point = sequence.points[i]
-            
+
             # Calculate distance moved
             axis_distances = []
             for axis in sequence.axis_names:
                 if axis in prev_point.positions and axis in curr_point.positions:
                     dist = abs(curr_point.positions[axis] - prev_point.positions[axis])
                     axis_distances.append(dist)
-                    
+
             if axis_distances:
                 segment_distance = math.sqrt(sum(d**2 for d in axis_distances))
                 total_distance += segment_distance
-                
+
                 # Check for direction changes (simplified)
                 if i > 1:
-                    prev_prev_point = sequence.points[i-2]
                     # Calculate direction vectors and check for changes
                     # This is a simplified approach - could be more sophisticated
                     direction_changes += 1 if segment_distance > 0.1 else 0
-                    
+
         # Normalize factors
         avg_distance_per_point = total_distance / len(sequence.points) if total_distance > 0 else 0
         direction_change_ratio = direction_changes / len(sequence.points)
-        
+
         # Combine into complexity score (0-1)
-        complexity = min(1.0, (avg_distance_per_point / 10.0) + 
+        complexity = min(1.0, (avg_distance_per_point / 10.0) +
                         (direction_change_ratio * 0.5))
-        
+
         return complexity
-    
+
     @classmethod
-    def analyze_repeatability(cls, stats_list: List[PlaybackStats], 
+    def analyze_repeatability(cls, stats_list: List[PlaybackStats],
                             confidence_level: float = 0.95) -> RepeatabilityStats:
         """
         Analyze repeatability across multiple test runs.
@@ -135,25 +187,25 @@ class PrecisionAnalyzer:
         """
         if not stats_list:
             raise ValueError("No statistics provided for repeatability analysis")
-            
+
         run_count = len(stats_list)
-        
+
         # Collect position errors by axis
         axis_errors = {}
         timing_errors = []
-        
+
         for stats in stats_list:
             timing_errors.append(stats.average_timing_error)
-            
+
             for axis, error in stats.average_position_error.items():
                 if axis not in axis_errors:
                     axis_errors[axis] = []
                 axis_errors[axis].append(error)
-        
+
         # Calculate statistics
         mean_position_error = {}
         std_position_error = {}
-        
+
         for axis, errors in axis_errors.items():
             mean_position_error[axis] = sum(errors) / len(errors)
             if len(errors) > 1:
@@ -161,14 +213,14 @@ class PrecisionAnalyzer:
                 std_position_error[axis] = math.sqrt(variance)
             else:
                 std_position_error[axis] = 0.0
-        
+
         mean_timing_error = sum(timing_errors) / len(timing_errors)
         if len(timing_errors) > 1:
             timing_variance = sum((e - mean_timing_error)**2 for e in timing_errors) / (len(timing_errors) - 1)
             std_timing_error = math.sqrt(timing_variance)
         else:
             std_timing_error = 0.0
-        
+
         return RepeatabilityStats(
             mean_position_error=mean_position_error,
             std_position_error=std_position_error,
@@ -177,9 +229,9 @@ class PrecisionAnalyzer:
             run_count=run_count,
             confidence_interval=confidence_level
         )
-    
+
     @classmethod
-    def generate_performance_report(cls, stats: PlaybackStats, 
+    def generate_performance_report(cls, stats: PlaybackStats,
                                   sequence: DigitizedSequence,
                                   repeatability: Optional[RepeatabilityStats] = None) -> Dict[str, Any]:
         """
@@ -195,11 +247,18 @@ class PrecisionAnalyzer:
         """
         assessment = cls.assess_precision(stats)
         complexity = cls.calculate_path_complexity(sequence)
-        
+
         report = {
             "overall_assessment": assessment,
             "path_complexity": complexity,
-            "execution_success_rate": stats.executed_points / stats.planned_points,
+            # planned_points is len(sequence.points) and nothing rejects an
+            # empty sequence, so this was a ZeroDivisionError on a legitimate
+            # input - a recording that captured nothing.
+            "execution_success_rate": (
+                stats.executed_points / stats.planned_points
+                if stats.planned_points > 0
+                else 0.0
+            ),
             "timing_performance": {
                 "average_error_ms": stats.average_timing_error * 1000,
                 "max_error_ms": stats.max_timing_error * 1000,
@@ -213,18 +272,18 @@ class PrecisionAnalyzer:
                 "axes": sequence.axis_names
             }
         }
-        
+
         # Per-axis position performance
         for axis in stats.average_position_error:
             avg_err = stats.average_position_error[axis]
             max_err = stats.max_position_error[axis]
-            
+
             report["position_performance"][axis] = {
                 "average_error": avg_err,
                 "max_error": max_err,
                 "assessment": cls._assess_position_error(avg_err, max_err)
             }
-        
+
         # Add repeatability data if available
         if repeatability:
             report["repeatability"] = {
@@ -233,9 +292,9 @@ class PrecisionAnalyzer:
                 "timing_std_dev": repeatability.std_timing_error,
                 "confidence_level": repeatability.confidence_interval
             }
-        
+
         return report
-    
+
     @classmethod
     def _assess_timing(cls, avg_timing_error: float) -> str:
         """Assess timing performance"""
@@ -243,12 +302,12 @@ class PrecisionAnalyzer:
             if avg_timing_error <= thresholds["timing"]:
                 return assessment
         return "POOR"
-    
+
     @classmethod
     def _assess_position_error(cls, avg_error: float, max_error: float) -> str:
         """Assess position error performance"""
         for assessment, thresholds in cls.PRECISION_THRESHOLDS.items():
-            if (avg_error <= thresholds["position"] and 
+            if (avg_error <= thresholds["position"] and
                 max_error <= thresholds["max_position"]):
                 return assessment
         return "POOR"

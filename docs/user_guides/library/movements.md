@@ -37,7 +37,7 @@ async def absolute_movement_example(axis: Axis):
         # Move to 90 degrees at 30 degrees/second
         print("Moving to 90°...")
         await axis.move_to_position_abs_user(
-            target_position_user=90.0,
+            target_pos_user=90.0,
             speed_user=30.0,
             wait=True  # Wait for completion
         )
@@ -139,7 +139,7 @@ async def non_blocking_movement_example(axis: Axis):
         
         # Start movement but don't wait for completion
         await axis.move_to_position_abs_user(
-            target_position_user=180.0,
+            target_pos_user=180.0,
             speed_user=15.0,  # Slower speed for longer movement
             wait=False  # Don't wait - return immediately
         )
@@ -150,14 +150,14 @@ async def non_blocking_movement_example(axis: Axis):
         for i in range(10):
             await asyncio.sleep(0.5)
             
-            # Check if movement is complete
-            status = await axis.get_current_status()
+            # Check if movement is complete. is_move_complete() is synchronous
+            # and free; the position read costs one CAN round trip.
+            complete = axis.is_move_complete()
             position = await axis.get_current_position_user()
             
-            print(f"  Step {i+1}: Position = {position:.1f}°")
-            
-            # Check if motor has reached target
-            if abs(position - 180.0) < 1.0:  # Within 1 degree
+            print(f"  Step {i+1}: Position = {position:.1f}deg")
+
+            if complete:
                 print("Movement completed!")
                 break
         
@@ -178,7 +178,7 @@ async def custom_acceleration_example(axis: Axis):
         print("Movement with custom acceleration...")
         
         await axis.move_to_position_abs_user(
-            target_position_user=360.0,  # Full rotation
+            target_pos_user=360.0,  # Full rotation
             speed_user=45.0,             # 45 degrees/second
             accel_user=90.0,             # 90 degrees/second²
             wait=True
@@ -203,7 +203,7 @@ async def emergency_stop_example(axis: Axis):
         # Start a long movement
         print("Starting long movement...")
         await axis.move_to_position_abs_user(
-            target_position_user=720.0,  # Two full rotations
+            target_pos_user=720.0,  # Two full rotations
             speed_user=10.0,              # Slow speed for long movement
             wait=False  # Don't wait
         )
@@ -255,7 +255,7 @@ async def safe_movement_example(axis: Axis):
         print(f"Using safe: {safe_speed}°/s, {safe_accel}°/s²")
         
         await axis.move_to_position_abs_user(
-            target_position_user=90.0,
+            target_pos_user=90.0,
             speed_user=safe_speed,
             accel_user=safe_accel,
             wait=True
@@ -337,5 +337,6 @@ async def complete_movement_demo():
 ## Next Steps
 
 * Learn about [Multi-Axis Control](./multi_axis.md) for coordinating multiple motors
-* Explore [Robot Kinematics](./robot_control.md) for higher-level robot control
+* Explore `mks_servo_can.robot_kinematics` for higher-level robot models
+  (`CartesianRobot`, `TwoLinkArmPlanar`, `RRRArm`); a guide is still to be written
 * Check out [Error Handling](./error_handling.md) for robust error management

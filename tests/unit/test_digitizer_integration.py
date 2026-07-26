@@ -6,32 +6,32 @@ with the main library and can be imported correctly.
 """
 
 import pytest
-import sys
-from pathlib import Path
 
-# Add the library to the path for testing
-lib_path = Path(__file__).parent.parent.parent / "mks_servo_can_library"
-sys.path.insert(0, str(lib_path))
+# No sys.path manipulation here. Pointing the path at the source tree would mean
+# this file always imports mks_servo_can from the checkout, so a run against an
+# *installed* package - which is what the packaging CI job exists to check -
+# would silently test the source tree instead and report success either way.
+# The library is installed; if the import fails, that is the finding.
 
 
 class TestDigitizerImports:
     """Test that digitizer components can be imported from the main library"""
-    
+
     def test_import_from_main_library(self):
         """Test importing digitizer classes from main library"""
         from mks_servo_can import (
-            MotorDigitizer,
             DigitizedPoint,
             DigitizedSequence,
+            EnhancedHeightMapGenerator,
+            MotorDigitizer,
             PlaybackStats,
             PrecisionAnalyzer,
-            SurfacePoint,
             SurfaceMap,
-            EnhancedHeightMapGenerator,
+            SurfacePoint,
             create_linear_axis,
-            create_rotary_axis
+            create_rotary_axis,
         )
-        
+
         # Verify classes are imported correctly
         assert MotorDigitizer is not None
         assert DigitizedPoint is not None
@@ -43,25 +43,25 @@ class TestDigitizerImports:
         assert EnhancedHeightMapGenerator is not None
         assert create_linear_axis is not None
         assert create_rotary_axis is not None
-    
+
     def test_import_from_digitizer_module(self):
         """Test importing directly from digitizer module"""
         from mks_servo_can.digitizer import (
-            MotorDigitizer,
             DigitizedPoint,
             DigitizedSequence,
-            PlaybackStats
+            MotorDigitizer,
+            PlaybackStats,
         )
-        
+
         assert MotorDigitizer is not None
         assert DigitizedPoint is not None
         assert DigitizedSequence is not None
         assert PlaybackStats is not None
-    
+
     def test_data_structures_creation(self):
         """Test creating basic data structures"""
         from mks_servo_can import DigitizedPoint, DigitizedSequence, PlaybackStats
-        
+
         # Test DigitizedPoint creation
         point = DigitizedPoint(
             timestamp=1.0,
@@ -70,7 +70,7 @@ class TestDigitizerImports:
         )
         assert point.timestamp == 1.0
         assert point.positions["X"] == 10.0
-        
+
         # Test DigitizedSequence creation
         sequence = DigitizedSequence(
             points=[point],
@@ -82,7 +82,7 @@ class TestDigitizerImports:
         )
         assert len(sequence.points) == 1
         assert sequence.sample_rate == 10.0
-        
+
         # Test PlaybackStats creation
         stats = PlaybackStats(
             planned_points=100,
@@ -95,11 +95,11 @@ class TestDigitizerImports:
         )
         assert stats.planned_points == 100
         assert stats.executed_points == 95
-    
+
     def test_precision_analyzer_basic(self):
         """Test basic PrecisionAnalyzer functionality"""
-        from mks_servo_can import PrecisionAnalyzer, PlaybackStats
-        
+        from mks_servo_can import PlaybackStats, PrecisionAnalyzer
+
         # Create test stats
         stats = PlaybackStats(
             planned_points=100,
@@ -110,30 +110,30 @@ class TestDigitizerImports:
             max_timing_error=0.08,
             total_duration=10.0
         )
-        
+
         # Test precision assessment
         assessment = PrecisionAnalyzer.assess_precision(stats)
         assert assessment in ["EXCELLENT", "GOOD", "FAIR", "POOR"]
-        
+
         # With these low errors, should be EXCELLENT
         assert assessment == "EXCELLENT"
-    
+
     def test_utility_functions_mock(self):
         """Test utility functions can be called (mock test without real CAN)"""
-        from mks_servo_can import create_linear_axis, create_rotary_axis
-        
         # These functions require a real CANInterface, so we just test they exist
         # and have the right signatures
         import inspect
-        
+
+        from mks_servo_can import create_linear_axis, create_rotary_axis
+
         # Check create_linear_axis signature
         sig = inspect.signature(create_linear_axis)
         assert 'can_interface' in sig.parameters
         assert 'motor_can_id' in sig.parameters
         assert 'name' in sig.parameters
         assert 'pitch_mm' in sig.parameters
-        
-        # Check create_rotary_axis signature  
+
+        # Check create_rotary_axis signature
         sig = inspect.signature(create_rotary_axis)
         assert 'can_interface' in sig.parameters
         assert 'motor_can_id' in sig.parameters
@@ -142,15 +142,15 @@ class TestDigitizerImports:
 
 class TestDigitizerModuleStructure:
     """Test the internal structure of the digitizer module"""
-    
+
     def test_module_has_all_components(self):
         """Test that all expected components are in the digitizer module"""
         from mks_servo_can import digitizer
-        
+
         # Check that all expected attributes exist
         expected_attrs = [
             'MotorDigitizer',
-            'DigitizedPoint', 
+            'DigitizedPoint',
             'DigitizedSequence',
             'PlaybackStats',
             'PrecisionAnalyzer',
@@ -160,14 +160,14 @@ class TestDigitizerModuleStructure:
             'create_linear_axis',
             'create_rotary_axis'
         ]
-        
+
         for attr in expected_attrs:
             assert hasattr(digitizer, attr), f"Missing {attr} in digitizer module"
-    
+
     def test_inheritance_structure(self):
         """Test that inheritance relationships are correct"""
-        from mks_servo_can import MotorDigitizer, EnhancedHeightMapGenerator
-        
+        from mks_servo_can import EnhancedHeightMapGenerator, MotorDigitizer
+
         # Test that EnhancedHeightMapGenerator inherits from MotorDigitizer
         assert issubclass(EnhancedHeightMapGenerator, MotorDigitizer)
 

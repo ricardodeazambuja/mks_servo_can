@@ -1,7 +1,8 @@
 """
 Rotary kinematics: converts between angular displacement (degrees) and motor steps.
 """
-import logging # Added for warning
+import logging  # Added for warning
+
 from .base_kinematics import Kinematics
 
 logger = logging.getLogger(__name__) # Added for warning
@@ -76,7 +77,7 @@ class RotaryKinematics(Kinematics):
         """
         if self.degrees_per_output_revolution == 0: # Avoid division by zero
              return 0
-             
+
         # Revolutions of the output shaft per second
         output_revs_per_second = user_speed / self.degrees_per_output_revolution
         # Revolutions of the motor per second
@@ -130,4 +131,3 @@ class RotaryKinematics(Kinematics):
             }
         )
         return params
-    

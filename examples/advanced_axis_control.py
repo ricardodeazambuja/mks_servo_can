@@ -12,13 +12,7 @@ Example: `mks-servo-simulator --num-motors 1 --start-can-id 1`
 import asyncio
 import logging
 
-from mks_servo_can import (
-    CANInterface,
-    Axis,
-    RotaryKinematics,
-    const,
-    exceptions
-)
+from mks_servo_can import Axis, CANInterface, RotaryKinematics, const, exceptions
 
 # --- Configuration ---
 LOG_LEVEL = logging.INFO
@@ -60,7 +54,7 @@ async def main():
         logger.info("Demonstrating motor parameter changes...")
         # Note: Some modes may require a restart. This is a demonstration of the command.
         await axis.set_work_mode(const.MODE_SR_VFOC)
-        logger.info(f"Set work mode to SR_VFOC (Serial, Field-Oriented Control).")
+        logger.info("Set work mode to SR_VFOC (Serial, Field-Oriented Control).")
 
         # Change motor microstepping (subdivision). This affects pulse-based commands.
         # The default in the Axis class is 16. Let's change it to 32.
@@ -76,7 +70,7 @@ async def main():
         await axis.set_speed_user(120.0) # degrees per second
 
         # Let it run for a couple of seconds and poll status
-        for i in range(4):
+        for _i in range(4):
             await asyncio.sleep(0.5)
             speed_rpm = await axis.get_current_speed_rpm()
             speed_user = await axis.get_current_speed_user()
@@ -96,14 +90,14 @@ async def main():
         await axis.move_relative_user(360.0, speed_user=360.0, wait=False)
 
         # We can perform other work while the motor is moving
-        for i in range(4):
+        for _i in range(4):
             if not axis.is_move_complete():
-                logger.info(f"  Motor is moving... (Other work can happen here)")
+                logger.info("  Motor is moving... (Other work can happen here)")
                 await asyncio.sleep(0.3)
             else:
                 logger.info("  Move completed faster than expected!")
                 break
-        
+
         # Now, explicitly wait for the move to finish if it hasn't already
         if not axis.is_move_complete():
             logger.info("Waiting for move completion...")
@@ -146,4 +140,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    

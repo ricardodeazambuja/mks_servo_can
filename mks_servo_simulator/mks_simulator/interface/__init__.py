@@ -8,7 +8,7 @@ This package provides various interfaces for the MKS servo simulator:
 - Structured output modes
 """
 
-from .llm_debug_interface import LLMDebugInterface
 from .http_debug_server import DebugHTTPServer
+from .llm_debug_interface import LLMDebugInterface
 
-__all__ = ["LLMDebugInterface", "DebugHTTPServer"]
+__all__ = ["DebugHTTPServer", "LLMDebugInterface"]

@@ -1,16 +1,16 @@
 # Implementing Custom Kinematics
 
-While `RotaryKinematics` and `LinearKinematics` cover many common scenarios, some mechanical systems have a more complex, often non-linear, relationship between motor movement (encoder steps) and the physical output position or speed. For these cases, the `mks-servo-can` library allows you to define your own custom kinematics by creating a class that inherits from `BaseKinematics`.
+While `RotaryKinematics` and `LinearKinematics` cover many common scenarios, some mechanical systems have a more complex, often non-linear, relationship between motor movement (encoder steps) and the physical output position or speed. For these cases, the `mks-servo-can` library allows you to define your own custom kinematics by creating a class that inherits from `Kinematics`.
 
 ## Prerequisites
 
-* A solid understanding of the kinematics system. See [Using Kinematics](./kinematics.md).
+* A solid understanding of the kinematics system. See [Using Kinematics](../user_guides/library/kinematics.md).
 * Knowledge of Python classes and object-oriented programming.
 * The mathematical model describing the relationship between your motor's rotation and the desired physical output of your mechanism.
 
-## The `BaseKinematics` Abstract Class
+## The `Kinematics` Abstract Class
 
-The foundation for all kinematics conversions is the `mks_servo_can.kinematics.base_kinematics.BaseKinematics` abstract base class. To create a custom kinematics model, you must subclass `BaseKinematics` and implement its abstract methods.
+The foundation for all kinematics conversions is the `mks_servo_can.kinematics.Kinematics` abstract base class. To create a custom kinematics model, you must subclass `Kinematics` and implement its abstract methods.
 
 ### Required Methods and Properties
 
@@ -55,10 +55,10 @@ Let's look at its structure (simplified):
 
 ```python
 import math
-from mks_servo_can.kinematics.base_kinematics import BaseKinematics
+from mks_servo_can.kinematics import Kinematics
 from mks_servo_can import const
 
-class EccentricKinematics(BaseKinematics):
+class EccentricKinematics(Kinematics):
     def __init__(self,
                  steps_per_revolution: int = const.ENCODER_PULSES_PER_REVOLUTION,
                  eccentricity_mm: float = 5.0,
@@ -166,7 +166,7 @@ class EccentricKinematics(BaseKinematics):
 
     # For speed and acceleration, if the relationship is non-linear,
     # the derivatives (dX/dTheta for speed, d^2X/dTheta^2 for accel) are needed.
-    # By default, BaseKinematics uses a linear scaling based on position conversion,
+    # By default, Kinematics uses a linear scaling based on position conversion,
     # which is an approximation for non-linear systems.
     # For accurate speed/accel in non-linear systems, these should also be overridden.
 
@@ -226,9 +226,9 @@ class EccentricKinematics(BaseKinematics):
 
 ```python
 import math
-from mks_servo_can.kinematics.base_kinematics import BaseKinematics
+from mks_servo_can.kinematics import Kinematics
 
-class MyCustomKinematics(BaseKinematics):
+class MyCustomKinematics(Kinematics):
     def __init__(self, steps_per_motor_revolution: int, param1: float, param2: float, units_str: str = "my_units"):
         super().__init__()
         self.steps_per_rev = steps_per_motor_revolution
@@ -262,7 +262,7 @@ class MyCustomKinematics(BaseKinematics):
         # motor_angular_speed_rad_s = (steps_sec / self.steps_per_rev) * 2 * math.pi
         # physical_speed = motor_angular_speed_rad_s * self.param1 # If param1 is a linear scaling factor
         # return physical_speed
-        # For non-linear, implement using derivatives or accept BaseKinematics approximation.
+        # For non-linear, implement using derivatives or accept Kinematics approximation.
         return super().steps_sec_to_speed(steps_sec) # Or your custom implementation
 
     def speed_to_steps_sec(self, speed: float) -> float:
@@ -270,7 +270,7 @@ class MyCustomKinematics(BaseKinematics):
         # motor_angular_speed_rad_s = speed / self.param1
         # steps_per_sec = (motor_angular_speed_rad_s / (2 * math.pi)) * self.steps_per_rev
         # return steps_per_sec
-        # For non-linear, implement using derivatives or accept BaseKinematics approximation.
+        # For non-linear, implement using derivatives or accept Kinematics approximation.
         return super().speed_to_steps_sec(speed) # Or your custom implementation
 ```
 
@@ -303,7 +303,7 @@ async def use_custom_kinematics():
         await motor_axis.initialize()
         await motor_axis.enable_motor()
         # Now, position and speed values are in "widgets"
-        await motor_axis.move_to_position_abs_user(target_position_user=100.0, speed_user=10.0) # 100 widgets, 10 widgets/s
+        await motor_axis.move_to_position_abs_user(target_pos_user=100.0, speed_user=10.0) # 100 widgets, 10 widgets/s
         current_pos = await motor_axis.get_current_position_user()
         print(f"Moved to {current_pos:.2f} {motor_axis.kinematics.units}")
         await motor_axis.disable_motor()

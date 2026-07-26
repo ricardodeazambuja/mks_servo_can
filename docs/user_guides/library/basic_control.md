@@ -28,13 +28,13 @@ async def create_axis_example(can_interface: CANInterface, motor_can_id: int):
     
     # Create the axis instance
     axis = Axis(
-        can_interface=can_interface,
+        can_interface_manager=can_interface,
         motor_can_id=motor_can_id,
         name=f"Motor_{motor_can_id}",  # Optional, for easier identification
         kinematics=kinematics
     )
     
-    print(f"Axis '{axis.name}' created for CAN ID {axis.motor_can_id}")
+    print(f"Axis '{axis.name}' created for CAN ID {axis.can_id}")
     return axis
 
 # Example usage:
@@ -42,7 +42,7 @@ async def create_axis_example(can_interface: CANInterface, motor_can_id: int):
 ```
 
 ## Key Parameters for Axis Creation:
-* `can_interface`: The active and connected CANInterface instance.
+* `can_interface_manager`: The active and connected CANInterface instance.
 * `motor_can_id`: The unique CAN identifier of the motor (integer, typically 1-254).
 * `name` (optional): A string name for the axis. Defaults to `f"Axis_{motor_can_id}"`.
 * `kinematics` (optional): A Kinematics object for unit conversions. If not provided, a default RotaryKinematics instance is used.

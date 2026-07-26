@@ -41,6 +41,26 @@ Here's an overview of some key endpoints. For full details, request/response mod
     *   **Query Parameters**: `motor_id` (optional int), `limit` (optional int, default 50).
     *   **Response**: JSON object containing the command history.
 
+*   **`POST /step`**:
+    *   **Description**: Advances *simulated* time and returns the state that
+        results. This is how you drive a simulator started with `--step`, where
+        the motors do not move on their own.
+    *   **Request Body**: `{"seconds": 0.1}` — the amount of simulated time to
+        advance. Defaults to `0.1`. Zero is allowed and does nothing; a negative
+        value is rejected with HTTP 422.
+    *   **Response**: `stepped` (whether time was really stepped or merely slept
+        through), `advanced_seconds`, `simulated_time`, and `status` — the same
+        payload `GET /status` returns, as of the end of the step.
+    *   **Why it matters**: the call does not return until every motor has
+        finished the last sub-step, so the `status` in the response is settled.
+        That removes the guesswork from driving the simulator programmatically:
+        issue a command, step, and read the result, with no sleeping and no
+        risk of catching a motor mid-update.
+    *   **On a real-time simulator** (started without `--step`) the endpoint
+        waits out the interval and returns `"stepped": false`, so a client can
+        tell the two cases apart rather than being told success either way.
+    *   See [Deterministic time](simulator/advanced_simulation.md#deterministic-time---step).
+
 ### Command Injection
 
 *   **`POST /inject`**:

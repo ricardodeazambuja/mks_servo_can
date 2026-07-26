@@ -7,16 +7,16 @@ query simulator state, command history, and perform state validation.
 
 import asyncio
 import json
-from typing import Optional, Dict, Any
-from pathlib import Path
+from typing import Any, Dict, Optional
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
-    from fastapi.responses import JSONResponse
-    from fastapi.middleware.cors import CORSMiddleware
+    from typing import Any, Dict, List  # Added (already present but good to ensure)
+
     import uvicorn
-    from pydantic import BaseModel, Field # Added
-    from typing import List, Dict, Any # Added (already present but good to ensure)
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import HTMLResponse, JSONResponse
+    from pydantic import BaseModel, Field  # Added
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
@@ -31,10 +31,12 @@ except ImportError:
     class Field: # type: ignore
         pass
     # Ensure List, Dict, Any, Optional are available for stub if typing wasn't already imported
-    from typing import List, Dict, Any, Optional
+    from typing import Any, Dict, List, Optional
 
 
+from .dashboard_page import DASHBOARD_HTML
 from .llm_debug_interface import LLMDebugInterface
+
 
 # Pydantic Models for Request Validation
 class RawCommandPayload(BaseModel):
@@ -50,6 +52,9 @@ class TemplateCommandPayload(BaseModel):
 
 class ParameterUpdatePayload(BaseModel):
     value: Any
+
+class StepPayload(BaseModel):
+    seconds: float = 0.1
 
 
 class DebugHTTPServer:
@@ -103,7 +108,25 @@ class DebugHTTPServer:
     
     def _setup_routes(self):
         """Setup API routes"""
-        
+
+        @self.app.get(
+            "/dashboard",
+            summary="Human-facing dashboard",
+            response_class=HTMLResponse,
+            include_in_schema=False,
+        )
+        async def dashboard():
+            """
+            Serve the browser dashboard.
+
+            The page is static; everything it shows it fetches from `/status`,
+            which is the same endpoint an agent polls. Keeping the human view
+            and the machine view on one payload is what stops them drifting
+            apart - the previous arrangement had four separate renderings of
+            motor state and three of them were wrong.
+            """
+            return HTMLResponse(DASHBOARD_HTML)
+
         @self.app.get("/", summary="API information")
         async def root():
             """Get API information and available endpoints"""
@@ -112,7 +135,9 @@ class DebugHTTPServer:
                 "version": "1.1.0",
                 "description": "Provides programmatic access to simulator state and command injection for LLM debugging",
                 "endpoints": {
+                    "/dashboard": "Human-facing browser dashboard",
                     "/status": "Get complete system status",
+                    "/step": "Advance simulated time and return the resulting state (POST)",
                     "/motors/{motor_id}": "Get specific motor status",
                     "/history": "Get command execution history",
                     "/validate": "Validate expected state (POST)",
@@ -141,6 +166,54 @@ class DebugHTTPServer:
             """
             return self.debug_interface.get_system_status()
         
+        @self.app.post("/step", summary="Advance simulated time")
+        async def step(request_data: StepPayload):
+            """
+            Advances simulated time and returns the state that results.
+
+            Only meaningful when the simulator was started with `--step`. On a
+            real-time clock the request simply waits out the interval and says
+            so in `stepped: false`, rather than pretending to have done
+            something - a caller polling `/status` afterwards would otherwise be
+            told the motors had been stepped when they had merely been slept
+            past.
+
+            The response carries the post-step snapshots, so a client can
+            command, step and read in one round trip with no sleeping and no
+            guessing how long a move takes. `advance()` returns only once every
+            motor has finished the last sub-step, so the state below is settled.
+
+            Request body example:
+            ```json
+            {"seconds": 0.1}
+            ```
+
+            Returns:
+                The time advanced, the new simulated clock reading, and the
+                system status as of that moment.
+            """
+            clock = getattr(self.debug_interface.can_bus, "simulation_clock", None)
+            if clock is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="the simulator has no clock attached",
+                )
+
+            seconds = request_data.seconds
+            if seconds < 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"seconds must not be negative, got {seconds}",
+                )
+
+            advanced = await clock.advance(seconds)
+            return {
+                "stepped": bool(getattr(clock, "is_stepped", False)),
+                "advanced_seconds": advanced,
+                "simulated_time": clock.now(),
+                "status": self.debug_interface.get_system_status(),
+            }
+
         @self.app.get("/motors/{motor_id}", summary="Get specific motor status")
         async def get_motor_status(motor_id: int):
             """
@@ -238,7 +311,11 @@ class DebugHTTPServer:
                 "status": "healthy",
                 "uptime": status["uptime_seconds"],
                 "motors_count": len(status["motors"]),
-            "total_commands_processed": status["communication"]["total_messages_sent"]
+                # get_system_status() emits "total_messages"; this read used
+                # "total_messages_sent" and raised KeyError, so the health check
+                # was the one endpoint guaranteed to report the service as
+                # unhealthy.
+                "total_commands_processed": status["communication"]["total_messages"],
             }
         
         @self.app.get("/export", summary="Export status to JSON")
@@ -284,7 +361,7 @@ class DebugHTTPServer:
                 if not hasattr(self.debug_interface, 'command_injector'):
                     from .debug_tools import CommandInjector
                     self.debug_interface.command_injector = CommandInjector(
-                        self.debug_interface.virtual_can_bus, 
+                        self.debug_interface.can_bus, 
                         self.debug_interface
                     )
                 
@@ -304,7 +381,7 @@ class DebugHTTPServer:
                 }
                 
             except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
         
         @self.app.post("/inject_template", summary="Inject template command")
         async def inject_template_command(request_data: TemplateCommandPayload):
@@ -332,7 +409,7 @@ class DebugHTTPServer:
                 if not hasattr(self.debug_interface, 'command_injector'):
                     from .debug_tools import CommandInjector
                     self.debug_interface.command_injector = CommandInjector(
-                        self.debug_interface.virtual_can_bus, 
+                        self.debug_interface.can_bus, 
                         self.debug_interface
                     )
                 
@@ -351,7 +428,7 @@ class DebugHTTPServer:
                 }
                 
             except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
         
         @self.app.get("/templates", summary="Get available command templates")
         async def get_command_templates():
@@ -365,7 +442,7 @@ class DebugHTTPServer:
             if not hasattr(self.debug_interface, 'command_injector'):
                 from .debug_tools import CommandInjector
                 self.debug_interface.command_injector = CommandInjector(
-                    self.debug_interface.virtual_can_bus, 
+                    self.debug_interface.can_bus, 
                     self.debug_interface
                 )
             
@@ -383,7 +460,7 @@ class DebugHTTPServer:
             if not hasattr(self.debug_interface, 'command_injector'):
                 from .debug_tools import CommandInjector
                 self.debug_interface.command_injector = CommandInjector(
-                    self.debug_interface.virtual_can_bus, 
+                    self.debug_interface.can_bus, 
                     self.debug_interface
                 )
             
@@ -416,7 +493,7 @@ class DebugHTTPServer:
                 if not hasattr(self.debug_interface, 'command_injector'):
                     from .debug_tools import CommandInjector
                     self.debug_interface.command_injector = CommandInjector(
-                        self.debug_interface.virtual_can_bus, 
+                        self.debug_interface.can_bus, 
                         self.debug_interface
                     )
                 
@@ -442,7 +519,7 @@ class DebugHTTPServer:
                 }
                 
             except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
         
         # Performance monitoring endpoints
         @self.app.get("/performance", summary="Get current performance metrics")
@@ -453,10 +530,10 @@ class DebugHTTPServer:
             Returns:
                 Current performance metrics including latency, throughput, and memory usage
             """
-            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+            if not hasattr(self.debug_interface, 'can_bus') or not self.debug_interface.can_bus.performance_monitor:
                 return {"error": "Performance monitoring not enabled"}
             
-            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            performance_monitor = self.debug_interface.can_bus.performance_monitor
             return performance_monitor.get_performance_summary()
         
         @self.app.get("/performance/history", summary="Get performance history")
@@ -470,10 +547,10 @@ class DebugHTTPServer:
             Returns:
                 Performance trends data
             """
-            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+            if not hasattr(self.debug_interface, 'can_bus') or not self.debug_interface.can_bus.performance_monitor:
                 return {"error": "Performance monitoring not enabled"}
             
-            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            performance_monitor = self.debug_interface.can_bus.performance_monitor
             return performance_monitor.get_performance_trends(minutes)
         
         @self.app.get("/performance/connections", summary="Get connection details")
@@ -484,10 +561,10 @@ class DebugHTTPServer:
             Returns:
                 List of connection details with statistics
             """
-            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+            if not hasattr(self.debug_interface, 'can_bus') or not self.debug_interface.can_bus.performance_monitor:
                 return {"error": "Performance monitoring not enabled"}
             
-            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            performance_monitor = self.debug_interface.can_bus.performance_monitor
             return {
                 "connections": performance_monitor.get_connection_details(),
                 "summary": {
@@ -504,10 +581,10 @@ class DebugHTTPServer:
             Returns:
                 Confirmation message
             """
-            if not hasattr(self.debug_interface, 'virtual_can_bus') or not self.debug_interface.virtual_can_bus.performance_monitor:
+            if not hasattr(self.debug_interface, 'can_bus') or not self.debug_interface.can_bus.performance_monitor:
                 raise HTTPException(status_code=404, detail="Performance monitoring not enabled")
             
-            performance_monitor = self.debug_interface.virtual_can_bus.performance_monitor
+            performance_monitor = self.debug_interface.can_bus.performance_monitor
             performance_monitor.reset_metrics()
             
             return {"message": "Performance metrics reset successfully"}
@@ -574,7 +651,7 @@ class DebugHTTPServer:
                     # It's better to let FastAPI handle validation errors for consistent 422,
                     # but for other errors, 500 is okay.
                     # However, the test for not_found expects 200 with success:False, so we handle it above.
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
             
             @self.app.post("/config/profiles/{profile_name}/save", summary="Save configuration profile")
             async def save_profile(profile_name: str):
@@ -609,7 +686,7 @@ class DebugHTTPServer:
                 except HTTPException as http_exc: # Catch HTTPException first and re-raise
                     raise http_exc
                 except Exception as e:
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
             
             @self.app.delete("/config/profiles/{profile_name}", summary="Delete configuration profile")
             async def delete_profile(profile_name: str):
@@ -629,7 +706,7 @@ class DebugHTTPServer:
                     else:
                         return {"success": False, "message": f"Profile '{profile_name}' not found"}
                 except Exception as e:
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
             
             @self.app.get("/config/templates", summary="Get motor templates")
             async def get_motor_templates():
@@ -681,7 +758,7 @@ class DebugHTTPServer:
                     else:
                         return {"success": False, "message": f"Failed to apply template '{template_name}' to motor {motor_id}"}
                 except Exception as e:
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
         
         # Live configuration endpoints (only if live config is available)
         if self.live_config:
@@ -725,7 +802,7 @@ class DebugHTTPServer:
                     # Specific exceptions from live_config.update_parameter could be handled here
                     # For now, a general 500 for unexpected issues.
                     # Pydantic validation errors will be automatically handled by FastAPI as 422.
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
     
     async def start_server(self):
         """

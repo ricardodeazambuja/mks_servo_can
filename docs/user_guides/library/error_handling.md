@@ -1,265 +1,201 @@
 # Error Handling & Exceptions in `mks-servo-can`
 
-Robust applications require proper error handling. The `mks-servo-can` library defines a hierarchy of custom exceptions to help you identify and manage issues that can arise during communication with MKS servo motors or the simulator.
+Robust applications require proper error handling. `mks-servo-can` defines a
+hierarchy of exceptions so you can catch as narrowly or as broadly as you need.
 
-## Base Exception: `MKSServoCANError`
+## Base exception: `MKSServoError`
 
-All custom exceptions raised by this library inherit from `MKSServoCANError`. This allows you to catch any library-specific error with a single `except` block if needed.
-
-```python
-from mks_servo_can import exceptions
-from mks_servo_can import CANInterface # For context in examples
-from mks_servo_can import Axis # For context in examples
-from mks_servo_can import const # For context in examples
-import asyncio # For context in examples
-
-
-# Placeholder for an Axis object for example snippets
-# async def setup_axis():
-#     can_if = CANInterface(use_simulator=True)
-#     await can_if.connect()
-#     axis = Axis(can_if, 1)
-#     return axis, can_if
-#
-# async def main_example():
-#     axis, can_if = await setup_axis()
-#     try:
-#         # Some library operation that might fail
-#         await axis.move_absolute(100, 10) # Example operation
-#         print("Operation successful.")
-#     except exceptions.MKSServoCANError as e:
-#         print(f"A general mks-servo-can library error occurred: {e}")
-#     except Exception as e:
-#         print(f"An unrelated or unexpected error occurred: {e}")
-#     finally:
-#         if can_if.is_connected:
-#             await can_if.disconnect()
-#
-# # asyncio.run(main_example())
-```
-
-## Specific Exception Types
-
-Here's a breakdown of the more specific exception types:
-
-### 1. ConfigurationError
-
-**Description**: Raised when there's an issue with the setup or configuration of the library or its dependencies.
-
-**Common Causes**:
-- python-can library not installed when trying to connect to real hardware (use_simulator=False).
-- Missing essential parameters for CANInterface initialization (e.g., channel for hardware mode).
-- Invalid CAN interface type specified.
-
-**Example**:
-```python
-# try:
-#     can_if = CANInterface(interface_type="non_existent_type", channel="can0", use_simulator=False)
-# except exceptions.ConfigurationError as e:
-#     print(f"Configuration Error: {e}")
-```
-
-### 2. CANError
-
-**Description**: Related to problems occurring at the CAN bus communication level when interacting with physical hardware. This often wraps errors from the underlying python-can library.
-
-**Common Causes**:
-- CAN adapter not connected or not detected by the system.
-- Incorrect CAN interface type or channel specified for python-can.
-- Driver issues for the CAN adapter.
-- Physical CAN bus problems (e.g., wiring faults, missing termination, bus-off state).
-- python-can bus exceptions during send/receive operations.
-
-**Example**:
-```python
-# can_if_hw = CANInterface(interface_type="socketcan", channel="can0", use_simulator=False)
-# try:
-#     await can_if_hw.connect() 
-# except exceptions.CANError as e:
-#     print(f"CAN Bus Error: {e}")
-#     print("Check CAN adapter, wiring, termination, and motor power.")
-# finally:
-#     if can_if_hw.is_connected:
-#         await can_if_hw.disconnect()
-```
-
-### 3. SimulatorError
-
-**Description**: Raised for issues specific to communication with the mks-servo-simulator.
-
-**Common Causes**:
-- Simulator is not running.
-- Incorrect simulator host or port specified in CANInterface.
-- Network issues preventing connection to the simulator.
-- Simulator sends an unexpected or malformed response.
-
-**Example**:
-```python
-# can_if_sim = CANInterface(use_simulator=True, simulator_host="wrong_host", simulator_port=12345)
-# try:
-#     await can_if_sim.connect()
-# except exceptions.SimulatorError as e:
-#     print(f"Simulator Connection Error: {e}")
-#     print("Ensure the simulator is running and the host/port are correct.")
-# finally:
-#     if can_if_sim.is_connected:
-#         await can_if_sim.disconnect()
-```
-
-### 4. MotorCommError
-
-**Description**: A general communication error with a specific motor after a connection has been established. This indicates that a command was sent, but a valid or expected response was not received, or the response indicated a communication fault.
-
-**Common Causes**:
-- Motor powered off or disconnected from the CAN bus after initial connection.
-- Incorrect CAN ID specified for an Axis object (motor doesn't exist at that ID).
-- Severe noise on the CAN bus corrupting messages.
-- Motor firmware issue.
-- This is often a superclass for MotorTimeoutError.
-
-**Example**:
-```python
-# async def motor_comm_example(axis: Axis): # Assuming axis is an initialized Axis object
-#     try:
-#         await axis.ping() # Or any other command to a specific motor
-#         print(f"Communication with {axis.name} successful.")
-#     except exceptions.MotorCommError as e: # Catches MotorTimeoutError too
-#         print(f"Motor Communication Error with {axis.name}: {e}")
-```
-
-### 5. MotorTimeoutError
-
-**Description**: A subclass of MotorCommError. Raised when a command is sent to a motor, but no response is received within the expected timeout period.
-
-**Common Causes**:
-- Motor is not responding (powered off, disconnected, wrong CAN ID).
-- CAN bus issues preventing messages from reaching the motor or responses from returning.
-- The motor is busy or in an error state where it cannot respond.
-- Timeout value is too short for the operation or bus latency.
-
-**Example**:
-```python
-# async def motor_timeout_example(axis: Axis): # Assuming axis is an initialized Axis object
-#     try:
-#         await axis.get_current_position()
-#         print(f"Position read from {axis.name} successfully.")
-#     except exceptions.MotorTimeoutError:
-#         print(f"Timeout: Motor {axis.name} did not respond in time.")
-#     except exceptions.MotorCommError as e: # Catch other comm errors if not a timeout
-#         print(f"Communication Error with {axis.name}: {e}")
-```
-
-### 6. MotorOperationError
-
-**Description**: Raised when a motor responds to a command, but the response indicates that the requested operation could not be performed successfully or the motor is in a state that prevents the operation.
-
-**Common Causes**:
-- Trying to move a motor that is not enabled.
-- Command parameters are out of the motor's acceptable range.
-- Motor is in an error state (e.g., over-voltage, stall) that prevents the operation.
-- The command itself is valid, but the motor's internal logic or current state prohibits it.
-
-**Example**:
-```python
-# async def motor_op_error_example(axis: Axis): # Assuming axis is initialized but not enabled
-#     try:
-#         await axis.move_relative(10, 10) 
-#     except exceptions.MotorOperationError as e:
-#         print(f"Motor Operation Error for {axis.name}: {e}")
-#         print("Check if the motor is enabled and not in an error state.")
-#         # You might want to check axis.error_code here:
-#         # error_code = await axis.read_parameter(const.PARAM_SYSTEM_ERROR_CODE)
-#         # print(f"Motor error code: {error_code} - {axis.get_error_description(error_code)}")
-#     except exceptions.MotorTimeoutError:
-#         print(f"Timeout: Motor {axis.name} did not respond.")
-```
-
-### 7. CRCError
-
-**Description**: Raised if a received CAN message from a motor fails its CRC (Cyclic Redundancy Check) validation. This indicates data corruption during transmission.
-
-**Common Causes**:
-- Noise on the CAN bus.
-- Faulty wiring or connectors.
-- Issues with the CAN transceivers on the motor or adapter.
-
-**Note**: CRC checking is optional and can be enabled/disabled in CANInterface. If disabled, this error won't be raised for CRC issues.
-
-**Example**:
-```python
-# async def crc_error_example(axis: Axis): # Assuming CRC checking is enabled in CANInterface
-#     try:
-#         await axis.read_parameter(const.PARAM_FIRMWARE_VERSION)
-#         print(f"Firmware read from {axis.name} successfully.")
-#     except exceptions.CRCError as e:
-#         print(f"CRC Error from {axis.name}: {e}. Data may be corrupted.")
-```
-
-## General Error Handling Strategies
-
-### Use try...except...finally Blocks:
-- Wrap CAN communication and motor control logic in try blocks.
-- Catch specific exceptions first, then more general ones.
-- Use a finally block to ensure resources are cleaned up (e.g., await can_interface.disconnect()).
-
-### Check Motor Status:
-- Before critical operations, or after an error, consider pinging the motor (axis.ping()) or updating its status (axis.update_status()).
-- Check axis.error_code (after an update_status() or relevant read_parameter()) and axis.get_error_description() to understand if the motor itself has reported an internal fault (e.g., stall, over-voltage).
-
-### Retry Logic:
-- For transient issues like timeouts (MotorTimeoutError) or CRC errors, you might implement a limited retry mechanism with a short delay.
-- Be cautious with retrying operations that modify state, as this could lead to unintended behavior if the first attempt partially succeeded.
-
-### User Feedback:
-- Provide clear feedback to the user about the nature of the error and potential troubleshooting steps.
-
-### Logging:
-- Implement logging to record errors, which can be invaluable for diagnosing problems, especially in deployed systems. The library itself uses Python's logging module.
-
-## Example of a More Complete Error Handling Structure:
+Every exception the library raises inherits from `MKSServoError`, so one
+`except` clause catches all of them. It carries two useful attributes:
+`error_code` (whatever the motor reported, when applicable) and `can_id` (which
+motor it came from).
 
 ```python
-async def robust_motor_operation(axis: Axis): # Assuming axis is an initialized Axis object
+from mks_servo_can import Axis, CANInterface, exceptions
+
+
+async def move_with_error_handling(axis: Axis, can_if: CANInterface):
     try:
-        print(f"Attempting operation on {axis.name}...")
-        # It's good practice to ensure the motor is in a known state
-        await axis.update_status() 
-        if axis.error_code != 0:
-            print(f"Motor {axis.name} has an existing error: {axis.get_error_description()}. Attempting to clear...")
-            # await axis.clear_errors() # Assuming such a method exists or is implemented via write_parameter
-            # await axis.update_status() # Re-check status
-            # if axis.error_code != 0:
-            #     print(f"Failed to clear errors on {axis.name}. Aborting operation.")
-            #     return
+        await axis.move_to_position_abs_user(100.0, speed_user=30.0)
+        print("Operation successful.")
+    except exceptions.MKSServoError as e:
+        print(f"Library error on CAN ID {e.can_id}: {e}")
+    finally:
+        if can_if.is_connected:
+            await can_if.disconnect()
+```
 
+## The hierarchy
+
+```
+MKSServoError
+├── CANError             bus-level failure (adapter, wiring, python-can)
+├── CRCError             a received frame failed its checksum
+├── CommandError         a reply was malformed, or echoed the wrong command
+├── CommunicationError   no reply within the timeout, or the link is down
+├── ConfigurationError   the library or interface is set up wrongly
+├── KinematicsError      a unit conversion could not be performed
+├── MultiAxisError       one or more axes failed; see `individual_errors`
+├── ParameterError       an argument is out of the range the motor accepts
+├── SimulatorError       the simulator is unreachable or misbehaving
+└── MotorError           the motor reported a failure
+    ├── CalibrationError   encoder calibration failed
+    ├── HomingError        the homing sequence failed
+    ├── LimitError         a limit switch or soft limit stopped the move
+    └── StallError         the motor reported a stall
+```
+
+Catch `MotorError` for "the motor said no" and `CommunicationError` for "the
+motor said nothing".
+
+## The ones you will actually see
+
+### `CommunicationError` — a timeout
+
+By far the most common. The command went out and nothing came back within
+`const.CAN_TIMEOUT_SECONDS`.
+
+```python
+from mks_servo_can import Axis, exceptions
+
+
+async def read_with_timeout_handling(axis: Axis):
+    try:
+        position = await axis.get_current_position_user()
+        print(f"{axis.name} is at {position:.2f}")
+    except exceptions.CommunicationError as e:
+        print(f"Timeout: {axis.name} did not respond ({e}).")
+```
+
+Usual causes: the motor is powered off or off the bus, the `Axis` was built with
+a CAN ID no motor answers on, the bus is missing termination, or the simulator
+is not running.
+
+### `MotorError` — the motor refused
+
+The motor answered and reported failure: a move commanded while disabled, or a
+command its current state does not allow.
+
+```python
+from mks_servo_can import Axis, exceptions
+
+
+async def move_with_motor_error_handling(axis: Axis):
+    try:
+        await axis.move_relative_user(10.0, speed_user=10.0)
+    except exceptions.LimitError as e:
+        print(f"{axis.name} stopped on a limit: {e}")
+    except exceptions.MotorError as e:
+        print(f"{axis.name} refused the move (status {e.error_code}): {e}")
         if not axis.is_enabled():
+            print("The motor is not enabled.")
+```
+
+Catch `LimitError` and `StallError` before `MotorError` if you want to treat
+them separately — they are subclasses, so a bare `except MotorError` swallows
+them.
+
+### `ParameterError` — caught before anything is sent
+
+Raised locally when an argument is outside the range the protocol allows, such
+as an MKS speed parameter above 3000 or an acceleration above 255. No frame is
+sent.
+
+### `ConfigurationError`, `CANError` and `SimulatorError` — at connect time
+
+```python
+from mks_servo_can import CANInterface, exceptions
+
+
+async def connect_with_handling():
+    can_if = CANInterface(interface_type="socketcan", channel="can0")
+    try:
+        await can_if.connect()
+    except exceptions.ConfigurationError as e:
+        print(f"Configuration problem: {e}")
+    except exceptions.CANError as e:
+        print(f"Bus did not come up: {e}. Check the adapter, wiring and power.")
+    except exceptions.SimulatorError as e:
+        print(f"Simulator unreachable: {e}. Is mks-servo-simulator running?")
+```
+
+### `MultiAxisError` — one axis of several
+
+`MultiAxisController` gathers per-axis failures rather than stopping at the
+first. The individual exceptions are on `individual_errors`, keyed by axis name.
+
+```python
+from mks_servo_can import MultiAxisController, exceptions
+
+
+async def move_all_with_handling(controller: MultiAxisController):
+    try:
+        await controller.move_all_to_positions_abs_user({"x": 10.0, "y": 20.0})
+    except exceptions.MultiAxisError as e:
+        for axis_name, error in (e.individual_errors or {}).items():
+            print(f"  {axis_name}: {error}")
+```
+
+## Strategies
+
+### Catch specific first, general last
+
+Subclasses must come before their parents, or the parent clause wins.
+
+### Check state rather than guessing
+
+`axis.is_enabled()` and `axis.is_move_complete()` are free and synchronous.
+`await axis.read_en_status()`, `await axis.ping()` and
+`await axis.get_status_dict()` cost a round trip and tell you what the motor
+currently thinks. After an error, `get_status_dict()` is the quickest way to see
+where things stand — it returns a partial dictionary with an
+`error_during_status_fetch` key rather than raising again.
+
+### Retry transient failures only
+
+A `CommunicationError` or `CRCError` is worth one or two retries with a short
+delay. Retrying a *move* is different: the first attempt may have partially
+succeeded, so re-issue an absolute target rather than repeating a relative one.
+
+### Log rather than print
+
+The library logs through the standard `logging` module under the `mks_servo_can`
+hierarchy. Per-frame records are at `DEBUG` and are lazily formatted, so leaving
+`INFO` on in production costs nothing.
+
+## A fuller example
+
+```python
+import asyncio
+
+from mks_servo_can import Axis, exceptions
+
+
+async def robust_motor_operation(axis: Axis):
+    try:
+        status = await axis.get_status_dict()
+        if "error_during_status_fetch" in status:
+            print(f"{axis.name} is not answering cleanly: {status['error_during_status_fetch']}")
+            return
+
+        if not status["is_enabled"]:
             print(f"Enabling {axis.name} first...")
             await axis.enable_motor()
-        
-        await axis.move_relative(distance=90, speed=30)
-        print(f"{axis.name} move command sent successfully.")
-        # Further operations...
 
-    except exceptions.MotorTimeoutError as e:
-        print(f"Timeout error with {axis.name}: {e}. Motor might be unresponsive.")
-        # Consider trying to ping or update status to confirm
-    except exceptions.MotorOperationError as e:
-        # Update status to get the latest error code if the operation failed
-        try:
-            await axis.update_status()
-            error_desc = axis.get_error_description()
-        except exceptions.MKSServoCANError: # If update_status also fails
-            error_desc = "Could not retrieve error description."
-        print(f"Operation error with {axis.name}: {e}. Motor state: error_code={axis.error_code} ({error_desc})")
-        # Attempt to clear error if applicable, or guide user.
-    except exceptions.MotorCommError as e: # Catches other communication issues
-        print(f"General communication error with {axis.name}: {e}")
-    except exceptions.MKSServoCANError as e: # Catch any other library-specific error
-        print(f"A mks-servo-can library error occurred: {e}")
-    except Exception as e: # Catch any other unexpected error
-        print(f"An unexpected non-library error occurred: {e}")
+        await axis.move_relative_user(90.0, speed_user=30.0)
+        print(f"{axis.name} reached {await axis.get_current_position_user():.2f}")
+
+    except exceptions.CommunicationError as e:
+        print(f"Timeout with {axis.name}: {e}. The motor may be unresponsive.")
+    except exceptions.LimitError as e:
+        print(f"{axis.name} hit a limit: {e}")
+    except exceptions.MotorError as e:
+        print(f"{axis.name} reported a failure (code {e.error_code}): {e}")
+    except exceptions.MKSServoError as e:
+        print(f"Library error: {e}")
     finally:
-        print(f"Finished operation attempt for {axis.name}.")
-        # Don't disconnect CANInterface here if it's shared or will be reused.
-        # Disconnection is usually handled at a higher application
+        print(f"Finished the operation attempt for {axis.name}.")
 ```
+
+Disconnecting the `CANInterface` belongs at application shutdown, not in a
+per-operation `finally` — it is usually shared between axes.

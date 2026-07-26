@@ -1,10 +1,12 @@
 """
 CRC calculation utility for MKS Servo CAN commands.
 """
+from typing import Sequence
+
 from .exceptions import ParameterError
 
 
-def calculate_crc(can_id: int, data_bytes: list[int]) -> int:
+def calculate_crc(can_id: int, data_bytes: Sequence[int]) -> int:
     """
     Calculates the 8-bit checksum (CRC) for an MKS Servo CAN command.
     The formula is CRC = (ID + byte1 + ... + byte(n)) & 0xFF. [cite: 90]
@@ -38,7 +40,7 @@ def calculate_crc(can_id: int, data_bytes: list[int]) -> int:
     return checksum & 0xFF
 
 
-def verify_crc(can_id: int, received_bytes: list[int]) -> bool:
+def verify_crc(can_id: int, received_bytes: Sequence[int]) -> bool:
     """
     Verifies the CRC of a received MKS Servo CAN message.
 

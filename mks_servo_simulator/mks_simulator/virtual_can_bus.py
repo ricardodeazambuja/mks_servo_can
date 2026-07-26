@@ -3,25 +3,23 @@ Virtual CAN Bus for the MKS Servo Simulator.
 Handles communication between the mks-servo-can library (in sim mode)
 and multiple SimulatedMotor instances.
 """
-from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
-
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from .clock import RealTimeClock
 from .motor_model import SimulatedMotor
 
 if TYPE_CHECKING:
     from .interface.llm_debug_interface import LLMDebugInterface
     from .interface.performance_monitor import PerformanceMonitor
 
-# CRC and constants might be needed if we re-validate here, but motor_model handles it.
-try:
-    from mks_servo_can import constants as const  # For potential use
-    from mks_servo_can.crc import \
-        calculate_crc  # For potential use
-except ImportError:
-    pass  # Handled in motor_model for its own needs
+# Incoming frames are checksum-validated here, at the bus, exactly as a real
+# motor does before it looks at the command byte.
+from mks_servo_can.crc import calculate_crc, verify_crc
+
+from .interface.llm_debug_interface import MANUAL_COMMANDS
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +42,11 @@ class VirtualCANBus:
             loop: The asyncio event loop to use for server and motor tasks.
         """
         self._loop = loop
+        # Where simulated time comes from. Replaced by the CLI with a
+        # SteppedClock under --step; the default keeps the wall-clock behaviour
+        # the simulator has always had. Held here because it is the one object
+        # the debug API's /step endpoint needs to reach.
+        self.simulation_clock = RealTimeClock()
         self.simulated_motors: Dict[int, SimulatedMotor] = (
             {}
         )  # CAN ID -> Motor Object
@@ -53,13 +56,18 @@ class VirtualCANBus:
         self.global_latency_ms: float = (
             0  # Milliseconds for command transmission and response
         )
-        self.debug_interface: Optional['LLMDebugInterface'] = None
-        self.performance_monitor: Optional['PerformanceMonitor'] = None
-        
+        self.debug_interface: Optional[LLMDebugInterface] = None
+        self.performance_monitor: Optional[PerformanceMonitor] = None
+
         # Connection tracking for performance monitoring
         self._client_counter = 0
         self._client_ids: Dict[Tuple[asyncio.StreamWriter, asyncio.StreamReader], str] = {}
-        
+
+        # Frames dropped because their checksum did not validate. Surfaced by the
+        # debug interface so a CRC bug shows up as a visible counter rather than
+        # as unexplained timeouts.
+        self.crc_errors = 0
+
         # Alias for compatibility with LLMDebugInterface
         self.motors = self.simulated_motors
 
@@ -77,10 +85,33 @@ class VirtualCANBus:
                 f"Motor with CAN ID {motor.can_id} already exists on virtual bus. Overwriting."
             )
         self.simulated_motors[motor.can_id] = motor
+        motor.set_anomaly_sink(self._record_anomaly)
         logger.info(
             f"Added simulated motor with CAN ID {motor.can_id:03X} to virtual bus."
         )
-        # self._loop.create_task(motor.start()) # Start motor's internal simulation loop
+
+    def _record_anomaly(
+        self, motor_id: int, anomaly_type: str, description: str, context: Dict
+    ) -> None:
+        """
+        Forwards a motor-reported protocol anomaly to the debug interface.
+
+        Resolved at call time rather than wired at construction, because the
+        debug interface is attached to the bus after the motors are added.
+
+        Args:
+            motor_id: CAN ID of the motor reporting the anomaly.
+            anomaly_type: Short category, e.g. "move_superseded".
+            description: Human-readable explanation.
+            context: Structured detail for a machine reader.
+        """
+        if self.debug_interface:
+            self.debug_interface.record_error(
+                motor_id=motor_id,
+                error_type=anomaly_type,
+                description=description,
+                context=context,
+            )
 
     async def start_all_motors(self):
         """
@@ -135,12 +166,7 @@ class VirtualCANBus:
         """Sends a formatted CAN response back to the connected library client."""
         # Protocol: "SIM_CAN_RECV <id_hex> <dlc_int> <data_hex_no_space>\n"
         # response_payload includes echoed command code, data, and CRC.
-        dlc = (
-            len(response_payload) - 1
-        )  # CRC is not part of DLC calculation for CAN frame's DLC field
-        # But response_payload here is (cmd_echo, data..., crc)
-        # Actual frame DLC will be len(cmd_echo, data...)
-
+        # The response payload IS the CAN data field, so its length is the DLC.
         # The response_payload IS the data field of the CAN message.
         # So its length is the DLC for the CAN message.
         actual_can_dlc = len(response_payload)
@@ -199,11 +225,38 @@ class VirtualCANBus:
                 )
                 return
 
+            if len(full_payload_bytes) < 2:
+                # A valid frame is at least a command byte plus its checksum.
+                logger.warning(
+                    "Frame for ID %03X is too short to contain a CRC: %s",
+                    target_can_id,
+                    full_payload_bytes.hex(),
+                )
+                return
+
+            # Validate the checksum and drop the frame if it is wrong. Real
+            # motors do this silently, and a simulator that accepts corrupt
+            # frames would let a CRC bug in the library go unnoticed - the two
+            # would simply agree on the wrong bytes.
+            if not verify_crc(target_can_id, list(full_payload_bytes)):
+                expected = calculate_crc(
+                    target_can_id, list(full_payload_bytes[:-1])
+                )
+                logger.warning(
+                    "Dropping frame for ID %03X with bad CRC: got %02X, "
+                    "expected %02X (payload %s)",
+                    target_can_id,
+                    full_payload_bytes[-1],
+                    expected,
+                    full_payload_bytes.hex(),
+                )
+                self.crc_errors += 1
+                return
+
             command_code = full_payload_bytes[0]
             command_data_bytes = full_payload_bytes[
                 1:-1
             ]  # Data between command code and CRC
-            # Received CRC is full_payload_bytes[-1], motor model can re-verify if needed
 
         except (ValueError, IndexError) as e:
             logger.error(
@@ -232,7 +285,7 @@ class VirtualCANBus:
         for motor in motors_to_process:
             # The motor's process_command should return (response_can_id, response_payload_with_crc)
             # response_payload_with_crc includes the echoed command code, data, and CRC.
-            
+
             # Record command start time for debug interface
             command_start_time = time.time()
 
@@ -265,46 +318,50 @@ class VirtualCANBus:
                 command_data_bytes,
                 send_async_completion_to_client,
             )
-            
+
             # Record command execution for debug interface and performance monitoring
             command_end_time = time.time()
             response_time_ms = (command_end_time - command_start_time) * 1000
             success = response_tuple is not None
-            
+
             # Performance monitoring
             if self.performance_monitor:
                 self.performance_monitor.record_command_latency(response_time_ms)
-                
+
                 # Get client ID for connection tracking
                 client_key = (writer, reader)
                 client_id = self._client_ids.get(client_key, "unknown")
-                
+
                 # Record command event
                 bytes_sent = len(response_tuple[1]) if response_tuple else 0
                 bytes_received = len(full_payload_bytes)
-                
+
                 self.performance_monitor.record_connection_event(
                     "command", client_id,
                     bytes_sent=bytes_sent,
                     bytes_received=bytes_received
                 )
-            
+
             # Debug interface recording
             if self.debug_interface:
-                # Get command name from manual or use hex code
-                command_name = f"0x{command_code:02X}"
-                if hasattr(self.debug_interface, 'MANUAL_COMMANDS'):
-                    manual_cmds = getattr(self.debug_interface, 'MANUAL_COMMANDS', {})
-                    if f"0x{command_code:02X}" in manual_cmds:
-                        command_name = manual_cmds[f"0x{command_code:02X}"].get('name', command_name)
-                
+                # Resolve the command's name from the manual specification.
+                # This used to test hasattr(self.debug_interface,
+                # 'MANUAL_COMMANDS'); MANUAL_COMMANDS is a module-level global,
+                # not an instance attribute, so the test was always false and
+                # every command in the history was labelled with its own hex
+                # code. The whole point of the lookup is to give a reader
+                # "move_absolute_axis" instead of "0xF5".
+                command_name = MANUAL_COMMANDS.get(
+                    f"0x{command_code:02X}", {}
+                ).get("name", f"0x{command_code:02X}")
+
                 # Create parameters dict from command data
                 parameters = {
                     'command_data_hex': command_data_bytes.hex() if command_data_bytes else '',
                     'data_length': len(command_data_bytes),
                     'target_can_id': target_can_id
                 }
-                
+
                 self.debug_interface.record_command(
                     motor_id=motor.can_id,
                     command_code=command_code,
@@ -336,13 +393,13 @@ class VirtualCANBus:
         addr = writer.get_extra_info("peername")
         logger.info(f"Client {addr} connected to virtual CAN bus.")
         self.clients.append((writer, reader))
-        
+
         # Performance monitoring - track connection
         client_key = (writer, reader)
         self._client_counter += 1
         client_id = f"client_{self._client_counter}_{addr[0]}:{addr[1]}"
         self._client_ids[client_key] = client_id
-        
+
         if self.performance_monitor:
             self.performance_monitor.record_connection_event("connect", client_id)
         try:
@@ -366,12 +423,12 @@ class VirtualCANBus:
             )
         finally:
             logger.info(f"Closing connection for client {addr}.")
-            
+
             # Performance monitoring - track disconnection
             if self.performance_monitor and client_key in self._client_ids:
                 self.performance_monitor.record_connection_event("disconnect", client_id)
                 del self._client_ids[client_key]
-            
+
             if (writer, reader) in self.clients:
                 self.clients.remove((writer, reader))
             if not writer.is_closing():

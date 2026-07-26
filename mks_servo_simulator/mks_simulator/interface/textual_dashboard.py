@@ -1,39 +1,107 @@
 """
 Textual-based dashboard for MKS servo simulator.
-Enhanced version with auto-refresh and improved layout.
+
+Legacy. The supported human-facing surface is the browser dashboard served at
+`/dashboard` under `--debug-api`; the machine-facing one is `--json-output`.
+This is kept for terminal-only use and renders `MotorSnapshot` like every other
+surface, so it cannot drift away from what the motors are actually doing.
 """
 
-import asyncio
-import threading
-import time
 import itertools
-from typing import TYPE_CHECKING, Optional
+import time
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Header, Footer, DataTable, Static, Label
-from textual.timer import Timer
 from rich.markup import escape
 from rich.text import Text
-
-from mks_servo_can import constants as const
+from textual.app import App, ComposeResult
+from textual.timer import Timer
+from textual.widgets import DataTable, Footer, Header, Static
 
 if TYPE_CHECKING:
+    from ..motor_model import MotorSnapshot, SimulatedMotor  # Added import
     from ..virtual_can_bus import VirtualCANBus
-    from ..motor_model import SimulatedMotor # Added import
-    from .llm_debug_interface import LLMDebugInterface # Add this
+    from .llm_debug_interface import LLMDebugInterface  # Add this
+
+
+def motor_row(snapshot: "MotorSnapshot") -> Tuple[str, ...]:
+    """
+    Renders one motor's snapshot as a table row.
+
+    Kept out of the widget so it can be tested against a real motor without
+    standing up a terminal application.
+
+    Args:
+        snapshot: The motor's state, from `SimulatedMotor.status_snapshot()`.
+
+    Returns:
+        The row's cells, in the order the table declares its columns.
+    """
+    target = (
+        f"{snapshot.target_position_degrees:.1f} deg"
+        if snapshot.target_position_degrees is not None
+        else "None"
+    )
+    return (
+        str(snapshot.can_id),
+        snapshot.status_text,
+        f"{snapshot.position_degrees:.1f} deg",
+        f"{snapshot.current_rpm:.1f} RPM",
+        target,
+        f"{snapshot.speed_deg_per_s:.1f} deg/s",
+        snapshot.work_mode_name,
+        str(snapshot.microsteps),
+        "Yes" if snapshot.enabled else "No",
+    )
+
+
+def motor_details(snapshot: "MotorSnapshot") -> List[str]:
+    """
+    Renders one motor's snapshot as the detail pane's lines.
+
+    Args:
+        snapshot: The motor's state, from `SimulatedMotor.status_snapshot()`.
+
+    Returns:
+        The lines to display, with Rich markup.
+    """
+    position_error = (
+        f"{snapshot.position_error_steps} steps"
+        if snapshot.position_error_steps is not None
+        else "n/a"
+    )
+    target_steps = (
+        snapshot.target_position_steps
+        if snapshot.target_position_steps is not None
+        else "None"
+    )
+    return [
+        f"[bold]Motor ID {snapshot.can_id}[/bold] ({snapshot.motor_type})",
+        f"  Enabled: {'Yes' if snapshot.enabled else 'No'}",
+        f"  Work Mode: {snapshot.work_mode_name}",
+        f"  Microsteps: {snapshot.microsteps}",
+        f"  Position: {snapshot.position_steps:.1f} steps "
+        f"({snapshot.position_degrees:.1f} deg)",
+        f"  Target Pos: {target_steps} steps",
+        f"  Position error: {position_error}",
+        f"  Speed (RPM): {snapshot.current_rpm:.1f}",
+        f"  Speed: {snapshot.speed_deg_per_s:.1f} deg/s",
+        f"  Target RPM: {snapshot.target_rpm:.1f}",
+        f"  Calibrated: {'Yes' if snapshot.calibrated else 'No'}",
+        f"  Homed: {'Yes' if snapshot.homed else 'No'}",
+        f"  Responses enabled: {'Yes' if snapshot.responses_enabled else 'No'}",
+    ]
 
 
 class MotorStatusWidget(Static):
     """Widget displaying motor status in a table"""
-    
+
     def __init__(self, virtual_can_bus=None, id: Optional[str] = None):
         super().__init__(id=id)
         self.virtual_can_bus = virtual_can_bus
-    
+
     def compose(self) -> ComposeResult:
         yield DataTable()
-    
+
     def on_mount(self) -> None:
         """Initialize the motor status table"""
         table = self.query_one(DataTable)
@@ -44,62 +112,21 @@ class MotorStatusWidget(Static):
         # --- END OF CHANGE ---
 
         self.refresh_data()
-    
+
     def refresh_data(self) -> None:
         """Refresh table with real motor data"""
         try:
             table = self.query_one(DataTable)
             table.clear()
-            
+
             if self.virtual_can_bus and hasattr(self.virtual_can_bus, 'simulated_motors') and self.virtual_can_bus.simulated_motors:
-                # Real data from virtual CAN bus
+                # Every reporting surface renders MotorSnapshot and nothing else.
+                # Reading motor attributes directly here is what let three other
+                # surfaces drift into showing zeros for a moving motor.
                 for motor_id, motor in sorted(self.virtual_can_bus.simulated_motors.items()):
                     try:
-                        # Get motor status text
-                        status_map = {
-                            const.MOTOR_STATUS_QUERY_FAIL: "Error/Query Fail",
-                            const.MOTOR_STATUS_STOPPED: "Stopped",
-                            const.MOTOR_STATUS_SPEED_UP: "Accelerating",
-                            const.MOTOR_STATUS_SPEED_DOWN: "Decelerating", # Could also be "Stopping"
-                            const.MOTOR_STATUS_FULL_SPEED: "Running",      # Was "Full Speed"
-                            const.MOTOR_STATUS_HOMING: "Homing",
-                            const.MOTOR_STATUS_CALIBRATING: "Calibrating"
-                        }
-                        status = status_map.get(getattr(motor, 'motor_status_code', const.MOTOR_STATUS_QUERY_FAIL), "Unknown Status")
-                        
-                        # Position in degrees with safe defaults
-                        position_steps = getattr(motor, 'position_steps', 0)
-                        steps_per_rev = getattr(motor, 'steps_per_rev_encoder', 1)
-                        pos_degrees = (position_steps / steps_per_rev) * 360 # This is a simplification if units change
-                        units = getattr(motor, 'kinematics_units', 'N/A')
-                        position = f"{pos_degrees:.1f} {units}"
-                        
-                        # Speed in RPM
-                        current_rpm = getattr(motor, 'current_rpm', 0.0)
-                        speed = f"{current_rpm:.1f} RPM" # This is motor RPM, not user speed
-                        
-                        # User velocity
-                        user_velocity = getattr(motor, 'current_speed_user_units_per_sec', 0.0)
-                        velocity_str = f"{user_velocity:.1f} {units}/s"
-
-                        # Target position
-                        target_position_steps = getattr(motor, 'target_position_steps', None)
-                        if target_position_steps is not None:
-                            target_degrees = (target_position_steps / steps_per_rev) * 360 # Simplification
-                            target = f"{target_degrees:.1f} {units}"
-                        else:
-                            target = "None"
-                        
-                        # Enabled status
-                        is_enabled = getattr(motor, 'is_enabled', False)
-                        enabled = "Yes" if is_enabled else "No"
-
-                        # Work Mode and Microsteps
-                        work_mode_str = getattr(motor, 'work_mode_str', 'N/A')
-                        microsteps_val = getattr(motor, 'microsteps', 'N/A')
-                        
-                        table.add_row(str(motor_id), status, position, speed, target, velocity_str, work_mode_str, str(microsteps_val), enabled)
-                    except Exception as e:
+                        table.add_row(*motor_row(motor.status_snapshot()))
+                    except Exception:
                         # Handle individual motor errors gracefully
                         table.add_row(str(motor_id), "Error", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A")
             else:
@@ -117,39 +144,42 @@ class MotorStatusWidget(Static):
                 table = self.query_one(DataTable)
                 table.clear()
                 table.add_row("Error", str(e)[:20], "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A")
-            except:
+            except Exception:
                 pass
 
 
 class SystemInfoWidget(Static):
     """Widget displaying system information"""
-    
+
     def __init__(self, virtual_can_bus=None):
         super().__init__()
         self.virtual_can_bus = virtual_can_bus
         self.start_time = None
-    
+
     def compose(self) -> ComposeResult:
         yield Static("", id="system-info")
-    
+
     def on_mount(self) -> None:
         """Initialize with current data"""
         import time
         self.start_time = time.time()
         self.refresh_data()
-    
+
     def refresh_data(self) -> None:
         """Refresh system information"""
         try:
             import time
-            
+
             if self.virtual_can_bus:
                 try:
                     motor_count = len(self.virtual_can_bus.simulated_motors)
                     client_count = len(self.virtual_can_bus.clients)
                     # Check if any motors are enabled
-                    enabled_motors = sum(1 for motor in self.virtual_can_bus.simulated_motors.values() 
-                                       if getattr(motor, 'is_enabled', False))
+                    enabled_motors = sum(
+                        1
+                        for motor in self.virtual_can_bus.simulated_motors.values()
+                        if motor.status_snapshot().enabled
+                    )
                     connection_status = "Connected"
                 except Exception as e:
                     motor_count = 0
@@ -161,21 +191,21 @@ class SystemInfoWidget(Static):
                 client_count = 0
                 enabled_motors = 0
                 connection_status = "No CAN Bus"
-            
+
             uptime = time.time() - self.start_time if self.start_time else 0.0
             uptime_str = f"{int(uptime//3600):02d}:{int((uptime%3600)//60):02d}:{int(uptime%60):02d}"
-            
+
             info_text = (f"Status: {connection_status}\n"
                         f"Motors: {motor_count} ({enabled_motors} enabled)\n"
                         f"Clients: {client_count}\n"
                         f"Uptime: {uptime_str}")
-            
+
             self.update(info_text)
         except Exception as e:
             # Graceful fallback on any error
             try:
                 self.update(f"System Info Error:\n{str(e)[:30]}")
-            except:
+            except Exception:
                 pass
 
 
@@ -184,7 +214,7 @@ class DetailedMotorViewWidget(Static):
 
     def __init__(self, id: Optional[str] = None): # Removed *args, **kwargs for specific signature
         super().__init__(id=id)
-        self.selected_motor: Optional['SimulatedMotor'] = None
+        self.selected_motor: Optional[SimulatedMotor] = None
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
@@ -194,21 +224,7 @@ class DetailedMotorViewWidget(Static):
         """Update the displayed motor details."""
         self.selected_motor = motor
         if motor:
-            details = []
-            details.append(f"[bold]Motor ID {getattr(motor, 'can_id', 'N/A')}[/bold] ({getattr(motor, 'motor_type', 'N/A')})")
-            details.append(f"  Enabled: {'Yes' if getattr(motor, 'is_enabled', False) else 'No'}")
-            details.append(f"  Work Mode: {getattr(motor, 'work_mode_str', 'N/A')}")
-            details.append(f"  Microsteps: {getattr(motor, 'microsteps', 'N/A')}")
-            units = getattr(motor, 'kinematics_units', 'N/A')
-            details.append(f"  Position: {getattr(motor, 'position_steps', 0.0):.1f} steps ({ (getattr(motor, 'position_steps', 0.0) / getattr(motor, 'steps_per_rev_encoder', 1)) * 360:.1f} {units})")
-            details.append(f"  Target Pos: {getattr(motor, 'target_position_steps', 'None')} steps")
-            details.append(f"  Speed (RPM): {getattr(motor, 'current_rpm', 0.0):.1f}")
-            details.append(f"  Speed (User): {getattr(motor, 'current_speed_user_units_per_sec', 0.0):.1f} {units}/s")
-            details.append(f"  Target RPM: {getattr(motor, 'target_rpm', 0.0):.1f}")
-            details.append(f"  Calibrated: {'Yes' if getattr(motor, 'is_calibrated', False) else 'No'}")
-            details.append(f"  Homed: {'Yes' if getattr(motor, 'is_homed', False) else 'No'}")
-
-            self.update("\n".join(details))
+            self.update("\n".join(motor_details(motor.status_snapshot())))
         else:
             self.update("Select a motor (Up/Down)")
 
@@ -314,7 +330,7 @@ class TextualDashboard(App):
     Textual-based dashboard application.
     Phase 1: Static layout with fake data.
     """
-    
+
     CSS = """
     Screen {
         layout: vertical;
@@ -348,7 +364,7 @@ class TextualDashboard(App):
         scrollbar-size-vertical: 1;
     }
     """
-    
+
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh"),
@@ -357,7 +373,7 @@ class TextualDashboard(App):
         ("up", "select_previous_motor", "Prev Mtr"),
         ("down", "select_next_motor", "Next Mtr"),
     ]
-    
+
     def __init__(self, virtual_can_bus: "VirtualCANBus" = None, enable_auto_refresh: bool = True, refresh_interval: float = 2.0):
         super().__init__()
 
@@ -374,7 +390,7 @@ class TextualDashboard(App):
         self.start_time = time.time()
         self.is_paused = False
         self.selected_motor_id: Optional[int] = None
-    
+
     def compose(self) -> ComposeResult:
         """Create the dashboard layout"""
         yield Header(show_clock=True)
@@ -382,7 +398,7 @@ class TextualDashboard(App):
         yield DetailedMotorViewWidget(id="detailed-motor-view")
         yield CommandLogWidget(self.debug_interface, id="command-log-widget") # Add this
         yield Footer()
-    
+
     def on_mount(self) -> None:
         """Called when the app starts"""
         # Only set default if no motor is selected yet
@@ -397,7 +413,7 @@ class TextualDashboard(App):
             self.start_auto_refresh()
         self.action_refresh() # Initial refresh
         self.screen.focus() # Added this line
-    
+
     def action_select_previous_motor(self) -> None:
         """Selects the previous motor in the list."""
         if not self.virtual_can_bus or not self.virtual_can_bus.simulated_motors:
@@ -454,13 +470,13 @@ class TextualDashboard(App):
         if self.refresh_timer:
             self.refresh_timer.stop()
         self.refresh_timer = self.set_interval(self.refresh_interval, self.action_refresh)
-    
+
     def stop_auto_refresh(self) -> None:
         """Stop the auto-refresh timer"""
         if self.refresh_timer:
             self.refresh_timer.stop()
             self.refresh_timer = None
-    
+
     def action_refresh(self) -> None:
         """Manual refresh action - updates all widgets with real data"""
         # self.app.log.info(f"[ACTION_REFRESH] Start. selected_motor_id: {self.selected_motor_id}") # Original logging
@@ -497,7 +513,7 @@ class TextualDashboard(App):
             # self.app.log.error(f"[ACTION_REFRESH] Error refreshing CommandLogWidget: {e}") # Original logging
 
         # self.app.log.info(f"[ACTION_REFRESH] End. selected_motor_id: {self.selected_motor_id}") # Original logging
-    
+
     def action_toggle_pause(self) -> None:
         """Toggle pause/resume of auto-refresh"""
         self.is_paused = not self.is_paused
@@ -508,14 +524,14 @@ class TextualDashboard(App):
             self.start_auto_refresh()
             self.notify("Auto-refresh resumed")
         # self.update_status_panel() # Status panel display might be removed or changed
-    
+
     # update_status_panel might be removed or simplified if SystemInfoWidget is removed from layout
     def update_status_panel(self) -> None:
         """Update the status panel with current information (simplified for now)."""
         # This method might need significant rework if SystemInfoWidget is not present
         # or if its display logic changes. For now, it's a placeholder.
         pass # Placeholder
-    
+
     def action_quit(self) -> None:
         """Quit the application"""
         self.stop_auto_refresh()

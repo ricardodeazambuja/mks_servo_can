@@ -3,15 +3,18 @@ CAN Communication Layer for MKS Servo Control.
 Handles raw CAN bus communication using python-can for real hardware
 and provides a "virtual" backend for the simulator.
 """
-from typing import Any, Callable, Dict, List, Optional, Tuple # Added Tuple
-
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple  # Added Tuple
 
 try:
     import can
-    from can.notifier import Notifier # For advanced listening
+
+    # Imported to confirm the notifier machinery exists in this python-can
+    # build; the class itself is referenced as can.Notifier below.
+    from can.notifier import Notifier  # noqa: F401
     CAN_AVAILABLE = True
 except ImportError:
     CAN_AVAILABLE = False
@@ -129,14 +132,49 @@ except ImportError:
             pass
 
 
-from .constants import CAN_DEFAULT_BITRATE
-from .constants import CAN_TIMEOUT_SECONDS
-from .exceptions import CANError
-from .exceptions import CommunicationError
-from .exceptions import ConfigurationError
-from .exceptions import SimulatorError
+from .constants import (
+    ASYNC_MOVE_NOTIFICATION_STATUSES,
+    CAN_DEFAULT_BITRATE,
+    CAN_TIMEOUT_SECONDS,
+    STALE_NOTIFICATION_TTL_SECONDS,
+)
+from .exceptions import CANError, CommunicationError, ConfigurationError, SimulatorError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _StaleCredit:
+    """
+    Permission to discard one unsolicited frame.
+
+    Attributes:
+        statuses: Status bytes (the second data byte) this credit will consume.
+            `None` matches any frame, including one carrying no status byte.
+            Restricting this is what stops a credit registered for a superseded
+            move's abort from eating the acknowledgement of the move that
+            superseded it - the two carry the same command byte and differ only
+            here.
+        expires_at: `time.monotonic()` value past which the credit is dropped
+            unused, so a frame that never arrives cannot poison a later reply.
+    """
+
+    statuses: Optional[frozenset]
+    expires_at: float
+
+    def matches(self, status: Optional[int]) -> bool:
+        """
+        Reports whether this credit will consume a frame with `status`.
+
+        Args:
+            status: The frame's status byte, or None if it carries none.
+
+        Returns:
+            True if the frame should be discarded against this credit.
+        """
+        if self.statuses is None:
+            return True
+        return status is not None and status in self.statuses
 
 
 class AsyncioCanListener(can.Listener if CAN_AVAILABLE else object): # type: ignore[misc] # if can is dummy
@@ -231,7 +269,15 @@ class CANInterface:
         """
         self.use_simulator = use_simulator
         self.bus: Optional[can.BusABC] = None # type: ignore[name-defined]
-        self._loop = loop if loop else asyncio.get_event_loop()
+        # Deliberately not resolved here, the same way `Axis` does not resolve
+        # it: `asyncio.get_event_loop()` outside a running loop is deprecated on
+        # Python 3.12+ and raises on 3.14+, and it raises *today* once anything
+        # in the thread has called `set_event_loop(None)` - which every asyncio
+        # test framework does at teardown, and which any program that finishes
+        # one `asyncio.run` before constructing an interface for the next may do
+        # too. Every use of the loop below happens after `connect()`, which by
+        # definition runs inside one.
+        self._explicit_loop = loop
         self._message_handlers: Dict[
             int, List[Callable[[can.Message], None]] # type: ignore[name-defined]
         ] = {}  # CAN ID -> list of handlers
@@ -240,6 +286,13 @@ class CANInterface:
         ] = {}  # (can_id, command_code) -> list of (Future, Predicate)
         self._is_listening = False
         self._listener_task: Optional[asyncio.Task] = None
+        # (can_id, command_code) -> outstanding credits for unsolicited
+        # notification frames to discard before matching anything to a response
+        # future. MKS motors emit a completion/abort frame for a superseded move
+        # that carries the same command byte as the acknowledgement of the
+        # command that superseded it, so without this the two are
+        # indistinguishable. See Axis._supersede_active_move().
+        self._stale_notifications: Dict[Tuple[int, int], List[_StaleCredit]] = {}
 
         # For Notifier-based hardware listening
         self._message_queue: Optional[asyncio.Queue] = None
@@ -265,6 +318,24 @@ class CANInterface:
             logger.info(
                 f"CANInterface configured for hardware: {interface_type} on {channel} @ {bitrate} bps"
             )
+
+    @property
+    def _loop(self) -> asyncio.AbstractEventLoop:
+        """
+        The event loop this interface schedules work on.
+
+        Resolved lazily so that constructing an interface outside a running loop
+        stays valid. An explicit loop passed to the constructor always wins.
+
+        Returns:
+            The explicitly configured loop, or the currently running one.
+
+        Raises:
+            RuntimeError: If no loop was configured and none is running.
+        """
+        if self._explicit_loop is not None:
+            return self._explicit_loop
+        return asyncio.get_running_loop()
 
     async def connect(self):
         """
@@ -315,8 +386,10 @@ class CANInterface:
                 logger.info(
                     f"Attempting to connect to CAN hardware: type={self.interface_type}, channel={self.channel}, bitrate={self.bitrate}"
                 )
+                # `interface=`, not `bustype=`: the latter is deprecated in
+                # python-can 4 and removed in 5.
                 self.bus = can.interface.Bus( # type: ignore[name-defined]
-                    bustype=self.interface_type,
+                    interface=self.interface_type,
                     channel=self.channel,
                     bitrate=self.bitrate,
                 )
@@ -397,7 +470,7 @@ class CANInterface:
                     logger.warning(f"Error during CAN bus shutdown: {e}")
                 finally:
                     self.bus = None
-        
+
         self._message_handlers.clear()
         # Cancel and clear pending futures
         for key_tuple in list(self._response_futures.keys()): # Iterate over a copy
@@ -440,7 +513,7 @@ class CANInterface:
             A `can.Message` object if parsing is successful, otherwise None.
         """
         parts = line.strip().split()
-        if not parts or parts[0] != "SIM_CAN_RECV" or len(parts) < 3: 
+        if not parts or parts[0] != "SIM_CAN_RECV" or len(parts) < 3:
             logger.warning(
                 f"Received unknown or malformed data from simulator: {line}"
             )
@@ -456,7 +529,7 @@ class CANInterface:
                 )
                 return None
 
-            data = bytes.fromhex(hex_data) if dlc > 0 else b"" 
+            data = bytes.fromhex(hex_data) if dlc > 0 else b""
 
             return can.Message( # type: ignore[name-defined]
                 arbitration_id=can_id,
@@ -491,7 +564,8 @@ class CANInterface:
                 raise SimulatorError("Not connected to simulator or writer is closing.")
             try:
                 sim_data = self._can_message_to_sim_protocol(msg)
-                logger.info(f"CANInterface: Sending to simulator: {sim_data.decode().strip()}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("CANInterface: tx sim %s", sim_data.decode().strip())
                 self._sim_writer.write(sim_data)
                 await asyncio.wait_for(
                     self._sim_writer.drain(), timeout=timeout
@@ -511,9 +585,13 @@ class CANInterface:
                 raise CANError("CAN bus not connected.")
             try:
                 self.bus.send(msg, timeout=timeout) # type: ignore[union-attr]
-                logger.debug(
-                    f"Sent on CAN bus: ID={msg.arbitration_id:03X}, DLC={msg.dlc}, Data={' '.join(f'{b:02X}' for b in msg.data)}" # type: ignore[union-attr]
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "CANInterface: tx ID=%03X dlc=%d data=%s",
+                        msg.arbitration_id,
+                        msg.dlc,
+                        msg.data.hex(),  # type: ignore[union-attr]
+                    )
             except can.CanOperationError as e: # type: ignore[name-defined]
                 logger.error(
                     f"CAN bus send operation failed: {e}", exc_info=True
@@ -536,15 +614,29 @@ class CANInterface:
             logger.error("Hardware listener: Message queue not initialized.")
             self._is_listening = False # Ensure it's marked as not listening
             return
-        
+
         logger.info("Hardware CAN listener started (Notifier-based).")
         try:
             while self._is_listening:
                 try:
                     msg = await asyncio.wait_for(self._message_queue.get(), timeout=1.0)
-                    if msg:
-                        await self._process_received_message(msg)
-                    self._message_queue.task_done()
+                    try:
+                        if msg:
+                            await self._process_received_message(msg)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc: # pylint: disable=broad-except
+                        # One frame the library cannot make sense of must not end
+                        # reception for the rest of the session.
+                        logger.error(
+                            "Hardware listener: dropping frame that could not be "
+                            "processed (%s): %s",
+                            msg,
+                            exc,
+                            exc_info=True,
+                        )
+                    finally:
+                        self._message_queue.task_done()
                 except asyncio.TimeoutError:
                     # This is normal if no messages are received within the timeout
                     if not self._is_listening: # Check if we should break
@@ -552,7 +644,7 @@ class CANInterface:
                     continue
                 except asyncio.CancelledError: # Handle task cancellation
                     logger.info("Hardware CAN listener task was cancelled.")
-                    break 
+                    break
         except Exception as e: # pylint: disable=broad-except
             if self._is_listening: # Log only if error happened while actively listening
                 logger.error(
@@ -583,20 +675,33 @@ class CANInterface:
                     break
                 try:
                     line_bytes = await asyncio.wait_for(
-                        self._sim_reader.readline(), timeout=1.0 
+                        self._sim_reader.readline(), timeout=1.0
                     )
                     if not line_bytes:
                         logger.info("Simulator connection closed by peer (empty read).")
                         break
-                    line_str = line_bytes.decode().strip()
-                    if line_str:
-                        logger.info(f"CANInterface: Received from simulator: {line_str}")
-                        msg = self._sim_protocol_to_can_message(line_str)
-                        if msg:
-                            await self._process_received_message(msg)
+                    try:
+                        line_str = line_bytes.decode().strip()
+                        if line_str:
+                            logger.debug("CANInterface: rx sim %s", line_str)
+                            msg = self._sim_protocol_to_can_message(line_str)
+                            if msg:
+                                await self._process_received_message(msg)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc: # pylint: disable=broad-except
+                        # One frame the library cannot make sense of must not end
+                        # reception for the rest of the session.
+                        logger.error(
+                            "Simulator listener: dropping line that could not be "
+                            "processed (%r): %s",
+                            line_bytes,
+                            exc,
+                            exc_info=True,
+                        )
                 except asyncio.TimeoutError:
                     if not self._is_listening: break
-                    continue 
+                    continue
                 except (asyncio.IncompleteReadError, ConnectionResetError) as e:
                     logger.warning(f"Simulator connection issue: {e}. Stopping listener.")
                     break
@@ -604,7 +709,7 @@ class CANInterface:
                     logger.info("Simulator listener task was cancelled.")
                     break
         except Exception as e: # pylint: disable=broad-except
-            if self._is_listening: 
+            if self._is_listening:
                 logger.error(f"Simulator listener error: {e}", exc_info=True)
         finally:
             logger.info("Simulator listener stopped.")
@@ -624,14 +729,22 @@ class CANInterface:
         Args:
             msg: The `can.Message` object that was received.
         """
-        cmd_str = f"{msg.data[0]:02X}" if msg.data else "N/A"
-        logger.info(
-            f"CANInterface: Processing received: ID={msg.arbitration_id:03X}, CMD={cmd_str}, Data={msg.data.hex()}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "CANInterface: rx ID=%03X CMD=%s Data=%s",
+                msg.arbitration_id,
+                f"{msg.data[0]:02X}" if msg.data else "N/A",
+                msg.data.hex(),
+            )
 
         cmd_code = msg.data[0] if msg.data else None
         key_tuple = (msg.arbitration_id, cmd_code)
-        
+
+        # Discard one frame per outstanding stale-notification credit that the
+        # frame's status byte matches.
+        if self._consume_stale_credit(key_tuple, msg):
+            return
+
         futures_for_key = self._response_futures.get(key_tuple, [])
         remaining_futures_for_key = []
         resolved_this_message = False
@@ -659,7 +772,7 @@ class CANInterface:
             self._response_futures[key_tuple] = remaining_futures_for_key
         elif key_tuple in self._response_futures: # List became empty
             del self._response_futures[key_tuple]
-        
+
         if resolved_this_message:
              return # Message handled by a future
 
@@ -737,7 +850,7 @@ class CANInterface:
             An `asyncio.Future` object that the caller can await.
         """
         key_tuple = (can_id, command_code)
-        
+
         # Clean up any old, done futures for this key_tuple before adding new one
         if key_tuple in self._response_futures:
             self._response_futures[key_tuple] = [
@@ -747,14 +860,142 @@ class CANInterface:
                 del self._response_futures[key_tuple]
 
         future = self._loop.create_future()
-        
+
         if key_tuple not in self._response_futures:
             self._response_futures[key_tuple] = []
-            
+
         self._response_futures[key_tuple].append((future, response_predicate))
-        
+
         logger.debug(f"Created future for CAN ID {can_id:03X}, CMD {command_code:02X}{' with predicate' if response_predicate else ''}. Total waiters for key: {len(self._response_futures[key_tuple])}")
         return future
+
+    def _consume_stale_credit(
+        self, key_tuple: Tuple[int, Optional[int]], msg: can.Message # type: ignore[name-defined]
+    ) -> bool:
+        """
+        Discards a frame if an outstanding credit claims it.
+
+        Expired credits are dropped here rather than by a timer, so no
+        bookkeeping runs when nothing is being received.
+
+        Args:
+            key_tuple: `(can_id, command_code)` of the received frame.
+            msg: The frame itself, whose status byte selects among credits.
+
+        Returns:
+            True if the frame was consumed as stale and must not be processed
+            further.
+        """
+        credits_for_key = self._stale_notifications.get(key_tuple)
+        if not credits_for_key:
+            return False
+
+        now = time.monotonic()
+        live = [credit for credit in credits_for_key if credit.expires_at > now]
+        if len(live) != len(credits_for_key):
+            logger.debug(
+                "CANInterface: dropped %d expired stale credit(s) for ID=%03X CMD=%02X",
+                len(credits_for_key) - len(live),
+                key_tuple[0],
+                key_tuple[1] if key_tuple[1] is not None else 0,
+            )
+
+        status = msg.data[1] if msg.data is not None and len(msg.data) >= 2 else None
+        match_index = next(
+            (i for i, credit in enumerate(live) if credit.matches(status)), None
+        )
+        if match_index is not None:
+            live.pop(match_index)
+
+        if live:
+            self._stale_notifications[key_tuple] = live
+        else:
+            self._stale_notifications.pop(key_tuple, None)
+
+        if match_index is None:
+            return False
+
+        logger.debug(
+            "CANInterface: discarded stale notification for ID=%03X CMD=%02X status=%s",
+            key_tuple[0],
+            key_tuple[1] if key_tuple[1] is not None else 0,
+            f"{status:02X}" if status is not None else "N/A",
+        )
+        return True
+
+    def expect_stale_notification(
+        self,
+        can_id: int,
+        command_code: int,
+        count: int = 1,
+        statuses: Optional[Iterable[int]] = ASYNC_MOVE_NOTIFICATION_STATUSES,
+        ttl_seconds: float = STALE_NOTIFICATION_TTL_SECONDS,
+    ) -> None:
+        """
+        Arranges for the next unsolicited frame(s) matching a key to be discarded.
+
+        MKS motors reuse one command byte for both the synchronous
+        acknowledgement of a command and the asynchronous completion (or abort)
+        notification of the move that command started. When a move is superseded,
+        the motor emits an abort frame for the old move whose content is
+        indistinguishable - by command byte - from the acknowledgement of the new
+        one. Left alone, that frame resolves the new command's response future
+        and the caller sees a spurious failure.
+
+        Discarding by arrival order alone does not work, because the
+        acknowledgement arrives *first*: the credit eats it and the abort
+        resolves its future instead. `statuses` is what keeps the credit off the
+        acknowledgement.
+
+        Callers that knowingly abandon a move should register the resulting
+        orphan frame here so the transport drops it instead of misattributing it.
+
+        Args:
+            can_id: CAN ID of the motor that will emit the stale frame.
+            command_code: Command byte the stale frame will carry.
+            count: How many frames to discard. Defaults to 1.
+            statuses: Status bytes the stale frame may carry. Defaults to the
+                asynchronous move notifications, which excludes the
+                acknowledgement. Pass None to claim any frame with this key,
+                which is only safe when no other frame with that key can arrive.
+            ttl_seconds: How long the credit remains valid. A credit for a frame
+                the motor never sends must expire, or it swallows a later,
+                legitimate response.
+        """
+        key = (can_id, command_code)
+        expires_at = time.monotonic() + ttl_seconds
+        allowed = frozenset(statuses) if statuses is not None else None
+        outstanding = self._stale_notifications.setdefault(key, [])
+        outstanding.extend(
+            _StaleCredit(statuses=allowed, expires_at=expires_at)
+            for _ in range(count)
+        )
+        logger.debug(
+            "CANInterface: expecting %d stale notification(s) for ID=%03X CMD=%02X "
+            "(statuses=%s, ttl=%.2fs)",
+            len(outstanding),
+            can_id,
+            command_code,
+            sorted(allowed) if allowed is not None else "any",
+            ttl_seconds,
+        )
+
+    def clear_stale_notifications(self, can_id: Optional[int] = None) -> None:
+        """
+        Drops outstanding stale-notification credits.
+
+        Use this when resynchronising after an error, so that a credit registered
+        for a frame that never arrived does not swallow a later, legitimate
+        response.
+
+        Args:
+            can_id: Only clear credits for this motor. If None, clears all.
+        """
+        if can_id is None:
+            self._stale_notifications.clear()
+        else:
+            for key in [k for k in self._stale_notifications if k[0] == can_id]:
+                del self._stale_notifications[key]
 
     def start_listening(self):
         """
@@ -799,7 +1040,7 @@ class CANInterface:
         Signals the background message listening task to stop and cancels it if running.
         """
         if self._is_listening:
-            self._is_listening = False 
+            self._is_listening = False
             if self._listener_task and not self._listener_task.done():
                 self._listener_task.cancel()
             # For hardware, notifier is stopped in disconnect()
@@ -852,7 +1093,7 @@ class CANInterface:
 
         try:
             await self.send_message(msg_to_send, timeout=timeout)
-        except Exception: 
+        except Exception:
             if not future.done():
                 future.cancel("Send operation failed")
             raise # Re-raise the send error
@@ -867,7 +1108,7 @@ class CANInterface:
                 self._response_futures[key] = [(f, p) for f, p in self._response_futures[key] if f is not future or f.done()]
                 if not self._response_futures[key]:
                     del self._response_futures[key]
-            
+
             cmd_byte_str = f"{msg_to_send.data[0]:02X}" if msg_to_send.data else "N/A"
             payload_str = msg_to_send.data.hex() if msg_to_send.data else "N/A"
             error_msg = (
@@ -909,4 +1150,3 @@ class CANInterface:
                  # or relying on successful bus initialization.
                  return self.bus is not None
             return self.bus is not None # Basic check if notifier isn't used or as fallback
-        

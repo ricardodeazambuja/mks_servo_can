@@ -8,14 +8,14 @@ This module provides:
 - Real-time configuration updates without simulator restart
 """
 
-import json
-import os
-import logging
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Union
-from dataclasses import dataclass, asdict, field
-from datetime import datetime
 import asyncio
+import json
+import logging
+import os
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class MotorConfig:
     initial_position: float = 0.0
     enable_on_start: bool = False
     position_limits: Optional[Dict[str, float]] = None
-    
+
     def __post_init__(self):
         if self.position_limits is None:
             self.position_limits = {"min": -360.0, "max": 360.0}
@@ -44,23 +44,23 @@ class SimulatorConfig:
     host: str = "localhost"
     port: int = 6789
     debug_api_port: int = 8765
-    
+
     # Simulation settings
     latency_ms: float = 2.0
     log_level: str = "INFO"
-    
+
     # Interface settings
     refresh_rate: int = 200
     no_color: bool = False
-    
+
     # Feature flags
     json_output: bool = False
     debug_api: bool = False
     dashboard: bool = False
-    
+
     # Motor configurations
     motors: List[MotorConfig] = field(default_factory=list)
-    
+
     # Metadata
     name: str = "default"
     description: str = "Default simulator configuration"
@@ -70,7 +70,7 @@ class SimulatorConfig:
 
 class ConfigurationManager:
     """Manages simulator configuration with live updates and profiles."""
-    
+
     def __init__(self, config_dir: Optional[str] = None):
         """Initialize configuration manager.
         
@@ -79,32 +79,32 @@ class ConfigurationManager:
         """
         if config_dir is None:
             config_dir = os.path.expanduser("~/.mks_simulator_config")
-        
+
         self.config_dir = Path(config_dir)
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self.profiles_dir = self.config_dir / "profiles"
         self.templates_dir = self.config_dir / "templates"
         self.profiles_dir.mkdir(exist_ok=True)
         self.templates_dir.mkdir(exist_ok=True)
-        
+
         self.current_config: Optional[SimulatorConfig] = None
         self.config_file = self.config_dir / "current_config.json"
-        
+
         # Live update callbacks
         self._update_callbacks: List[callable] = []
-        
+
         logger.info(f"Configuration manager initialized with config dir: {self.config_dir}")
-    
+
     def add_update_callback(self, callback: callable):
         """Add callback to be called when configuration is updated live."""
         self._update_callbacks.append(callback)
-    
+
     def remove_update_callback(self, callback: callable):
         """Remove update callback."""
         if callback in self._update_callbacks:
             self._update_callbacks.remove(callback)
-    
+
     async def _notify_update_callbacks(self, config_change: Dict[str, Any]):
         """Notify all callbacks of configuration changes."""
         for callback in self._update_callbacks:
@@ -115,7 +115,7 @@ class ConfigurationManager:
                     callback(config_change)
             except Exception as e:
                 logger.error(f"Error in config update callback: {e}")
-    
+
     def create_default_config(self, num_motors: int = 1, start_can_id: int = 1) -> SimulatorConfig:
         """Create a default configuration with specified number of motors."""
         motors = []
@@ -126,10 +126,10 @@ class ConfigurationManager:
                 steps_per_rev=16384
             )
             motors.append(motor)
-        
+
         config = SimulatorConfig(motors=motors)
         return config
-    
+
     def load_config(self, config_name: str = "current") -> Optional[SimulatorConfig]:
         """Load configuration from file.
         
@@ -143,32 +143,32 @@ class ConfigurationManager:
             config_file = self.config_file
         else:
             config_file = self.profiles_dir / f"{config_name}.json"
-        
+
         if not config_file.exists():
             logger.warning(f"Configuration file not found: {config_file}")
             return None
-        
+
         try:
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 config_data = json.load(f)
-            
+
             # Convert motor configurations
             motors = []
             for motor_data in config_data.get('motors', []):
                 motor = MotorConfig(**motor_data)
                 motors.append(motor)
-            
+
             # Remove motors from config_data and create config
             config_data['motors'] = motors
             config = SimulatorConfig(**config_data)
-            
+
             logger.info(f"Loaded configuration: {config_name}")
             return config
-            
+
         except Exception as e:
             logger.error(f"Error loading configuration {config_name}: {e}")
             return None
-    
+
     def save_config(self, config: SimulatorConfig, config_name: str = "current") -> bool:
         """Save configuration to file.
         
@@ -183,31 +183,31 @@ class ConfigurationManager:
             config_file = self.config_file
         else:
             config_file = self.profiles_dir / f"{config_name}.json"
-        
+
         try:
             # Update modification time
             config.modified_at = datetime.now().isoformat()
-            
+
             # Convert to dict for JSON serialization
             config_dict = asdict(config)
-            
+
             with open(config_file, 'w') as f:
                 json.dump(config_dict, f, indent=2)
-            
+
             logger.info(f"Saved configuration: {config_name}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error saving configuration {config_name}: {e}")
             return False
-    
+
     def list_profiles(self) -> List[str]:
         """List all available configuration profiles."""
         profiles = []
         for profile_file in self.profiles_dir.glob("*.json"):
             profiles.append(profile_file.stem)
         return sorted(profiles)
-    
+
     def delete_profile(self, profile_name: str) -> bool:
         """Delete a configuration profile.
         
@@ -220,12 +220,12 @@ class ConfigurationManager:
         if profile_name == "current":
             logger.error("Cannot delete current configuration")
             return False
-        
+
         profile_file = self.profiles_dir / f"{profile_name}.json"
         if not profile_file.exists():
             logger.warning(f"Profile not found: {profile_name}")
             return False
-        
+
         try:
             profile_file.unlink()
             logger.info(f"Deleted profile: {profile_name}")
@@ -233,7 +233,7 @@ class ConfigurationManager:
         except Exception as e:
             logger.error(f"Error deleting profile {profile_name}: {e}")
             return False
-    
+
     async def update_parameter(self, parameter_path: str, value: Any) -> bool:
         """Update a configuration parameter live.
         
@@ -247,14 +247,14 @@ class ConfigurationManager:
         if not self.current_config:
             logger.error("No current configuration loaded")
             return False
-        
+
         try:
             # Parse parameter path
             path_parts = parameter_path.split('.')
-            
+
             # Navigate to the target parameter
             target = self.current_config
-            for i, part in enumerate(path_parts[:-1]):
+            for _i, part in enumerate(path_parts[:-1]):
                 if part.isdigit():
                     # Array index
                     target = target[int(part)]
@@ -263,7 +263,7 @@ class ConfigurationManager:
                 else:
                     logger.error(f"Invalid parameter path: {parameter_path}")
                     return False
-            
+
             # Set the final parameter
             final_key = path_parts[-1]
             if hasattr(target, final_key):
@@ -271,10 +271,10 @@ class ConfigurationManager:
             else:
                 logger.error(f"Invalid parameter: {final_key}")
                 return False
-            
+
             # Save updated configuration
             self.save_config(self.current_config)
-            
+
             # Notify callbacks
             change_info = {
                 "parameter": parameter_path,
@@ -283,18 +283,18 @@ class ConfigurationManager:
                 "timestamp": datetime.now().isoformat()
             }
             await self._notify_update_callbacks(change_info)
-            
+
             logger.info(f"Updated parameter {parameter_path} = {value}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error updating parameter {parameter_path}: {e}")
             return False
-    
+
     def get_motor_templates(self) -> Dict[str, MotorConfig]:
         """Get available motor templates."""
         templates = {}
-        
+
         # Built-in templates
         servo42d = MotorConfig(
             can_id=1,
@@ -305,7 +305,7 @@ class ConfigurationManager:
         )
         servo42d.description = "MKS SERVO42D stepper motor"
         templates["servo42d"] = servo42d
-        
+
         servo57d = MotorConfig(
             can_id=1,
             motor_type="SERVO57D",
@@ -315,7 +315,7 @@ class ConfigurationManager:
         )
         servo57d.description = "MKS SERVO57D stepper motor"
         templates["servo57d"] = servo57d
-        
+
         high_precision = MotorConfig(
             can_id=1,
             motor_type="GENERIC",
@@ -325,7 +325,7 @@ class ConfigurationManager:
         )
         high_precision.description = "High precision motor configuration"
         templates["high_precision"] = high_precision
-        
+
         high_speed = MotorConfig(
             can_id=1,
             motor_type="GENERIC",
@@ -335,19 +335,19 @@ class ConfigurationManager:
         )
         high_speed.description = "High speed motor configuration"
         templates["high_speed"] = high_speed
-        
+
         # Load custom templates from files
         for template_file in self.templates_dir.glob("*.json"):
             try:
-                with open(template_file, 'r') as f:
+                with open(template_file) as f:
                     template_data = json.load(f)
                 template = MotorConfig(**template_data)
                 templates[template_file.stem] = template
             except Exception as e:
                 logger.error(f"Error loading template {template_file}: {e}")
-        
+
         return templates
-    
+
     def save_motor_template(self, name: str, motor_config: MotorConfig) -> bool:
         """Save a motor configuration as a template.
         
@@ -359,22 +359,22 @@ class ConfigurationManager:
             True if saved successfully, False otherwise
         """
         template_file = self.templates_dir / f"{name}.json"
-        
+
         try:
             template_dict = asdict(motor_config)
             # Remove CAN ID from template (will be set when applied)
             template_dict.pop('can_id', None)
-            
+
             with open(template_file, 'w') as f:
                 json.dump(template_dict, f, indent=2)
-            
+
             logger.info(f"Saved motor template: {name}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error saving motor template {name}: {e}")
             return False
-    
+
     def apply_motor_template(self, motor_index: int, template_name: str) -> bool:
         """Apply a motor template to a specific motor.
         
@@ -388,42 +388,42 @@ class ConfigurationManager:
         if not self.current_config:
             logger.error("No current configuration loaded")
             return False
-        
+
         if motor_index >= len(self.current_config.motors):
             logger.error(f"Motor index {motor_index} out of range")
             return False
-        
+
         templates = self.get_motor_templates()
         if template_name not in templates:
             logger.error(f"Template not found: {template_name}")
             return False
-        
+
         try:
             template = templates[template_name]
             current_motor = self.current_config.motors[motor_index]
-            
+
             # Keep the current CAN ID
             original_can_id = current_motor.can_id
-            
+
             # Apply template
             self.current_config.motors[motor_index] = template
             self.current_config.motors[motor_index].can_id = original_can_id
-            
+
             # Save configuration
             self.save_config(self.current_config)
-            
+
             logger.info(f"Applied template '{template_name}' to motor {motor_index}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error applying template {template_name} to motor {motor_index}: {e}")
             return False
-    
+
     def get_config_summary(self) -> Dict[str, Any]:
         """Get a summary of the current configuration."""
         if not self.current_config:
             return {"status": "No configuration loaded"}
-        
+
         return {
             "name": self.current_config.name,
             "description": self.current_config.description,
@@ -449,7 +449,7 @@ class ConfigurationManager:
 
 class LiveConfigurationInterface:
     """Interface for live configuration updates during simulation."""
-    
+
     def __init__(self, config_manager: ConfigurationManager, virtual_can_bus=None):
         """Initialize live configuration interface.
         
@@ -459,25 +459,25 @@ class LiveConfigurationInterface:
         """
         self.config_manager = config_manager
         self.virtual_can_bus = virtual_can_bus
-        
+
         # Register for configuration updates
         config_manager.add_update_callback(self._handle_config_update)
-        
+
         logger.info("Live configuration interface initialized")
-    
+
     async def _handle_config_update(self, change_info: Dict[str, Any]):
         """Handle configuration updates and apply them to running simulation."""
         parameter = change_info["parameter"]
         new_value = change_info["new_value"]
-        
+
         logger.info(f"Applying live configuration update: {parameter} = {new_value}")
-        
+
         try:
             if parameter == "latency_ms" and self.virtual_can_bus:
                 # Update CAN bus latency
                 self.virtual_can_bus.set_latency(new_value)
                 logger.info(f"Updated CAN bus latency to {new_value}ms")
-            
+
             elif parameter.startswith("motors.") and "max_current" in parameter:
                 # Update motor current limits
                 motor_index = int(parameter.split('.')[1])
@@ -485,7 +485,7 @@ class LiveConfigurationInterface:
                     motor = self.virtual_can_bus.simulated_motors[motor_index]
                     motor.max_current = new_value
                     logger.info(f"Updated motor {motor_index} max current to {new_value}")
-            
+
             elif parameter.startswith("motors.") and "max_speed" in parameter:
                 # Update motor speed limits
                 motor_index = int(parameter.split('.')[1])
@@ -493,12 +493,12 @@ class LiveConfigurationInterface:
                     motor = self.virtual_can_bus.simulated_motors[motor_index]
                     motor.max_speed = new_value
                     logger.info(f"Updated motor {motor_index} max speed to {new_value}")
-            
+
             # Add more parameter handlers as needed
-            
+
         except Exception as e:
             logger.error(f"Error applying live configuration update: {e}")
-    
+
     def get_adjustable_parameters(self) -> Dict[str, Dict[str, Any]]:
         """Get list of parameters that can be adjusted live."""
         return {
@@ -531,15 +531,15 @@ class LiveConfigurationInterface:
                 "pattern": "motors.{motor_index}.max_speed"
             }
         }
-    
+
     async def update_parameter(self, parameter: str, value: Any) -> bool:
         """Update a parameter with validation."""
         adjustable = self.get_adjustable_parameters()
-        
+
         # Check if parameter is adjustable
         if parameter not in adjustable and not any(param.replace('*', '\\d+') in parameter for param in adjustable):
             logger.error(f"Parameter '{parameter}' is not adjustable during runtime")
             return False
-        
+
         # Apply the update
         return await self.config_manager.update_parameter(parameter, value)

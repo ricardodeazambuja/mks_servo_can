@@ -9,31 +9,24 @@ hardware interface.
 # It clarifies that the script is for demonstrating control over real hardware.
 
 import asyncio
+
 # Imports the 'asyncio' library, which is essential for using the 'mks_servo_can' library
 # as it is built for asynchronous operations.
-
 import logging
+
 # Imports the 'logging' module to enable detailed logging of the script's execution,
 # which is helpful for debugging and understanding the flow of operations.
-
-from mks_servo_can import Axis
 # Imports the 'Axis' class from the 'mks_servo_can' library.
 # The 'Axis' class provides a high-level interface for controlling an individual motor.
-
-from mks_servo_can import CANInterface
 # Imports the 'CANInterface' class, responsible for managing the connection
 # to the CAN bus (either real or simulated). In this example, it's for real hardware.
-
-from mks_servo_can import const
 # Imports the 'const' module (likely 'constants.py') from the library.
 # This module contains predefined constants like default bitrates, command codes,
 # and encoder pulse counts, which are used for configuring and controlling the motor.
-
-from mks_servo_can import exceptions
 # Imports the 'exceptions' module, which defines custom exception classes
 # for handling errors specific to the 'mks_servo_can' library.
+from mks_servo_can import Axis, CANInterface, RotaryKinematics, const, exceptions
 
-from mks_servo_can import RotaryKinematics
 # Imports the 'RotaryKinematics' class, which is used to convert between
 # physical angular units (like degrees) and the motor's native encoder steps.
 
@@ -188,7 +181,7 @@ async def main():
         # Users can uncomment it to test actual movement.
         target_angle_degrees = pos_user + 30.0
         # Calculates a target angle 30 degrees from the current position.
-        logger.info("Moving to %.2f degrees (%d pulses)...", target_angle_degrees, 
+        logger.info("Moving to %.2f degrees (%d pulses)...", target_angle_degrees,
                     axis1.kinematics.user_to_steps(target_angle_degrees))
         # Logs the target move.
         await axis1.move_to_position_abs_user(
@@ -233,4 +226,3 @@ if __name__ == "__main__":
     asyncio.run(main())
     # Runs the main asynchronous function using 'asyncio.run()'.
     # This starts the asyncio event loop, runs 'main()', and handles loop cleanup.
-    

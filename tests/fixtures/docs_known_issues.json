@@ -1,0 +1,4 @@
+{
+  "_comment": "Documentation problems that predate the check in tests/test_docs_api.py. This list may only shrink: fix a doc, run the test, and delete the entries the test reports as stale. Never add to this file - a new finding means the documentation you just wrote references something that does not exist. The list is now EMPTY, which is the point it was always aiming at: every Python block in docs/ and README.md refers to an API that exists, and every internal link resolves. There is no longer any such thing as an acceptable pre-existing problem here - a failure of test_no_new_problems is something you just wrote.",
+  "known_issues": []
+}

@@ -166,4 +166,3 @@ class LimitError(MotorError):
 
 class StallError(MotorError):
     """Errors related to motor stall detection."""
-    

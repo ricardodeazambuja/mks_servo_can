@@ -36,3 +36,6 @@ env/
 *.tmp
 *.log
 /tmp/
+# Editor backup files
+*.bak
+*.orig

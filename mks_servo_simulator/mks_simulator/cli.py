@@ -3,18 +3,34 @@ Command-Line Interface for the MKS Servo CAN Simulator.
 Uses 'click' for CLI argument parsing and command structure.
 """
 import asyncio
-import click  # Ensure 'click' is in your requirements for the simulator
 import logging
 import signal
-import json
-from typing import Optional
+import threading
+from typing import TYPE_CHECKING, Optional
 
-from .motor_model import SimulatedMotor
-from .virtual_can_bus import VirtualCANBus
-from .interface.llm_debug_interface import LLMDebugInterface
-from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
-from .interface.textual_dashboard import TextualDashboard
+import click  # Ensure 'click' is in your requirements for the simulator
+
+from .clock import make_clock
 from .interface.config_manager import ConfigurationManager, LiveConfigurationInterface
+from .interface.http_debug_server import DebugHTTPServer, JSONOutputHandler
+from .interface.llm_debug_interface import LLMDebugInterface
+from .motor_model import SIM_TIME_STEP_MS, SimulatedMotor
+from .virtual_can_bus import VirtualCANBus
+
+# The Textual dashboard is imported inside the --textual-dashboard branch, not
+# here. It is the legacy surface - the supported ones are the browser dashboard
+# under --debug-api and --json-output - and `textual` is a heavy dependency that
+# nothing else needs. Importing it at module scope made it a hard requirement of
+# the whole simulator: a clean `pip install mks-servo-can[simulator]` produced a
+# `mks-servo-simulator` command that died with ModuleNotFoundError before
+# parsing a single argument, because `textual` was declared in no install
+# requirement anywhere. Nothing caught it, because every environment that ran
+# the tests had textual installed for tests/test_textual_dashboard.py.
+if TYPE_CHECKING:
+    from .interface.textual_dashboard import TextualDashboard
+
+# Strong references to background tasks, so they are not garbage collected.
+_keepalive_tasks: set = set()
 
 # Basic logging setup for the simulator
 logging.basicConfig(
@@ -30,14 +46,35 @@ try:
 except ImportError as exc:
     # Minimal fallback if library not in path
     logger.warning(f"Exception: {exc}")
-    logger.warning(f"Bypassing the import...")
+    logger.warning("Bypassing the import...")
     class lib_const:  # type: ignore
         ENCODER_PULSES_PER_REVOLUTION = 16384  # Default from MKS manual
         MOTOR_TYPE_SERVO42D = "SERVO42D"
         MOTOR_TYPE_SERVO57D = "SERVO57D"
 
 
-async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, textual_dashboard_task=None, performance_monitor=None):
+def _degrees_to_steps(degrees: Optional[float], steps_per_rev: int) -> Optional[int]:
+    """
+    Converts a configuration profile's angle into encoder counts.
+
+    Profiles state positions and limits in degrees; `SimulatedMotor` works in
+    encoder counts. Keeping the conversion in one named place stops the two
+    from being wired together directly, which would read a +/-360 degree limit
+    as +/-360 counts - under eight degrees.
+
+    Args:
+        degrees: Angle in degrees, or None.
+        steps_per_rev: The motor's encoder counts per revolution.
+
+    Returns:
+        The equivalent count, or None if `degrees` was None.
+    """
+    if degrees is None:
+        return None
+    return int(round(degrees * steps_per_rev / 360.0))
+
+
+async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_handler=None, textual_app=None, performance_monitor=None):
     """Graceful shutdown for the simulator."""
     logger.info(f"Received exit signal {sig.name}...")
     logger.info("Shutting down simulated motors...")
@@ -53,7 +90,7 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
             logger.info("Server task cancelled successfully.")
         except Exception as e:
             logger.error(f"Error during server task shutdown: {e}")
-    
+
     if debug_server_task and not debug_server_task.done():
         logger.info("Cancelling debug server task...")
         debug_server_task.cancel()
@@ -63,17 +100,16 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
             logger.info("Debug server task cancelled successfully.")
         except Exception as e:
             logger.error(f"Error during debug server shutdown: {e}")
-    
-    if textual_dashboard_task and not textual_dashboard_task.done():
-        logger.info("Cancelling Textual dashboard task...")
-        textual_dashboard_task.cancel()
+
+    if textual_app is not None:
+        # The dashboard owns a loop on another thread, so it has to be asked to
+        # exit from that thread rather than cancelled from this one.
+        logger.info("Asking the Textual dashboard to exit...")
         try:
-            await textual_dashboard_task
-        except asyncio.CancelledError:
-            logger.info("Textual dashboard task cancelled successfully.")
+            textual_app.call_from_thread(textual_app.exit)
         except Exception as e:
-            logger.error(f"Error during Textual dashboard task shutdown: {e}")
-    
+            logger.debug("Textual dashboard did not exit cleanly: %s", e)
+
     if performance_monitor:
         logger.info("Stopping performance monitor...")
         performance_monitor.stop_monitoring()
@@ -168,7 +204,10 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
 @click.option(
     "--debug-api",
     is_flag=True,
-    help="Enable HTTP debug API server for programmatic access.",
+    help=(
+        "Enable the HTTP debug API. Serves the browser dashboard at "
+        "/dashboard and the same state as JSON at /status."
+    ),
 )
 @click.option(
     "--debug-api-port",
@@ -178,9 +217,23 @@ async def shutdown(sig, loop, server_task, bus, debug_server_task=None, json_han
     show_default=True,
 )
 @click.option(
+    "--step",
+    "stepped_time",
+    is_flag=True,
+    help=(
+        "Advance simulated time only on request, via POST /step on the debug "
+        "API. Motors do not move until told to, so a client can command, step "
+        "and read with no sleeping and get the same answer every run. Implies "
+        "--debug-api, since /step is the only way to drive it."
+    ),
+)
+@click.option(
     "--textual-dashboard",
     is_flag=True,
-    help="Enable Textual TUI dashboard (experimental).",
+    help=(
+        "Enable the Textual TUI dashboard (legacy; prefer --debug-api, which "
+        "serves the browser dashboard at /dashboard)."
+    ),
 )
 @click.option(
     "--refresh-rate",
@@ -221,6 +274,7 @@ def main(
     json_output: bool,
     debug_api: bool,
     debug_api_port: int,
+    stepped_time: bool,
     textual_dashboard: bool,
     refresh_rate: int,
     no_color: bool,
@@ -258,14 +312,14 @@ def main(
     # Initialize configuration management
     config_manager = ConfigurationManager(config_dir)
     live_config_interface: Optional[LiveConfigurationInterface] = None
-    
+
     # Load configuration profile if specified
     if config_profile:
         loaded_config = config_manager.load_config(config_profile)
         if loaded_config:
             config_manager.current_config = loaded_config
             logger.info(f"Loaded configuration profile: {config_profile}")
-            
+
             # Override CLI parameters with profile settings
             host = loaded_config.host
             port = loaded_config.port
@@ -275,7 +329,7 @@ def main(
             json_output = loaded_config.json_output
             debug_api = loaded_config.debug_api
             textual_dashboard = getattr(loaded_config, 'textual_dashboard', False)
-            
+
             # Use motors from profile
             num_motors = len(loaded_config.motors)
             logger.info(f"Using {num_motors} motors from profile configuration")
@@ -332,19 +386,38 @@ def main(
             logger.info("Textual dashboard active and file logger already configured.")
 
 
+    # Stepped time is only reachable through POST /step, so asking for it
+    # without the debug API would produce a simulator whose motors never move
+    # and no way to make them - a silent no-op. Turn the API on rather than
+    # fail, and say so.
+    if stepped_time and not debug_api:
+        debug_api = True
+        logger.info("--step implies --debug-api; enabling it (POST /step drives the clock).")
+
+    simulation_clock = make_clock(
+        stepped=stepped_time, step_seconds=SIM_TIME_STEP_MS / 1000.0
+    )
+    if stepped_time:
+        logger.info(
+            "Simulated time is STEPPED: motors do not move until POST "
+            "http://127.0.0.1:%d/step advances the clock.",
+            debug_api_port,
+        )
+
     loop = asyncio.get_event_loop()
     bus = VirtualCANBus(loop)
+    bus.simulation_clock = simulation_clock
     bus.set_latency(latency_ms)  # Set global latency for the bus
-    
+
     # Create live configuration interface
     live_config_interface = LiveConfigurationInterface(config_manager, bus)
-    
+
     # Initialize debug interface and optional components
     debug_interface: Optional[LLMDebugInterface] = None
     debug_server: Optional[DebugHTTPServer] = None
     debug_server_task: Optional[asyncio.Task] = None
     json_handler: Optional[JSONOutputHandler] = None
-    textual_dashboard_task: Optional[asyncio.Task] = None # Initialize textual_dashboard_task
+    textual_app: Optional[TextualDashboard] = None
 
     # Create motors based on configuration
     if config_profile and config_manager.current_config:
@@ -361,19 +434,41 @@ def main(
             if motor_config.motor_type.upper() == "GENERIC":
                 sim_motor_type_str = lib_const.MOTOR_TYPE_SERVO42D
 
+            # Only the fields SimulatedMotor actually models are passed here.
+            # This branch previously forwarded max_current, max_speed and
+            # initial_position as constructor arguments; none of the three
+            # exist on SimulatedMotor, so --config-profile raised TypeError on
+            # every invocation. max_speed has no equivalent at all - a real
+            # motor's speed ceiling comes from its work mode, not from a
+            # per-motor limit - so it is deliberately not mapped.
+            #
+            # MotorConfig expresses positions in degrees (its limits default to
+            # +/-360) while SimulatedMotor takes encoder counts, so the two
+            # cannot be connected directly: -360 passed through unconverted
+            # would mean a limit of 7.9 degrees.
+            steps_per_rev = motor_config.steps_per_rev
+            position_limits = motor_config.position_limits or {}
             motor = SimulatedMotor(
                 can_id=motor_config.can_id,
                 loop=loop,
+                clock=simulation_clock,
                 motor_type=sim_motor_type_str,
-                steps_per_rev_encoder=motor_config.steps_per_rev,
-                max_current=motor_config.max_current,
-                max_speed=motor_config.max_speed,
-                initial_position=motor_config.initial_position,
+                initial_pos_steps=(
+                    _degrees_to_steps(motor_config.initial_position, steps_per_rev) or 0
+                ),
+                steps_per_rev_encoder=steps_per_rev,
+                min_pos_limit_steps=_degrees_to_steps(
+                    position_limits.get("min"), steps_per_rev
+                ),
+                max_pos_limit_steps=_degrees_to_steps(
+                    position_limits.get("max"), steps_per_rev
+                ),
             )
-            
+            motor.working_current_ma = motor_config.max_current
+
             if motor_config.enable_on_start:
                 motor.is_enabled = True
-                
+
             bus.add_motor(motor)
     else:
         # Create motors from CLI parameters (original logic)
@@ -395,6 +490,7 @@ def main(
             motor = SimulatedMotor(
                 can_id=current_can_id,
                 loop=loop,
+                clock=simulation_clock,
                 motor_type=sim_motor_type_str,
                 steps_per_rev_encoder=steps_per_rev,
                 # Add options for initial pos, limits if needed from CLI
@@ -402,22 +498,22 @@ def main(
             bus.add_motor(motor)
 
     server_task = loop.create_task(bus.start_server(host, port))
-    
+
     # Initialize LLM debug interface if needed
     if json_output or debug_api or textual_dashboard:
         debug_interface = LLMDebugInterface(bus.simulated_motors, bus)
-        
+
         # Set up debug interface in the bus for command tracking
         bus.debug_interface = debug_interface
-        
+
         # Initialize performance monitoring (will be started after loop is available)
         from .interface.performance_monitor import PerformanceMonitor
         performance_monitor = PerformanceMonitor(bus, debug_interface)
         bus.performance_monitor = performance_monitor
         # Note: performance_monitor.start_monitoring() will be called after loop setup
-        
+
         logger.info("Performance monitoring initialized")
-        
+
         if json_output:
             json_handler = JSONOutputHandler(debug_interface)
             config = {
@@ -428,38 +524,76 @@ def main(
                 "latency_ms": latency_ms
             }
             json_handler.emit_startup(config)
-            
+
             # Start periodic updates
-            loop.create_task(json_handler.run_periodic_updates())
-        
+            # Keep a reference: a bare create_task() may be garbage collected
+            # mid-flight, which silently stops the periodic updates.
+            _periodic_update_task = loop.create_task(
+                json_handler.run_periodic_updates()
+            )
+            _keepalive_tasks.add(_periodic_update_task)
+            _periodic_update_task.add_done_callback(_keepalive_tasks.discard)
+
         if debug_api:
             try:
                 debug_server = DebugHTTPServer(
-                    debug_interface, 
-                    debug_api_port, 
+                    debug_interface,
+                    debug_api_port,
                     "127.0.0.1",
                     config_manager=config_manager,
                     live_config=live_config_interface
                 )
                 debug_server_task = loop.create_task(debug_server.start_server())
                 logger.info(f"Debug API server starting on http://127.0.0.1:{debug_api_port}")
+                logger.info(
+                    "Dashboard (for humans): http://127.0.0.1:%d/dashboard",
+                    debug_api_port,
+                )
+                logger.info(
+                    "Status JSON (for agents): http://127.0.0.1:%d/status",
+                    debug_api_port,
+                )
                 logger.info(f"API documentation available at http://127.0.0.1:{debug_api_port}/docs")
                 logger.info("Configuration management endpoints available at /config/*")
             except ImportError as e:
                 logger.error(f"Failed to start debug API server: {e}")
                 logger.error("Install FastAPI and uvicorn: pip install fastapi uvicorn")
-        
-        # Textual Dashboard (Phase 2 test)  
+
+        # Textual dashboard. Legacy: the browser dashboard at /dashboard is the
+        # supported human surface, and --json-output the machine one.
         if textual_dashboard:
             try:
                 logger.info("Starting Textual dashboard...")
-                textual_app = TextualDashboard(bus)
-                
-                # Run textual asynchronously
-                textual_dashboard_task = loop.create_task(textual_app.run_async())
-                
-                logger.info("Textual dashboard task created")
-                
+                try:
+                    # Aliased so it does not shadow the TYPE_CHECKING import of
+                    # the same name, which the annotation above refers to.
+                    from .interface.textual_dashboard import (
+                        TextualDashboard as _TextualDashboard,
+                    )
+                except ImportError as exc:
+                    # Say what to install and carry on. The CAN side and the
+                    # debug API are unaffected by the TUI being unavailable, and
+                    # exiting here would take them down with it.
+                    raise ImportError(
+                        "the Textual dashboard needs the 'dashboard' extra: "
+                        "pip install mks-servo-can[dashboard]"
+                    ) from exc
+                textual_app = _TextualDashboard(bus)
+
+                # On its own thread, with its own event loop. Sharing the
+                # simulator's loop put the TUI's render and input handling in
+                # direct competition with the 10 ms motor integration tick, so
+                # the thing being measured was slowed down by the act of
+                # watching it.
+                textual_thread = threading.Thread(
+                    target=textual_app.run,
+                    name="textual-dashboard",
+                    daemon=True,
+                )
+                textual_thread.start()
+
+                logger.info("Textual dashboard started on its own thread")
+
             except Exception as e:
                 logger.error(f"Failed to start textual dashboard: {e}")
 
@@ -474,7 +608,7 @@ def main(
         loop.add_signal_handler(
             s,
             lambda s=s: asyncio.create_task(
-                shutdown(s, loop, server_task, bus, debug_server_task, json_handler, textual_dashboard_task if 'textual_dashboard_task' in locals() else None, performance_monitor if 'performance_monitor' in locals() else None)
+                shutdown(s, loop, server_task, bus, debug_server_task, json_handler, textual_app, performance_monitor if 'performance_monitor' in locals() else None)
             ),
         )
 
@@ -500,7 +634,7 @@ def main(
                     loop.run_until_complete(server_task)
                 except asyncio.CancelledError:
                     pass  # Expected
-        
+
         # Clean up debug server if running
         if debug_server_task and not debug_server_task.done():
             debug_server_task.cancel()
@@ -509,15 +643,15 @@ def main(
                     loop.run_until_complete(debug_server_task)
                 except asyncio.CancelledError:
                     pass  # Expected
-        
-        # Clean up textual dashboard if running
-        if 'textual_dashboard_task' in locals() and textual_dashboard_task and not textual_dashboard_task.done():
-            textual_dashboard_task.cancel()
-            if loop.is_running():
-                try:
-                    loop.run_until_complete(textual_dashboard_task)
-                except asyncio.CancelledError:
-                    pass # Expected
+
+        # Clean up the textual dashboard if running. Its thread is a daemon, so
+        # it cannot hold the process open; this just gives it the chance to
+        # restore the terminal.
+        if textual_app is not None:
+            try:
+                textual_app.call_from_thread(textual_app.exit)
+            except Exception:
+                pass
 
         # Final cleanup for motors if shutdown wasn't fully completed by signal
         if (
@@ -529,7 +663,7 @@ def main(
         if loop.is_running():
             loop.close()  # Close the loop
         logger.info("Simulator CLI finished.")
-    
+
     # Save configuration if requested
     if save_config and config_manager.current_config:
         success = config_manager.save_config(config_manager.current_config, save_config)

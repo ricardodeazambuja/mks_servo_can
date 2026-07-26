@@ -12,9 +12,15 @@ import logging
 
 # Make sure to import your new RRRArm class
 from mks_servo_can import (
-    CANInterface, Axis, MultiAxisController, RotaryKinematics, const, exceptions, RRRArm
+    Axis,
+    CANInterface,
+    MultiAxisController,
+    RotaryKinematics,
+    RRRArm,
+    const,
+    exceptions,
 )
-from mks_servo_can.robot_kinematics import CartesianPose # For type hinting
+from mks_servo_can.robot_kinematics import CartesianPose  # For type hinting
 
 # --- Configuration ---
 LOG_LEVEL = logging.INFO
@@ -69,7 +75,7 @@ async def main():
         else:
             logger.info(f"Using real hardware: {CAN_INTERFACE_TYPE} on {CAN_CHANNEL}")
             can_if = CANInterface(interface_type=CAN_INTERFACE_TYPE, channel=CAN_CHANNEL, bitrate=CAN_BITRATE, use_simulator=False)
-        
+
         await can_if.connect()
         logger.info("CAN Interface connected.")
 
@@ -118,7 +124,7 @@ async def main():
         # Example: A point that should be reachable
         target_pose: CartesianPose = {'x': LINK_1_SHOULDER_ELBOW / 2, 'y': LINK_2_ELBOW_EE / 2, 'z': 50.0}
         logger.info(f"Target Cartesian Pose: {target_pose}")
-        
+
         # Define speeds for each joint (in degrees/second as per RotaryKinematics)
         joint_speeds = {
             BASE_JOINT_AXIS_NAME: 20.0,      # deg/s
@@ -133,7 +139,7 @@ async def main():
                 wait_for_all=True
             )
             logger.info("Move to target Cartesian pose command finished.")
-            
+
             final_joints = await rrr_arm.get_current_joint_states()
             logger.info(f"Final Joint States (degrees): {final_joints}")
             final_pose = await rrr_arm.get_current_pose()
@@ -158,7 +164,7 @@ async def main():
                 await multi_controller.disable_all_axes()
             except exceptions.MKSServoError as e_dis: # Catch potential error during disable
                 logger.error(f"Error disabling axes: {e_dis}")
-        
+
         if can_if and can_if.is_connected: # Check if initialized and connected
             logger.info("Disconnecting CAN Interface.")
             await can_if.disconnect()

@@ -19,14 +19,14 @@ import logging
 import math
 
 from mks_servo_can import (
-    CANInterface,
     Axis,
+    CANInterface,
+    LinearKinematics,  # Cartesian axes typically use linear kinematics
     MultiAxisController,
-    LinearKinematics, # Cartesian axes typically use linear kinematics
     const,
-    exceptions
+    exceptions,
 )
-from mks_servo_can.robot_kinematics import CartesianRobot, CartesianPose
+from mks_servo_can.robot_kinematics import CartesianPose, CartesianRobot
 
 # --- Configuration ---
 LOG_LEVEL = logging.INFO
@@ -55,7 +55,7 @@ Y_PITCH_MM_PER_REV = 10.0
 Z_PITCH_MM_PER_REV = 5.0  # Example: Z-axis might have a different pitch
 
 # Offset of the robot's coordinate system origin from the machine/world origin
-ROBOT_ORIGIN_OFFSET_XYZ = (0.0, 0.0, 0.0) 
+ROBOT_ORIGIN_OFFSET_XYZ = (0.0, 0.0, 0.0)
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -91,7 +91,7 @@ async def main():
                 bitrate=CAN_BITRATE,
                 use_simulator=False,
             )
-        
+
         await can_if.connect()
         logger.info("CAN Interface connected.")
 
@@ -120,7 +120,7 @@ async def main():
         )
         axis_z = Axis(can_if, Z_AXIS_CAN_ID, Z_AXIS_NAME, kinematics=kin_z)
         multi_controller.add_axis(axis_z)
-        
+
         logger.info(f"Added axes: X (ID {X_AXIS_CAN_ID}), Y (ID {Y_AXIS_CAN_ID}), Z (ID {Z_AXIS_CAN_ID})")
 
         # --- 4. Initialize and Enable All Axes ---
@@ -153,7 +153,7 @@ async def main():
             Y_AXIS_NAME: 15.0,  # mm/s
             Z_AXIS_NAME: 10.0   # mm/s
         }
-        
+
         logger.info(f"Moving robot to target Cartesian pose with speeds: {axis_speeds}...")
         try:
             await robot.move_to_cartesian_pose(
@@ -173,7 +173,7 @@ async def main():
                 logger.info("Robot successfully reached target Cartesian pose (within tolerance).")
             else:
                 logger.warning("Robot may not have precisely reached the target Cartesian pose.")
-        
+
         except exceptions.KinematicsError as e:
             logger.error(f"Kinematics error during move: {e}")
         except exceptions.MultiAxisError as e:

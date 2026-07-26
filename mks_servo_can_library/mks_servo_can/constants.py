@@ -8,6 +8,13 @@ derived from the MKS SERVO42D/57D_CAN User Manual.
 CAN_DEFAULT_BITRATE = 500000  # 500K bps
 CAN_TIMEOUT_SECONDS = 1.0  # Default timeout for CAN operations
 
+# How long a stale-notification credit stays valid; see
+# CANInterface.expect_stale_notification(). The credit exists to absorb the abort
+# frame of a superseded move, which the motor emits within one round trip of the
+# command that superseded it. Should a motor turn out never to emit that frame,
+# the credit has to expire on its own or it swallows a later, legitimate reply.
+STALE_NOTIFICATION_TTL_SECONDS = 1.0
+
 # CAN IDs
 BROADCAST_ADDRESS = 0x00
 DEFAULT_CAN_ID = 0x01
@@ -132,10 +139,31 @@ MAX_CURRENT_SERVO57D = 5200
 MAX_CURRENT_SERVO28D = 3000
 MAX_CURRENT_SERVO35D = 3000
 
-# Default RPMs and Speeds
+# Default RPMs and Speeds (manual V1.0.6 section 6.1)
 MAX_RPM_OPEN_MODE = 400
 MAX_RPM_CLOSE_MODE = 1500
 MAX_RPM_VFOC_MODE = 3000
+
+# Ceiling that the 0-3000 speed parameter maps onto, per work mode. The motor
+# clamps to this value if a larger speed is commanded.
+MAX_RPM_BY_WORK_MODE = {
+    MODE_CR_OPEN: MAX_RPM_OPEN_MODE,
+    MODE_SR_OPEN: MAX_RPM_OPEN_MODE,
+    MODE_CR_CLOSE: MAX_RPM_CLOSE_MODE,
+    MODE_SR_CLOSE: MAX_RPM_CLOSE_MODE,
+    MODE_CR_VFOC: MAX_RPM_VFOC_MODE,
+    MODE_SR_VFOC: MAX_RPM_VFOC_MODE,
+}
+
+# Speed parameter bounds for the run commands (0xF4/0xF5/0xF6/0xFD/0xFE).
+MAX_SPEED_PARAM = 3000
+# Acceleration parameter bounds. 0 means "no ramp, jump straight to speed".
+MAX_ACCEL_PARAM = 255
+# Manual section 6.1: each acceleration step changes the speed by 1 RPM every
+# (256 - acc) * ACCEL_TICK_SECONDS seconds.
+ACCEL_TICK_SECONDS = 50e-6
+# The 0-3000 speed parameter equals RPM only at these subdivision settings.
+SPEED_CALIBRATED_MICROSTEPS = (16, 32, 64)
 
 # Kinematics
 DEFAULT_STEPS_PER_REVOLUTION = 200 * 16 # Example: 200 base steps, 16 microsteps
@@ -180,6 +208,15 @@ POS_RUN_FAIL = 0x00
 POS_RUN_STARTING = 0x01
 POS_RUN_COMPLETE = 0x02
 POS_RUN_END_LIMIT_STOPPED = 0x03
+
+# Status bytes an *asynchronous* move notification can carry. A run command's
+# reply reuses its command byte for both the immediate acknowledgement and the
+# later completion/abort frame, so the status byte is the only thing telling
+# them apart: an acknowledgement is POS_RUN_STARTING and a notification is one
+# of these.
+ASYNC_MOVE_NOTIFICATION_STATUSES = frozenset(
+    (POS_RUN_FAIL, POS_RUN_COMPLETE, POS_RUN_END_LIMIT_STOPPED)
+)
 
 # Home Status (for CMD_GO_HOME 0x91)
 HOME_FAIL = 0x00

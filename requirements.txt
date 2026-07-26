@@ -1,25 +1,30 @@
-# Core dependencies for the MKS Servo CAN Project (library and simulator)
+# This file is not the source of truth for dependencies. pyproject.toml is.
+#
+# Everything below is declared there, where pip can act on it and where the
+# extras say which dependency is needed for what:
+#
+#   pip install .              library only
+#   pip install .[simulator]   + the mks-servo-simulator command and its debug API
+#   pip install .[dashboard]   + textual, for the legacy --textual-dashboard TUI
+#   pip install .[monitoring]  + psutil, for the performance-monitoring panels
+#   pip install -e .[dev]      all of the above + pytest and ruff
+#
+# This file is kept only so that `pip install -r requirements.txt` still does
+# something sensible for anyone following older instructions. It installs the
+# equivalent of `.[simulator,monitoring]` plus the test runners, but it does not
+# install the project itself - you still need one of the commands above.
+#
+# A duplicated dependency list is a list that will disagree with the real one.
+# If you are editing this file, edit pyproject.toml instead.
 
-# For the mks-servo-can library (and potentially used by simulator indirectly)
 python-can>=3.0.0,<5.0.0
 
-# For the mks-servo-simulator CLI
 click>=7.0
+rich>=12.0.0
+fastapi>=0.68.0
+uvicorn>=0.15.0
+psutil>=5.8.0
 
-# Enhanced simulator features (optional but recommended)
-rich>=12.0.0  # For interactive dashboard
-fastapi>=0.68.0  # For HTTP debug API
-uvicorn>=0.15.0  # For HTTP debug API server
-psutil>=5.8.0  # For performance monitoring (optional)
-
-# Testing dependencies
 pytest>=7.0.0
 pytest-asyncio>=0.20.0
 pytest-mock>=3.0.0
-
-# Note: For development (testing, linting, docs), refer to the [dev]
-# and [docs] extras in the setup.py files of the respective packages:
-#   mks_servo_can_library/setup.py
-#   mks_servo_simulator/setup.py
-#
-# Example: pip install -e ./mks_servo_can_library[dev]

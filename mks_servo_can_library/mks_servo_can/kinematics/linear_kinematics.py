@@ -2,10 +2,8 @@
 Linear kinematics: converts between linear distance (e.g., mm) and motor steps.
 """
 
-import logging # Added for warning
+import logging  # Added for warning
 
-from mks_servo_can.constants import \
-    MAX_RPM_VFOC_MODE  # Default max RPM
 from mks_servo_can.exceptions import KinematicsError
 
 from .base_kinematics import Kinematics
@@ -85,7 +83,7 @@ class LinearKinematics(Kinematics):
         """
         if self.pitch == 0: # Avoid division by zero
             return 0
-            
+
         # Revolutions of the output shaft per second
         output_revs_per_second = user_speed / self.pitch
         # Revolutions of the motor per second
@@ -142,4 +140,3 @@ class LinearKinematics(Kinematics):
             }
         )
         return params
-    

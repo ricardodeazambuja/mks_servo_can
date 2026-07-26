@@ -1,5 +1,6 @@
-import requests
 import json
+
+import requests
 
 # Base URL for the MKS Servo Simulator HTTP Debug API
 SIMULATOR_BASE_URL = "http://localhost:8765"

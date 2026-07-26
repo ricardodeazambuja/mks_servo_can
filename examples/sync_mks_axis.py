@@ -7,45 +7,46 @@ traditional synchronous Python applications. It manages an asyncio event loop
 in a separate thread to interact with the underlying asynchronous library.
 """
 import asyncio
+
+# Imports the time module, primarily used in the example usage part for pausing execution (time.sleep).
+import logging
+
 # Imports the asyncio library, which is the foundation for the mks_servo_can library's asynchronous operations.
 # Even though this example creates a synchronous wrapper, asyncio is still needed to run the underlying async library.
-
 import threading
+
 # Imports the threading module, used here to run the asyncio event loop in a separate thread.
 # This allows the synchronous part of the wrapper to block and wait for results from the async operations
 # without freezing the main thread (if the main application were also GUI-based, for example).
+import time  # For sleep in examples
 
-import time # For sleep in examples
-# Imports the time module, primarily used in the example usage part for pausing execution (time.sleep).
-
-import logging
 # Imports the logging module for outputting informational and error messages.
+from typing import Any, Dict, Optional  # Added for type hints
 
-from typing import Any, Dict, Optional # Added for type hints
 # Imports typing utilities for better code clarity and static analysis.
 # 'Any' can represent an unconstrained type.
 # 'Dict' is for dictionary types.
 # 'Optional' indicates a type that can be 'None'.
-
 # Assuming mks_servo_can library is installed and importable
 # This comment indicates that the mks_servo_can library needs to be accessible in the Python environment.
 from mks_servo_can import (
-    CANInterface,
     Axis,
-    RotaryKinematics, # Or your preferred kinematics
-    LinearKinematics, # Adding for variety in kinematics
+    CANInterface,
+    LinearKinematics,  # Adding for variety in kinematics
+    RotaryKinematics,  # Or your preferred kinematics
     const,
-    exceptions
+    exceptions,
 )
+
 # Imports core components from the mks_servo_can library:
 # - CANInterface: For managing the CAN bus connection.
 # - Axis: The high-level class for controlling a single motor.
 # - RotaryKinematics, LinearKinematics: Specific kinematics implementations.
 # - const: The module containing library constants (command codes, default values).
 # - exceptions: The module containing custom library exceptions.
-
 # Import Kinematics base class for type hinting
-from mks_servo_can.kinematics import Kinematics # Corrected import for base class
+from mks_servo_can.kinematics import Kinematics  # Corrected import for base class
+
 # Imports the base 'Kinematics' class, primarily for type hinting the 'kinematics' parameter.
 
 # Configure basic logging
@@ -659,4 +660,3 @@ if __name__ == "__main__":
         if motor: # Check if motor object was successfully created.
             motor.disconnect() # Blocking disconnect call.
         logger.info("Synchronous example finished.")
-        

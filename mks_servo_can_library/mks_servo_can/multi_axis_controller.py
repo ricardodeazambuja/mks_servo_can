@@ -8,19 +8,14 @@ coordinated movements (to the extent supported by the underlying MKS CAN protoco
 which typically means concurrent command dispatch rather than true interpolated
 multi-axis motion).
 """
-import math
-
-from typing import Any, Dict, List, Optional
-
 import asyncio
 import logging
+import math
+from typing import Any, Dict, List, Optional
 
 from .axis import Axis
 from .can_interface import CANInterface
-from .exceptions import ConfigurationError
-from .exceptions import MKSServoError
-from .exceptions import MultiAxisError
-from .kinematics import Kinematics  # For type hinting if needed
+from .exceptions import ConfigurationError, MKSServoError, MultiAxisError
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +205,14 @@ class MultiAxisController:
         """
         results: Dict[str, Any] = {}
         tasks = []
+        # Which axis each task belongs to, recorded when the task is created.
+        # Recovering it afterwards from the task's *name* - by splitting on the
+        # method name - misattributes the result for any axis whose own name
+        # contains it: an axis called "z_home_axis_backup" running `home_axis`
+        # gets a task named "z_home_axis_backup_home_axis", which splits to "z".
+        # The error is then filed against an axis that does not exist and the
+        # one that actually failed has no entry at all.
+        task_owners: Dict[asyncio.Task, str] = {}
 
         for axis_name, axis in self.axes.items():
             method_to_call = getattr(axis, method_name, None)
@@ -220,12 +223,12 @@ class MultiAxisController:
                 continue
 
             if concurrent:
-                tasks.append(
-                    asyncio.create_task( # Changed from self._loop.create_task
-                        method_to_call(*args, **kwargs),
-                        name=f"{axis_name}_{method_name}",
-                    )
+                task = asyncio.create_task( # Changed from self._loop.create_task
+                    method_to_call(*args, **kwargs),
+                    name=f"{axis_name}_{method_name}",
                 )
+                task_owners[task] = axis_name
+                tasks.append(task)
             else:  # Sequential execution
                 try:
                     results[axis_name] = await method_to_call(*args, **kwargs)
@@ -243,13 +246,7 @@ class MultiAxisController:
             )
             # Process results from completed tasks
             for task in done:
-                # Extract axis name from task name (assuming format "AxisName_methodName")
-                try:
-                    axis_name_from_task = task.get_name().split(f"_{method_name}")[0]
-                except Exception: # pylint: disable=broad-except
-                    # Fallback if task name doesn't match expected format
-                    axis_name_from_task = f"UnknownTask_{task.get_name()}"
-
+                axis_name_from_task = task_owners[task]
                 try:
                     results[axis_name_from_task] = task.result()
                 except Exception as e:  # Catch exceptions from tasks
@@ -463,7 +460,7 @@ class MultiAxisController:
             axis = self.axes.get(axis_name)
             if not axis:
                 raise ConfigurationError(f"Axis '{axis_name}' not found in controller.")
-            
+
             axes_to_move.append(axis)
             axis_speed = speeds_user.get(axis_name) if speeds_user else None
             # move_..._user now calls the internal handler and returns immediately
@@ -478,14 +475,14 @@ class MultiAxisController:
 
         # Dispatch all move commands
         initiation_results = await asyncio.gather(*initiation_tasks, return_exceptions=True)
-        
+
         # Check for errors during initiation
         initiation_errors: Dict[str, Exception] = {}
         for i, result in enumerate(initiation_results):
             if isinstance(result, Exception):
                 axis_name = axes_to_move[i].name
                 initiation_errors[axis_name] = result
-        
+
         if initiation_errors:
             raise MultiAxisError("Error(s) initiating multi-axis absolute move.", individual_errors=initiation_errors)
 
@@ -505,7 +502,7 @@ class MultiAxisController:
             if move_execution_errors:
                 raise MultiAxisError("Error(s) during multi-axis absolute move execution.", individual_errors=move_execution_errors)
 
-    logger.info("Multi-axis absolute move command sequence finished.")
+        logger.info("Multi-axis absolute move command sequence finished.")
 
     async def move_all_relative_user(
         self,
@@ -570,7 +567,7 @@ class MultiAxisController:
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         if initiation_errors:
             raise MultiAxisError("Error(s) initiating multi-axis relative move.", individual_errors=initiation_errors)
 
@@ -587,7 +584,7 @@ class MultiAxisController:
                 )
                 # This line is now the single source of truth for results.
                 completion_results = await asyncio.gather(*futures_to_wait, return_exceptions=True)
-                
+
                 # Directly process the results from gather.
                 move_execution_errors: Dict[str, Exception] = {}
                 for i, result in enumerate(completion_results):
@@ -621,7 +618,7 @@ class MultiAxisController:
         results = await self._execute_on_axes(
             "get_current_position_user", concurrent=True
         )
-        
+
         valid_results: Dict[str, float] = {}
         errors_found: Dict[str, Exception] = {}
 
@@ -638,7 +635,7 @@ class MultiAxisController:
 
         if errors_found:
             raise MultiAxisError("Failed to get positions for one or more axes.", individual_errors=errors_found)
-            
+
         return valid_results
 
     async def get_all_statuses(self) -> Dict[str, Dict[str, Any]]:
@@ -713,27 +710,41 @@ class MultiAxisController:
                             The `individual_errors` attribute will detail these failures.
         """
         logger.info("Waiting for all axes to complete their moves...")
-        tasks = [
-            axis.wait_for_move_completion(timeout=timeout_per_axis)
-            for axis in self.axes.values()
-            if not axis.is_move_complete()
+
+        # The axes and their coroutines are paired up *here*, once, and the
+        # pairing is what results are mapped back through.
+        #
+        # This used to build the task list, await it, and then rebuild the list
+        # of "axes with pending moves" to index into positionally. By that point
+        # the wait had happened: every axis that finished - including every axis
+        # that finished by *failing*, since a future resolved with an exception
+        # is `done()` - had dropped out of the list. The two lists were
+        # different lengths, so the index was wrong, and the bounds check that
+        # looked defensive was doing the damage: an error at an index past the
+        # end of the shorter list was logged as a "mismatch" and discarded,
+        # leaving `errors_found` empty and this method returning normally. A
+        # three-axis move in which only the last axis failed reported success.
+        pending = [
+            axis for axis in self.axes.values() if not axis.is_move_complete()
         ]
-        if tasks:
+        if pending:
             results = await asyncio.gather(
-                *tasks, return_exceptions=True
+                *(
+                    axis.wait_for_move_completion(timeout=timeout_per_axis)
+                    for axis in pending
+                ),
+                return_exceptions=True,
             )
-            # Check for exceptions in results
+
             errors_found: Dict[str, Exception] = {}
-            axis_list = [axis for axis in self.axes.values() if not axis.is_move_complete()] # Re-create list of axes that had pending moves
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    if i < len(axis_list): # Ensure index is valid
-                        axis_name = axis_list[i].name
-                        errors_found[axis_name] = result
-                        logger.error(f"Error waiting for move completion on axis '{axis_name}': {result}")
-                    else: # Should not happen if tasks and axis_list align
-                        logger.error(f"Mismatch in results and axis list during wait_for_all_moves_to_complete: {result}")
-            
+            for axis, result in zip(pending, results):
+                if isinstance(result, BaseException):
+                    errors_found[axis.name] = result
+                    logger.error(
+                        f"Error waiting for move completion on axis "
+                        f"'{axis.name}': {result!r}"
+                    )
+
             if errors_found:
                 raise MultiAxisError("One or more axes failed to complete their move.", individual_errors=errors_found)
 
@@ -779,7 +790,7 @@ class MultiAxisController:
         # This ensures we calculate the path from the true current state.
         axes_to_move = list(target_positions.keys())
         current_positions = await self.get_all_positions_user()
-        
+
         deltas = {}
         for axis_name in axes_to_move:
             current_pos = current_positions.get(axis_name)
@@ -804,7 +815,7 @@ class MultiAxisController:
             axis_name: abs(delta / duration_seconds)
             for axis_name, delta in deltas.items()
         }
-        
+
         logger.info(f"Calculated move duration: {duration_seconds:.2f}s. "
                     f"Calculated axis speeds: {speeds_user}")
 
