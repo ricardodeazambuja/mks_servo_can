@@ -341,17 +341,30 @@ class GimbalTracker:
         return self.last_error
 
 
-def build_axes() -> list:
+def build_axes(include_roll: bool = True, can_ids: dict = None) -> list:
     """
-    Describes the three gimbal axes.
+    Describes the gimbal axes.
+
+    Roll is optional because a two-motor build is a perfectly good tracking
+    gimbal: roll does not change where the camera points, only how the frame is
+    oriented about the optical axis. The printed pan/tilt design in
+    `hardware/gimbal/` is exactly this two-axis case.
+
+    Args:
+        include_roll: If False, only pan and tilt are built.
+        can_ids: Optional mapping of axis name to CAN ID, overriding the
+            defaults. A two-axis build made from the boards on the bench uses
+            `{"pan": 2, "tilt": 3}`.
 
     Returns:
-        The `StreamAxis` objects for pan, tilt and roll.
+        The `StreamAxis` objects for the requested axes.
     """
-    return [
+    ids = {"pan": 1, "tilt": 2, "roll": 3}
+    ids.update(can_ids or {})
+    built = [
         StreamAxis(
             "pan",
-            can_id=1,
+            can_id=ids["pan"],
             accel_param=GIMBAL_ACCEL_PARAM,
             min_position=PAN_LIMITS[0],
             max_position=PAN_LIMITS[1],
@@ -363,7 +376,7 @@ def build_axes() -> list:
         ),
         StreamAxis(
             "tilt",
-            can_id=2,
+            can_id=ids["tilt"],
             accel_param=GIMBAL_ACCEL_PARAM,
             min_position=TILT_LIMITS[0],
             max_position=TILT_LIMITS[1],
@@ -372,7 +385,7 @@ def build_axes() -> list:
         ),
         StreamAxis(
             "roll",
-            can_id=3,
+            can_id=ids["roll"],
             accel_param=GIMBAL_ACCEL_PARAM,
             min_position=ROLL_LIMITS[0],
             max_position=ROLL_LIMITS[1],
@@ -380,6 +393,7 @@ def build_axes() -> list:
             microsteps=32,
         ),
     ]
+    return built if include_roll else [a for a in built if a.name != "roll"]
 
 
 async def measure_command_latency(stream: ServoStream, axis: str = "pan") -> float:
@@ -440,7 +454,8 @@ def report_design_margins() -> None:
 
 
 async def run_tracking(
-    can_if: CANInterface, duration: float, quiet: bool = False
+    can_if: CANInterface, duration: float, quiet: bool = False,
+    include_roll: bool = True, can_ids: dict = None,
 ) -> dict:
     """
     Runs a tracking pass and reports how well it went.
@@ -449,12 +464,14 @@ async def run_tracking(
         can_if: A connected `CANInterface`.
         duration: How long to track, in seconds.
         quiet: Suppress the per-second progress lines.
+        include_roll: Build a three-axis gimbal. False gives pan/tilt only.
+        can_ids: Optional per-axis CAN ID overrides.
 
     Returns:
         A summary dict with the error statistics and loop timing.
     """
     target = SyntheticTarget()
-    axes = build_axes()
+    axes = build_axes(include_roll=include_roll, can_ids=can_ids)
 
     async with ServoStream(
         can_if,
@@ -465,7 +482,7 @@ async def run_tracking(
         # own cabling.
         watchdog_timeout=0.5,
     ) as stream:
-        stream.set_targets({"pan": 0.0, "tilt": 0.0, "roll": 0.0})
+        stream.set_targets({axis.name: 0.0 for axis in axes})
         await asyncio.sleep(0.2)
 
         command_latency = await measure_command_latency(stream)
@@ -587,6 +604,14 @@ async def main() -> None:
     parser.add_argument(
         "--duration", type=float, default=8.0, help="seconds to track"
     )
+    parser.add_argument(
+        "--two-axis", action="store_true",
+        help="pan and tilt only, for the printed hardware/gimbal/ design",
+    )
+    parser.add_argument(
+        "--can-ids", default=None,
+        help="per-axis CAN IDs, e.g. 'pan=2,tilt=3'",
+    )
     parser.add_argument("--quiet", action="store_true", help="summary only")
     parser.add_argument(
         "--verbose", action="store_true", help="enable library debug logging"
@@ -618,7 +643,18 @@ async def main() -> None:
     await can_if.connect()
     try:
         print(f"Tracking for {args.duration:.0f}s at {CONTROL_RATE_HZ:.0f} Hz\n")
-        result = await run_tracking(can_if, args.duration, quiet=args.quiet)
+        can_ids = None
+        if args.can_ids:
+            can_ids = {
+                key.strip(): int(value)
+                for key, value in (
+                    pair.split("=") for pair in args.can_ids.split(",")
+                )
+            }
+        result = await run_tracking(
+            can_if, args.duration, quiet=args.quiet,
+            include_roll=not args.two_axis, can_ids=can_ids,
+        )
 
         print("\nPointing error by target angular rate")
         print("-" * 78)
