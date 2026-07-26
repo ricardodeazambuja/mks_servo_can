@@ -117,11 +117,33 @@ Y axis figures, for comparison with the pen axis above: worst absolute error 48
 counts (0.117 mm), return-to-zero repeatable to ±1 count with a 72 count
 (0.178 mm) directional hysteresis.
 
-Requesting a speed above what the motor can reach makes the library raise a
-spurious `CommunicationError`: commanding Y at 400 mm/s (param 600) completed the
-motion but tripped the move-completion timeout, because `_calculate_move_timeout`
-estimates duration from `speed_param / 3000 * max_rpm_for_work_mode` and so
-assumes a speed the motor never achieves.
+## Two timeout defects the hardware exposed
+
+Both produced the same symptom — a move the motor completed normally reported as
+a `CommunicationError` — and neither was reachable from the simulator, because
+the simulator reaches its commanded speed instantly and its position cache is
+refreshed by the same reads.
+
+**The estimator misread the manual.** `_calculate_move_timeout` derived speed as
+`speed_param / 3000 * max_rpm_for_work_mode`. Section 6.1 says the parameter *is*
+RPM and the motor clamps it to the mode ceiling, so the estimate is
+`min(param, ceiling)`. The old form happened to be right in vFOC and wrong
+everywhere else. It also ignored acceleration entirely, even though section 6.1
+gives the ramp explicitly — 1 RPM per `(256 - acc) * ACCEL_TICK_SECONDS` — which
+for a small `acc` dominates a short move. Commanding Y at 400 mm/s got a 5.6 s
+budget for a move that really takes 8.3 s.
+
+**The distance was sized from a stale cache.** Nothing refreshes the position
+cache when a move completes; only an explicit read does. So after travelling to
+800 mm the cache still read −9 steps, and the return move to 0 was sized as a
+9 step journey and given 5.93 s for 8 s of travel. The fix tracks the last
+commanded target, which is free and stays accurate because absolute moves land
+where they were told to. Reading the encoder instead would have worked but would
+have reintroduced the per-move round trip that C3 deliberately removed.
+
+Both are pinned by regression tests, each verified by mutation — reverting the
+formula, the ramp, or the reference position individually makes the matching
+test fail.
 
 ## Work mode drives current, and therefore heat
 

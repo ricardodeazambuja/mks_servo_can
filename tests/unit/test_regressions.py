@@ -417,3 +417,160 @@ def test_h3_hot_path_uses_lazy_log_formatting():
         "eagerly-formatted f-strings in hot-path log calls:\n  "
         + "\n  ".join(offenders)
     )
+
+
+# --- Move-completion timeout estimation (found on real hardware, 2026-07) ---
+#
+# Commanding an MKS axis faster than it can actually turn raised a spurious
+# CommunicationError: the motor finished the move, but the library had already
+# given up waiting. Two causes, both pinned below.
+
+
+@pytest.mark.parametrize(
+    "work_mode",
+    [const.MODE_SR_VFOC, const.MODE_SR_CLOSE, const.MODE_CR_CLOSE],
+)
+def test_speed_param_is_clamped_to_work_mode_not_scaled_by_it(axis, work_mode):
+    """The speed parameter is RPM, so a mode with headroom must not change it.
+
+    Manual section 6.1: the parameter *is* RPM (at 16/32/64 subdivisions) and a
+    value above the work mode's ceiling makes the motor run at that ceiling.
+    The old estimator computed `param / 3000 * ceiling`, which silently halved
+    the assumed speed in CLOSE mode and so distorted every timeout.
+    """
+    speed_param = 1000  # below every ceiling under test
+    # Far enough to clear the five-CAN-timeout floor, which would otherwise
+    # flatten both branches to the same number and hide a wrong estimate.
+    distance = const.ENCODER_PULSES_PER_REVOLUTION * 200
+
+    axis._work_mode = const.MODE_SR_VFOC
+    reference = axis._calculate_move_timeout(
+        const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS, distance, speed_param, 0
+    )
+    axis._work_mode = work_mode
+    actual = axis._calculate_move_timeout(
+        const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS, distance, speed_param, 0
+    )
+
+    assert actual == pytest.approx(reference), (
+        f"work mode {work_mode} changed the timeout for speed param "
+        f"{speed_param} even though the mode's ceiling is above it"
+    )
+
+
+def test_speed_above_work_mode_ceiling_estimates_at_the_ceiling(axis):
+    """Over-commanding speed must not shrink the timeout.
+
+    In an OPEN mode the motor tops out at 400 RPM, so asking for 3000 takes
+    exactly as long as asking for 400. The old estimator scaled instead of
+    clamping and produced a far shorter timeout for the larger number.
+    """
+    distance = const.ENCODER_PULSES_PER_REVOLUTION * 10
+    axis._work_mode = const.MODE_SR_OPEN
+
+    at_ceiling = axis._calculate_move_timeout(
+        const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
+        distance, const.MAX_RPM_OPEN_MODE, 0,
+    )
+    way_over = axis._calculate_move_timeout(
+        const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
+        distance, const.MAX_SPEED_PARAM, 0,
+    )
+
+    assert way_over == pytest.approx(at_ceiling)
+
+
+def test_timeout_allows_for_the_acceleration_ramp(axis):
+    """A slower ramp must buy the move more time.
+
+    Manual section 6.1: with acceleration `acc` the speed changes by 1 RPM
+    every (256 - acc) * ACCEL_TICK_SECONDS seconds, so a small `acc` can
+    dominate the move. The old estimator ignored acceleration entirely.
+    """
+    distance = const.ENCODER_PULSES_PER_REVOLUTION * 10
+    speed_param = 600
+
+    def timeout_for(accel):
+        return axis._calculate_move_timeout(
+            const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS, distance, speed_param, accel
+        )
+
+    no_ramp = timeout_for(0)          # acc == 0 means "run straight at speed"
+    brisk = timeout_for(200)
+    sluggish = timeout_for(20)
+
+    assert sluggish > brisk > no_ramp, (
+        f"acceleration ignored: acc=20 -> {sluggish:.2f}s, "
+        f"acc=200 -> {brisk:.2f}s, acc=0 -> {no_ramp:.2f}s"
+    )
+
+
+def test_long_fast_move_gets_a_timeout_it_can_actually_meet(axis):
+    """The field case: 40 revolutions at speed param 600, default acceleration.
+
+    On hardware this move ran for roughly 7.7 s (the motor plateaus below the
+    commanded speed and spends real time ramping) while the old estimator
+    allowed only ~5.6 s, so a completed move was reported as a timeout.
+    """
+    axis._work_mode = const.MODE_SR_VFOC
+    distance = const.ENCODER_PULSES_PER_REVOLUTION * 40
+
+    timeout = axis._calculate_move_timeout(
+        const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
+        distance,
+        600,
+        axis.default_accel_param,
+    )
+
+    assert timeout > 8.0, (
+        f"timeout {timeout:.2f}s is below the ~7.7s this move really takes"
+    )
+
+
+@pytest.mark.asyncio
+async def test_return_move_is_not_sized_from_a_stale_cache(axis, mock_api):
+    """A move back to a previously occupied position must get a real budget.
+
+    Nothing refreshes the position cache when a move completes, so after
+    travelling away from zero the cache still says "at zero". Sizing the next
+    move's timeout from that stale value gave a 40-revolution return trip the
+    same budget as a standing-still move, and the motor was still going when
+    the library gave up.
+    """
+    far_away = const.ENCODER_PULSES_PER_REVOLUTION * 40
+
+    axis._current_position_steps = 0
+    axis._position_cache_is_fresh = True
+
+    captured = []
+    original = axis._calculate_move_timeout
+
+    def capture(cmd, pulses, speed, accel=None):
+        captured.append(pulses)
+        return original(cmd, pulses, speed, accel)
+
+    axis._calculate_move_timeout = capture
+
+    # Travel out. Dispatching leaves the cache stale, and nothing refreshes it.
+    await axis.move_to_position_abs_axis(far_away, speed_param=150, wait=False)
+    assert not axis._position_cache_is_fresh
+
+    # ...then head back. This is the move that used to get almost no budget.
+    await axis.move_to_position_abs_axis(0, speed_param=150, wait=False)
+
+    assert captured[-1] == pytest.approx(far_away, rel=0.01), (
+        f"return move sized from {captured[-1]} steps, but the axis is "
+        f"{far_away} steps from the target"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fresh_cache_still_avoids_the_extra_encoder_read(axis, mock_api):
+    """The stale-cache fix must not add a round trip to every absolute move."""
+    axis._current_position_steps = 1000
+    axis._position_cache_is_fresh = True
+    mock_api.read_encoder_value_addition = AsyncMock(return_value=1000)
+
+    await axis.move_to_position_abs_axis(5000, speed_param=150, wait=False)
+
+    mock_api.read_encoder_value_addition.assert_not_called()

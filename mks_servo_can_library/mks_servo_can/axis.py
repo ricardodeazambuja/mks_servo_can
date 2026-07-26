@@ -174,6 +174,10 @@ class Axis:
         # consult a fresh value - acting on a stale one silently skips a move and
         # reports success. See _invalidate_position_cache().
         self._position_cache_is_fresh: bool = False
+        # Where the last commanded move was aimed, in raw encoder steps. Used
+        # only to size completion timeouts once the cache above goes stale,
+        # which it does on every move. None means "no idea".
+        self._last_commanded_target_steps: Optional[int] = None
         self._current_speed_rpm: Optional[int] = None
         self._is_enabled: bool = False
         self._is_homed: bool = False
@@ -434,6 +438,7 @@ class Axis:
                         self._is_homed = True
                         self._current_position_steps = 0 # Typically homing sets zero
                         self._position_cache_is_fresh = True
+                        self._last_commanded_target_steps = 0
                         self._error_state = None
                         logger.info(f"Axis '{self.name}': Homing successful via async completion.")
                         return
@@ -449,6 +454,7 @@ class Axis:
                 self._is_homed = True
                 self._current_position_steps = 0
                 self._position_cache_is_fresh = True
+                self._last_commanded_target_steps = 0
                 self._error_state = None
                 logger.info(f"Axis '{self.name}': Homing successful (immediate).")
             else: # HOME_FAIL or other unexpected initial status
@@ -490,22 +496,49 @@ class Axis:
         await self._low_level_api.set_current_axis_to_zero(self.can_id)
         self._current_position_steps = 0
         self._position_cache_is_fresh = True
+        self._last_commanded_target_steps = 0
         self._is_homed = True # Setting zero often implies a homed state relative to this new zero
         self._error_state = None
+
+    def _reference_steps_for_timeout(
+        self, current_steps: Optional[int], cache_usable: bool
+    ) -> int:
+        """
+        Best available estimate of where the axis is, for sizing a timeout.
+
+        Prefers a fresh encoder cache. Falls back to the last absolute target
+        commanded, which stays accurate because absolute moves land where they
+        were told to, and costs no CAN traffic. Only when neither is available
+        does it assume zero, which is correct for a freshly constructed axis.
+
+        Args:
+            current_steps: The cached position, which may be stale or None.
+            cache_usable: Whether that cache is known fresh.
+
+        Returns:
+            Position in raw encoder steps to measure the move against.
+        """
+        if cache_usable and current_steps is not None:
+            return current_steps
+        if self._last_commanded_target_steps is not None:
+            return self._last_commanded_target_steps
+        return current_steps or 0
 
     def _calculate_move_timeout(
         self,
         command_const: int,
         pulses_to_move_for_timeout: Optional[int],
         speed_param_for_calc: Optional[int],
+        accel_param_for_calc: Optional[int] = None,
     ) -> float:
         """
         Estimates how long a move should take, for use as a completion timeout.
 
-        The estimate is derived from the commanded speed parameter and the move
-        distance, expressed in whichever step unit the command uses. A generous
-        buffer is added because the motor's acceleration ramp is not modelled
-        here.
+        The estimate is derived from the commanded speed parameter, the move
+        distance in whichever step unit the command uses, and the acceleration
+        ramp. It deliberately errs long: an over-long timeout only delays
+        noticing a genuinely stuck move, whereas an under-long one fails a move
+        that actually succeeded.
 
         Args:
             command_const: The MKS run command being issued. Determines whether
@@ -515,6 +548,8 @@ class Axis:
                 default timeout.
             speed_param_for_calc: MKS speed parameter (0-3000) for the move, or
                 None to use the default timeout.
+            accel_param_for_calc: MKS acceleration parameter (0-255) for the
+                move. Defaults to `self.default_accel_param` when not given.
 
         Returns:
             A timeout in seconds, never shorter than five CAN timeouts.
@@ -527,9 +562,12 @@ class Axis:
             max_rpm_reference = const.MAX_RPM_BY_WORK_MODE.get(
                 self._work_mode, const.MAX_RPM_VFOC_MODE
             )
-            estimated_motor_rpm = (
-                float(speed_param_for_calc) / 3000.0
-            ) * max_rpm_reference
+            # Manual section 6.1: the speed parameter *is* RPM (calibrated for
+            # 16/32/64 subdivisions), and a value above the work mode's ceiling
+            # makes the motor run at that ceiling. It is clamped, never scaled.
+            estimated_motor_rpm = min(
+                float(speed_param_for_calc), float(max_rpm_reference)
+            )
             if estimated_motor_rpm <= 0.1:
                 return default_timeout
 
@@ -551,7 +589,28 @@ class Axis:
                 return default_timeout
 
             estimated_duration = abs(pulses_to_move_for_timeout) / steps_per_sec
-            calculated = estimated_duration * 1.25 + const.CAN_TIMEOUT_SECONDS * 3.0
+
+            # Manual section 6.1: with acceleration parameter `acc` the speed
+            # changes by 1 RPM every (256 - acc) * ACCEL_TICK_SECONDS seconds,
+            # so a small `acc` ramps slowly and can dominate a short move.
+            # `acc == 0` means "no ramp, run straight at the set speed".
+            # Charged twice, once for the ramp up and once for the ramp down.
+            accel = (
+                self.default_accel_param
+                if accel_param_for_calc is None
+                else accel_param_for_calc
+            )
+            accel = max(0, min(int(accel), const.MAX_ACCEL_PARAM))
+            ramp_seconds = (
+                2.0
+                * estimated_motor_rpm
+                * (256.0 - accel)
+                * const.ACCEL_TICK_SECONDS
+            ) if accel else 0.0
+
+            calculated = (
+                estimated_duration + ramp_seconds
+            ) * 1.25 + const.CAN_TIMEOUT_SECONDS * 3.0
             return max(calculated, const.CAN_TIMEOUT_SECONDS * 5.0)
         except (ZeroDivisionError, AttributeError, TypeError, ValueError) as exc:
             logger.warning(
@@ -727,6 +786,7 @@ class Axis:
         success_status: int = const.POS_RUN_COMPLETE,
         pulses_to_move_for_timeout: Optional[int] = None,
         speed_param_for_calc: Optional[int] = None,
+        accel_param_for_calc: Optional[int] = None,
     ) -> None:
         """
         Dispatches a positional move and returns once the motor has acknowledged it.
@@ -749,6 +809,8 @@ class Axis:
                 appropriate to `command_const`, used to size the timeout.
             speed_param_for_calc: MKS speed parameter used for the move, also
                 used to size the timeout.
+            accel_param_for_calc: MKS acceleration parameter used for the move,
+                which sets how much ramp time the timeout must allow for.
 
         Raises:
             CommunicationError: If the command could not be sent or acknowledged.
@@ -765,12 +827,15 @@ class Axis:
         self._active_move_future = move_future
         self._pending_move_command = command_const
         # The motor is about to move, so the cached position stops describing
-        # it. It is refreshed once the move completes; until then no shortcut
-        # may rely on it.
+        # it. Nothing refreshes it when the move completes - only an explicit
+        # read does - so until someone reads, no shortcut may rely on it.
         self._position_cache_is_fresh = False
 
         move_timeout = self._calculate_move_timeout(
-            command_const, pulses_to_move_for_timeout, speed_param_for_calc
+            command_const,
+            pulses_to_move_for_timeout,
+            speed_param_for_calc,
+            accel_param_for_calc,
         )
         logger.debug(
             "Axis '%s': dispatching CMD=%02X with completion timeout %.2fs",
@@ -859,6 +924,9 @@ class Axis:
         cmd_func = None
         cmd_const = 0
         pulses_for_timeout = 0
+        # Signed displacement in raw encoder steps, used to carry the
+        # last-commanded-target estimate along with the move.
+        relative_encoder_delta = 0
 
         if unit == 'user':
             relative_encoder_steps = self.kinematics.user_to_steps(distance)
@@ -880,6 +948,7 @@ class Axis:
             )
             cmd_const = const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS
             pulses_for_timeout = relative_encoder_steps
+            relative_encoder_delta = relative_encoder_steps
             sp = mks_speed
 
         elif unit == 'pulses':
@@ -895,6 +964,9 @@ class Axis:
             )
             cmd_const = const.CMD_RUN_POSITION_MODE_RELATIVE_PULSES
             pulses_for_timeout = num_microsteps
+            relative_encoder_delta = self._command_microsteps_to_raw_encoder_steps(
+                relative_microsteps
+            )
 
         elif unit == 'axis':
             relative_encoder_steps = int(distance)
@@ -907,14 +979,23 @@ class Axis:
             )
             cmd_const = const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS
             pulses_for_timeout = relative_encoder_steps
+            relative_encoder_delta = relative_encoder_steps
 
         else:
             raise ParameterError(f"Unknown unit type '{unit}' for relative move.")
 
+        # A relative move shifts where the axis will end up, so carry the
+        # estimate along with it. Relative moves size their own timeout from
+        # the delta they were given, so this only matters to a later absolute
+        # move that has to fall back on it.
+        if self._last_commanded_target_steps is not None:
+            self._last_commanded_target_steps += relative_encoder_delta
+
         # Execute the move
         await self._execute_move(cmd_func, cmd_const,
                                  pulses_to_move_for_timeout=pulses_for_timeout,
-                                 speed_param_for_calc=int(sp))
+                                 speed_param_for_calc=int(sp),
+                                 accel_param_for_calc=int(ac))
         if wait and self._active_move_future:
             await self._active_move_future
 
@@ -978,15 +1059,25 @@ class Axis:
             self._low_level_api.run_position_mode_absolute_axis,
             self.can_id, mks_speed_param, ac, target_encoder_steps,
         )
-        # The distance only sizes the completion timeout. With no usable cache
-        # the worst case is the whole way from zero, which errs long - the right
-        # direction for a timeout.
-        distance_for_timeout = abs(target_encoder_steps - (current_steps or 0))
+        # The distance only sizes the completion timeout, but sizing it from a
+        # stale cache is worse than not sizing it at all: nothing refreshes the
+        # cache when a move finishes, so a move back to a position the axis
+        # last occupied reads as a distance of almost zero and gets almost no
+        # budget, failing a move the motor completes normally.
+        #
+        # The last commanded target is a free stand-in - absolute moves land
+        # where they were told to, within counts - so it keeps the estimate
+        # honest without the encoder read that C3 removed from this path.
+        distance_for_timeout = abs(
+            target_encoder_steps - self._reference_steps_for_timeout(current_steps, cache_usable)
+        )
+        self._last_commanded_target_steps = target_encoder_steps
         await self._execute_move(
             cmd_func,
             const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
             pulses_to_move_for_timeout=distance_for_timeout,
-            speed_param_for_calc=mks_speed_param
+            speed_param_for_calc=mks_speed_param,
+            accel_param_for_calc=int(ac),
         )
 
         if wait and self._active_move_future:
@@ -1213,8 +1304,9 @@ class Axis:
             self._active_move_future.cancel("Speed mode initiated, cancelling positional move future.")
         self._active_move_future = None
         # Speed mode moves the shaft without a target, so nothing refreshes the
-        # cached position on its own.
+        # cached position on its own and no commanded target describes it.
         self._position_cache_is_fresh = False
+        self._last_commanded_target_steps = None
 
 
     async def stop_motor(self, deceleration_param: Optional[int] = None) -> None:
@@ -1255,8 +1347,10 @@ class Axis:
             if self._active_move_future and not self._active_move_future.done():
                  self._active_move_future.cancel("Motor stop initiated")
             self._active_move_future = None
-            # Wherever the motor coasted to, it is not where the cache says.
+            # Wherever the motor coasted to, it is not where the cache says,
+            # and it never reached the target it was aimed at either.
             self._position_cache_is_fresh = False
+            self._last_commanded_target_steps = None
 
 
     async def emergency_stop(self) -> None:
@@ -1277,6 +1371,7 @@ class Axis:
             self._active_move_future.cancel("Motor emergency stopped")
         self._active_move_future = None # Clear the future as the move is aborted
         self._position_cache_is_fresh = False # Stopped somewhere unknown
+        self._last_commanded_target_steps = None
 
     async def enable_motor(self) -> None:
         """

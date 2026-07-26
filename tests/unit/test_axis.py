@@ -692,7 +692,8 @@ class TestAxisMovement:
                 ANY,  # the lambda function
                 const.CMD_RUN_POSITION_MODE_ABSOLUTE_AXIS,
                 pulses_to_move_for_timeout=target_steps,
-                speed_param_for_calc=speed
+                speed_param_for_calc=speed,
+                accel_param_for_calc=axis_instance.default_accel_param,
             )
 
             # Verify the lambda calls the correct low-level API method
@@ -714,7 +715,8 @@ class TestAxisMovement:
                 ANY,
                 const.CMD_RUN_POSITION_MODE_RELATIVE_AXIS,
                 pulses_to_move_for_timeout=relative_steps,
-                speed_param_for_calc=speed
+                speed_param_for_calc=speed,
+                accel_param_for_calc=axis_instance.default_accel_param,
             )
 
             cmd_func_lambda = mock_exec_move.call_args[0][0]
