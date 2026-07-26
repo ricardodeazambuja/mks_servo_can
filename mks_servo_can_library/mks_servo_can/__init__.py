@@ -63,7 +63,11 @@ from .kinematics import (
     RotaryKinematics,
 )
 from .low_level_api import LowLevelAPI
+from .firmware import FirmwareCapabilities, probe_firmware
 from .manual_spec import (
+    get_firmware_fixes,
+    get_firmware_history,
+    get_firmware_probes,
     get_manual_commands,
     get_manual_errata,
     load_manual_spec,
@@ -98,6 +102,11 @@ __all__ = [
     # The manual's command table, shipped with the package
     "load_manual_spec",
     "get_manual_commands",
+    "get_firmware_history",
+    "get_firmware_probes",
+    "get_firmware_fixes",
+    "FirmwareCapabilities",
+    "probe_firmware",
     "get_manual_errata",
 
     # Fixed-rate streaming control, for tracking a moving reference

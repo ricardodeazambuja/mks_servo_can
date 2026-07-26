@@ -37,13 +37,21 @@ The library's implementation of `0x00` is correct: `_send_command_and_get_respon
 already keys the reply on `data[0]` (the parameter code) rather than `0x00`, which
 is what §5.9 specifies. The silence is the firmware's.
 
-Because §5.9 is documented in the V1.0.5/V1.0.6 manual and this motor does not
-answer it, **this board predates V1.0.5**. There is no CAN command to read the
-firmware version — it is shown on the OLED during boot. That is the only way to
-pin it down exactly.
+The manual's revision table adds both `0x00` and `0x35` in **V1.0.6**, so a board
+that answers neither **predates V1.0.6**. It answers `0x34`, which V1.0.3 added,
+so the floor is V1.0.3. There is no CAN command to read the firmware version — it
+is shown on the OLED during boot, and that remains the only way to pin it down
+exactly.
 
 Commands that do work: `0x30`, `0x31`, `0x32`, `0x33`, `0x34`, `0x39`, `0x3A`,
 `0x3B`, `0x3E`, `0xF1`, and the motion commands.
+
+An earlier revision of this document said these boards predate V1.0.5 and
+therefore carry the F4/F5 bug. Both claims were wrong, from reading §5.9's
+presence in the V1.0.5 manual as the release that introduced it. The revision
+table is the authority, and it puts §5.9 in V1.0.6. A board between V1.0.5 and
+V1.0.6 has the F4/F5 fix and still fails these probes, so the bug can be neither
+confirmed nor ruled out here.
 
 ## Never send a bare setter opcode
 
@@ -168,14 +176,37 @@ Nothing in the library or the examples ever sets working current — whatever is
 EEPROM is what runs. `Ma`, `HoldMa` and the work mode have to be read off the OLED
 menu, since `0x00` is unavailable here.
 
-## These boards carry the F4/F5 bug
+## Firmware detection
 
-The V1.0.5 changelog reads "Fix the bug of command F4H and F5H" — the position
-commands the library relies on. Both boards predate V1.0.5, so they carry that
-bug, which is the most likely explanation for the tens-of-counts positioning
-errors measured above rather than anything in the library.
+`Axis.initialize()` now identifies the board and records it on `axis.firmware`.
+Because there is no version command, it probes which commands answer and turns
+that into a *floor* on the release, using the revision table shipped in
+`data/manual_commands_v106.json`.
+
+Two rules make this safe and honest, and both were learned the hard way:
+
+- **Probes only read.** The probe set lives in `firmware_probes` and is a curated
+  subset of the revision table, because probing with a setter is what corrupted
+  a subdivision during bring-up. A test asserts no probe has a state-changing
+  category.
+- **A missing fix is reported as unknown, never absent.** Everything V1.0.4 and
+  V1.0.5 added is a setter or an action, so no read-only probe can detect them.
+  `has_fix()` returns `True` or `None` — never `False`. The F4/F5 fix is exactly
+  this case, which is why the claim retracted above cannot be restated in either
+  direction.
+
+What detection changes in behaviour: when `0x00` answers, the work mode is read
+back and move timeouts stop guessing. When it does not, the work mode stays
+`None` and the timeout estimator assumes the **slowest** ceiling (400 RPM), which
+errs long. The previous default assumed vFOC's 3000 RPM — the least safe choice,
+and load-bearing once timeouts were derived from it.
+
+On the lab boards detection costs 0.51 s per axis (two unanswered probes at
+0.25 s each) and reports `v1.0.3+, work mode unreadable`. Pass
+`initialize(detect_firmware=False)` to skip it; the work mode then stays unknown,
+which is conservative rather than wrong.
 
 ## Test suite
 
-`python -m pytest tests/ -q` → **807 passed, 26 skipped**, against the simulator,
+`python -m pytest tests/ -q` → **826 passed, 26 skipped**, against the simulator,
 with no hardware attached and no stray simulator processes.

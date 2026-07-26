@@ -62,6 +62,51 @@ def get_manual_commands() -> Dict[str, Any]:
     return load_manual_spec()["commands"]
 
 
+def get_firmware_history() -> Dict[str, Any]:
+    """
+    Returns which firmware release introduced each command.
+
+    Taken from the revision table at the front of the manual. Used to turn
+    "this board answers command X" into a lower bound on its firmware version,
+    since the boards expose no version command of their own.
+
+    Returns:
+        Mapping of dotted release (e.g. `"1.0.6"`) to the list of command codes
+        it added, as `"0x35"`-style strings.
+    """
+    return load_manual_spec().get("firmware_history", {})
+
+
+def get_firmware_probes() -> Dict[str, str]:
+    """
+    Returns the commands that are safe to send when identifying a board.
+
+    Deliberately a curated subset of `get_firmware_history()`: only commands
+    that *read*. Probing with a setter is unsafe because several accept a frame
+    shorter than their documented payload, answer with a success status, and
+    write whatever they found.
+
+    Returns:
+        Mapping of command code (e.g. `"0x35"`) to the release that added it.
+        Keys beginning with an underscore are commentary, not probes.
+    """
+    return load_manual_spec().get("firmware_probes", {})
+
+
+def get_firmware_fixes() -> Dict[str, Any]:
+    """
+    Returns behavioural fixes that added no new command.
+
+    These cannot be probed directly - there is nothing to ask the board - so
+    their presence can only be inferred from a version floor established by the
+    probes, and otherwise has to be reported as unknown.
+
+    Returns:
+        Mapping of dotted release to a list of human-readable descriptions.
+    """
+    return load_manual_spec().get("firmware_fixes", {})
+
+
 def get_manual_errata() -> Dict[str, Any]:
     """
     Returns the recorded contradictions in the published manual.

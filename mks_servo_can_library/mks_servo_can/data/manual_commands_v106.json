@@ -1530,25 +1530,46 @@
   },
   "firmware_history": {
     "1.0.6": [
+      "0x00",
       "0x35",
       "0x36",
-      "0x41"
+      "0x9D"
     ],
     "1.0.5": [
+      "0x41",
       "0x94"
     ],
     "1.0.4": [
+      "0x9B",
+      "0x9E",
       "0xF7",
       "0xFE"
     ],
     "1.0.3": [
-      "0x9A",
+      "0x34",
       "0x8F",
-      "0x34"
+      "0x9A"
     ],
     "1.0.1": [
-      "0x92",
-      "0x8D"
+      "0x8D",
+      "0x92"
+    ]
+  },
+  "firmware_probes": {
+    "_comment": "Commands safe to send speculatively when identifying a board, because they only read. Never probe with a setter: several accept a short frame and write garbage, e.g. a bare 0x84 silently corrupts the subdivision.",
+    "0x00": "1.0.6",
+    "0x35": "1.0.6",
+    "0x34": "1.0.3"
+  },
+  "firmware_fixes": {
+    "_comment": "Behavioural changes that add no command, so no probe can detect them directly. Only inferable from a version floor established by firmware_probes.",
+    "1.0.5": [
+      "Fixed a bug in the 0xF4 and 0xF5 position commands.",
+      "0xF5 gained real-time data update."
+    ],
+    "1.0.2": [
+      "Slave stops answering when addressed by broadcast or group address.",
+      "OUT_1 port outputs a stall indication."
     ]
   },
   "errata": {

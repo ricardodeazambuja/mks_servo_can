@@ -470,7 +470,9 @@ class LowLevelAPI:
         pulses = struct.unpack(">i", response.data[1:5])[0]
         return pulses
 
-    async def read_io_status(self, can_id: int) -> Dict[str, int]:
+    async def read_io_status(
+        self, can_id: int, timeout: Optional[float] = None
+    ) -> Dict[str, int]:
         """
         Reads the status of the I/O ports (Command 0x34).
 
@@ -486,7 +488,8 @@ class LowLevelAPI:
             CommunicationError, CommandError, CRCError: On communication or response issues.
         """
         response = await self._send_command_and_get_response(
-            can_id, const.CMD_READ_IO_STATUS, expected_dlc=3
+            can_id, const.CMD_READ_IO_STATUS, expected_dlc=3,
+            timeout=timeout if timeout is not None else const.CAN_TIMEOUT_SECONDS,
         )
         status_byte = response.data[1]
         return {
@@ -497,7 +500,9 @@ class LowLevelAPI:
             "raw_byte": status_byte,
         }
 
-    async def read_raw_encoder_value_addition(self, can_id: int) -> int:
+    async def read_raw_encoder_value_addition(
+        self, can_id: int, timeout: Optional[float] = None
+    ) -> int:
         """
         Reads the RAW accumulated encoder value (addition) (Command 0x35).
 
@@ -514,7 +519,8 @@ class LowLevelAPI:
             CommunicationError, CommandError, CRCError: On communication or response issues.
         """
         response = await self._send_command_and_get_response(
-            can_id, const.CMD_READ_RAW_ENCODER_ADDITION, expected_dlc=8
+            can_id, const.CMD_READ_RAW_ENCODER_ADDITION, expected_dlc=8,
+            timeout=timeout if timeout is not None else const.CAN_TIMEOUT_SECONDS,
         )
         # Data is int48_t, transmitted as 6 bytes, MSB first. [MKS Servo42D CAN Manual] (Page 17)
         raw_bytes = response.data[1:7] # 6 bytes, MSB first
@@ -1453,7 +1459,8 @@ class LowLevelAPI:
 
     # --- Part 5.9: Read system Parameter command ---
     async def read_system_parameter(
-        self, can_id: int, parameter_command_code: int
+        self, can_id: int, parameter_command_code: int,
+        timeout: Optional[float] = None,
     ) -> Tuple[int, bytes]:
         """
         Reads a system parameter from the motor using the generic read command (0x00).
@@ -1478,6 +1485,7 @@ class LowLevelAPI:
             can_id,
             const.CMD_READ_SYSTEM_PARAMETER_PREFIX, # This is 0x00
             data=[parameter_command_code],
+            timeout=timeout if timeout is not None else const.CAN_TIMEOUT_SECONDS,
         )
         # Per manual page 35, if parameter cannot be read, data is FF FF after echoed code
         if len(response_msg.data) == 4 and \

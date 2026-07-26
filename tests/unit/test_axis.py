@@ -130,6 +130,19 @@ def mock_low_level_api():
     # default "successful" or neutral responses.
     mock.read_encoder_value_addition = AsyncMock(return_value=0)
     # Mocks reading encoder value, returning 0 by default.
+    # The firmware probe runs during initialize(). Default to a board that does
+    # not answer the V1.0.6 read commands, which is what the hardware in the
+    # lab actually does; tests that want a newer board override these. Without
+    # this an AsyncMock answers every probe and the axis looks like V1.0.6.
+    mock.read_system_parameter = AsyncMock(
+        side_effect=CommunicationError("no 0x00 on this firmware")
+    )
+    mock.read_raw_encoder_value_addition = AsyncMock(
+        side_effect=CommunicationError("no 0x35 on this firmware")
+    )
+    mock.read_io_status = AsyncMock(
+        side_effect=CommunicationError("no 0x34 on this firmware")
+    )
     mock.read_en_pin_status = AsyncMock(return_value=False)
     # Mocks reading enable pin status, returning False (disabled) by default.
     mock.query_motor_status = AsyncMock(return_value=const.MOTOR_STATUS_STOPPED)

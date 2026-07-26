@@ -49,6 +49,7 @@ from .exceptions import (
     MotorError,
     ParameterError,
 )
+from .firmware import FirmwareCapabilities, probe_firmware
 from .kinematics import Kinematics, RotaryKinematics
 from .low_level_api import LowLevelAPI
 
@@ -190,9 +191,16 @@ class Axis:
         # Command byte of the move currently in flight, if any. Needed so that a
         # superseded move's stale notification can be identified and discarded.
         self._pending_move_command: Optional[int] = None
-        # Cached work mode, used to size move timeouts. Updated by set_work_mode().
-        # Serial FOC is the factory default for CAN control.
-        self._work_mode: int = const.MODE_SR_VFOC
+        # Cached work mode, used to size move timeouts. Updated by
+        # set_work_mode(), or read from the board during initialize() when the
+        # firmware supports it. None means genuinely unknown: the factory
+        # default is serial FOC, but a board configured into an OPEN mode tops
+        # out at 400 RPM instead of 3000, and assuming otherwise sizes move
+        # timeouts far too short.
+        self._work_mode: Optional[int] = None
+        # What this board's firmware was observed to support. Populated by
+        # initialize(); until then nothing has been measured.
+        self.firmware: FirmwareCapabilities = FirmwareCapabilities()
 
     @property
     def _loop(self) -> asyncio.AbstractEventLoop:
@@ -231,7 +239,8 @@ class Axis:
         return raw_encoder_steps
 
     async def initialize(
-        self, calibrate: bool = False, home: bool = False
+        self, calibrate: bool = False, home: bool = False,
+        detect_firmware: bool = True,
     ) -> None:
         """
         Performs initial communication and setup for the axis.
@@ -239,8 +248,10 @@ class Axis:
         This method typically includes:
         1. A basic communication test by reading the current position.
         2. Reading the initial enabled status of the motor.
-        3. Optionally, performing encoder calibration.
-        4. Optionally, performing a homing sequence. Homing will only proceed
+        3. Identifying what the board's firmware supports, and reading back the
+           work mode when the firmware allows it.
+        4. Optionally, performing encoder calibration.
+        5. Optionally, performing a homing sequence. Homing will only proceed
            if calibration was successful (if `calibrate=True`) or if calibration
            was not requested and the axis is considered calibrated.
 
@@ -252,6 +263,11 @@ class Axis:
                        This may be required for some motors before precise operation.
             home: If True, attempts to home the axis. Homing typically sets a
                   defined zero position.
+            detect_firmware: If True, probes which commands the board answers
+                and records the result on `self.firmware`. Probing uses read
+                commands only and costs a few short round trips. Turning it off
+                leaves the work mode unknown, which makes move timeouts more
+                conservative rather than wrong.
 
         Raises:
             MKSServoError: Or its subclasses (e.g., `CommunicationError`, `CalibrationError`,
@@ -267,6 +283,15 @@ class Axis:
             logger.info(
                 f"Axis '{self.name}': Initial EN pin status: {'Enabled' if self._is_enabled else 'Disabled'}."
             )
+            if detect_firmware:
+                self.firmware = await probe_firmware(self._low_level_api, self.can_id)
+                # A board that can report its work mode removes the guesswork
+                # from every subsequent move timeout.
+                if self.firmware.work_mode is not None:
+                    self._work_mode = self.firmware.work_mode
+                logger.info(
+                    f"Axis '{self.name}': firmware {self.firmware.describe()}."
+                )
             if calibrate:
                 await self.calibrate_encoder() # Sets _is_calibrated on success
             else:
@@ -559,8 +584,14 @@ class Axis:
             return default_timeout
 
         try:
-            max_rpm_reference = const.MAX_RPM_BY_WORK_MODE.get(
-                self._work_mode, const.MAX_RPM_VFOC_MODE
+            # An unknown work mode has to assume the *slowest* ceiling. The
+            # ceiling only ever caps the speed estimate, so a low guess yields
+            # a long duration and a generous timeout, while a high guess fails
+            # moves that a 400 RPM open-mode board completes normally.
+            max_rpm_reference = (
+                const.MAX_RPM_BY_WORK_MODE.get(self._work_mode, const.MAX_RPM_VFOC_MODE)
+                if self._work_mode is not None
+                else min(const.MAX_RPM_BY_WORK_MODE.values())
             )
             # Manual section 6.1: the speed parameter *is* RPM (calibrated for
             # 16/32/64 subdivisions), and a value above the work mode's ceiling
