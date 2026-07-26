@@ -158,7 +158,7 @@ def to_global(pts: np.ndarray, tilt_deg: float, v: dict) -> np.ndarray:
     x1, y1, z1 = x * c - y * s, x * s + y * c, z
     # rotate([-90,0,0]) : (x,y,z) -> (x, z, -y)
     gx, gy, gz = x1, z1, -y1
-    ty = v["tilt_face_y"] + v["plate_t"] + 4.0
+    ty = v["tilt_face_y"] + v["plate_t"] + v["cradle_gap"]
     return np.column_stack([gx, gy + ty, gz + v["tilt_axis_h"]])
 
 
@@ -188,6 +188,11 @@ def obstacles(v: dict) -> list:
           v["tilt_axis_h"] - v["driver_pcb"] / 2),
          (v["driver_pcb"] / 2, v["tilt_face_y"],
           v["tilt_axis_h"] + v["driver_pcb"] / 2)),
+        # Back rib of the yoke, which now reaches behind the column.
+        ("yoke back rib",
+         (-v["rib_w"] / 2, v["tilt_face_y"] - v["rib_d"], v["beam_z0"]),
+         (v["rib_w"] / 2, v["tilt_face_y"],
+          v["tilt_axis_h"] - v["motor_body"] / 2 - 5)),
         # Base plate and everything below it.
         ("base plate",
          (-base_hw, -base_hw, -200.0),

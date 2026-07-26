@@ -101,8 +101,13 @@ tilt_axis_h = 70.0;
 tilt_face_y = -30.0;
 
 wall        = 3.2;
-plate_t     = 6.0;
+plate_t     = 4.0;   // every mm here is taken out of the 20 mm shaft
 hub_wall    = 5.5;
+
+// Gap between the yoke's plate and the cradle's hub, along the tilt shaft.
+// Named because three things depend on it: the assembly preview, the clearance
+// checker and the viewer. A magic 4 in each was how they drifted apart.
+cradle_gap  = 3.5;
 
 // Base plate (PART C). Declared here because the yoke's hub height depends on
 // the plate thickness it has to sit above.
@@ -225,35 +230,51 @@ col_w       = 26.0;
 tilt_plate_w = 42.0;              // corner radius 29.7 from the tilt axis
 tilt_plate_h = 42.0;
 
+// Stiffening rib on the far side of the column. The space behind the column is
+// free below the tilt motor, and the column is loaded in bending by the
+// camera's moment - across its 5 mm thickness, its weakest direction. The rib
+// turns that thin wall into a deep T-section for the price of no clearance.
+rib_w       = 12.0;
+rib_d       = 13.0;
+
 module pan_yoke() {
     difference() {
         union() {
             // Shaft clamp.
             translate([0, 0, pan_hub_z]) cylinder(d = pan_hub_od, h = pan_hub_h);
 
-            // Horizontal beam out to the column, kept low.
+            // Horizontal beam, blended into the hub with a hull rather than
+            // butted against it: a square junction at the most loaded corner
+            // of the part is where a printed bracket splits.
             hull() {
                 translate([0, 0, beam_z0]) cylinder(d = pan_hub_od, h = beam_h);
-                translate([-col_w / 2, tilt_face_y, beam_z0])
-                    cube([col_w, plate_t, beam_h]);
+                translate([-col_w / 2, tilt_face_y - rib_d, beam_z0])
+                    cube([col_w, plate_t + rib_d, beam_h]);
             }
 
-            // Vertical column, flush with the tilt motor's mounting face so it
-            // never intrudes into the cradle's half-space.
-            translate([-col_w / 2, tilt_face_y, beam_z0])
-                cube([col_w, plate_t, tilt_axis_h - beam_z0]);
+            // Column, tapering from the beam's width up to the motor face.
+            // Printed with Z up this is what keeps the plate's wings off
+            // support: they arrive gradually at about 10 deg from vertical
+            // instead of appearing as an 8 mm ledge in mid-air.
+            hull() {
+                translate([-col_w / 2, tilt_face_y, beam_z0])
+                    cube([col_w, plate_t, eps]);
+                translate([-tilt_plate_w / 2, tilt_face_y,
+                           tilt_axis_h - tilt_plate_h / 2])
+                    cube([tilt_plate_w, plate_t, eps]);
+            }
 
             // The mounting face.
             translate([-tilt_plate_w / 2, tilt_face_y, tilt_axis_h - tilt_plate_h / 2])
                 cube([tilt_plate_w, plate_t, tilt_plate_h]);
 
-            // Gusset in the column's own plane, so it adds stiffness without
-            // reaching into +Y where the cradle lives.
+            // Back rib, tapering out below the tilt motor so it never touches it.
             hull() {
-                translate([-col_w / 2, tilt_face_y + plate_t, beam_z0])
-                    cube([col_w, wall, beam_h]);
-                translate([-col_w / 2, tilt_face_y + plate_t, tilt_axis_h - 26])
-                    cube([col_w, wall, eps]);
+                translate([-rib_w / 2, tilt_face_y - rib_d, beam_z0])
+                    cube([rib_w, rib_d, beam_h]);
+                translate([-rib_w / 2, tilt_face_y - eps,
+                           tilt_axis_h - motor_body / 2 - 5])
+                    cube([rib_w, eps, eps]);
             }
         }
 
@@ -270,7 +291,8 @@ module pan_yoke() {
                     cylinder(d = m3_nut_af / cos(30), h = 5, $fn = 6);
             }
 
-        // Tilt motor interface.
+        // Tilt motor interface. The motor bolts to the *back* of this plate,
+        // with the shaft passing through toward the cradle.
         translate([0, tilt_face_y - eps, tilt_axis_h]) rotate([-90, 0, 0]) {
             nema_bolt_holes(plate_t + 2 * eps);
             translate([0, 0, -eps])
@@ -292,7 +314,9 @@ module pan_yoke() {
 // Print flat on the platform's underside, platform down. The clamp screw again
 // runs parallel to the bed.
 
-cradle_hub_h  = 14.0;
+// Exposed shaft is shaft_len minus the plate the motor bolts through, so the
+// hub plus the assembly gap has to fit inside that. 5 + 2 + 12 = 19 of 20 mm.
+cradle_hub_h  = 12.0;
 cradle_hub_od = shaft_d + 2 * hub_wall + 3.0;
 
 // Everything below is measured in the cradle's own frame: +Z runs along the
@@ -405,11 +429,11 @@ module assembly(pan_deg = 0, tilt_deg = 0) {
 
         // Tilt motor bolted to the yoke face, shaft pointing back at the pan
         // axis (+Y in the yoke frame).
-        translate([0, tilt_face_y + plate_t, tilt_axis_h]) rotate([-90, 0, 0])
+        translate([0, tilt_face_y, tilt_axis_h]) rotate([-90, 0, 0])
             nema17_with_driver();
 
         // Camera cradle on the tilt shaft.
-        translate([0, tilt_face_y + plate_t + 4.0, tilt_axis_h])
+        translate([0, tilt_face_y + plate_t + cradle_gap, tilt_axis_h])
             rotate([-90, 0, 0])
                 rotate([0, 0, tilt_deg])
                     color("#2a7fd8") camera_cradle();

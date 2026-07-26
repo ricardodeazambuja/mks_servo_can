@@ -45,11 +45,16 @@ exported. Each is oriented so the clamp screw tightens *across* layer lines
 rather than trying to peel them apart — a hub printed the other way up splits
 the first time you torque it.
 
-| Part | Orientation | Notes |
-| --- | --- | --- |
-| A pan yoke | hub's bottom face on the bed | the beam's overhang is self-bridging |
-| B camera cradle | platform underside on the bed | ribs print upward |
-| C base plate | plate flat, legs up | countersinks face the bed |
+| Part | Orientation | Mass | Notes |
+| --- | --- | --- | --- |
+| A pan yoke | beam's underside on the bed, plate pointing up | 32 g | column tapers into the plate at ~10° from vertical, so the wings are never an overhang |
+| B camera cradle | standing on the hub's end face, platform vertical | 20 g | small footprint for a 54 mm part — use a brim |
+| C base plate | plate flat, legs up | 61 g | countersinks face the bed |
+
+Both clamp hubs print with their **bore vertical**. That is deliberate: the
+layers then run around the bore, and the clamp screw pulls the slit closed
+within a layer instead of trying to peel layers apart. A hub printed on its
+side splits the first time you torque it.
 
 Hardware needed: 8 × M3×8 (motor faces), 2 × M3×20 + 2 × M3 nuts (shaft
 clamps), 1 × ¼"-20 (camera), 4 × M3×10 (base plate to motor).
@@ -91,13 +96,33 @@ Current worst-case clearances:
 | Against | Clearance | At tilt |
 | --- | --- | --- |
 | yoke beam | 10.8 mm | −39° |
-| yoke column | 4.0 mm | −45° |
-| tilt motor + driver | 10.0 mm | −45° |
+| yoke column | 3.5 mm | −45° |
+| tilt motor + driver | 7.5 mm | −45° |
+| yoke back rib | 15.6 mm | +90° |
 | base plate | 23.8 mm | −39° |
 
-The yoke-column figure is a fixed assembly gap along the shaft, not a swept
-clearance — set it when you slide the cradle onto the tilt shaft, and it does
-not vary with angle.
+The yoke-column figure is `cradle_gap`, a fixed assembly gap along the shaft
+rather than a swept clearance — you set it when you slide the cradle on, and it
+does not vary with angle.
+
+## The one number to check against your motors
+
+Everything along the tilt shaft is budgeted against an assumed **20 mm shaft
+length** from the front face, which is the conservative end of what 32 mm-body
+NEMA17s ship with:
+
+```
+plate 4.0  +  gap 3.5  +  cradle hub 12.0  =  19.5 mm of 20.0
+```
+
+**Measure your shaft before printing.** If it is longer — 22 or 24 mm is common —
+you have spare, and raising `cradle_gap` is the best use of it. If it is shorter,
+reduce `cradle_hub_h`, and re-run `check_clearances.py`, which reads all three
+numbers out of the `.scad`.
+
+Also confirm the D-flat: the design assumes a 5 mm shaft cut to 4.5 mm across
+the flat (`shaft_d` and `shaft_flat`). A different flat depth just needs
+`shaft_flat` changed; the bore follows it.
 
 ## Viewer
 
@@ -111,6 +136,8 @@ python make_visualizer.py
 
 It reads every dimension out of `gimbal_parts.scad` and runs the real clearance
 sweep to fill in the figure it quotes.
+
+Renders of each part, and of the assembly, are in `render/`.
 
 ## Driving it
 

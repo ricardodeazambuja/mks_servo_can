@@ -29,6 +29,7 @@ WANTED = [
     "motor_body", "motor_len", "motor_boss_d", "motor_boss_h",
     "shaft_d", "shaft_len", "driver_pcb", "driver_depth",
     "tilt_axis_h", "tilt_face_y", "plate_t", "col_w", "beam_z0", "beam_h",
+    "cradle_gap", "rib_w", "rib_d",
     "pan_hub_z", "pan_hub_h", "pan_hub_od",
     "tilt_plate_w", "tilt_plate_h",
     "cradle_hub_h", "cradle_hub_od",
@@ -264,7 +265,11 @@ const LIM = __LIMITS__;
 
 /* ---------- tiny 3x4 transform helpers (column-major R|t) ---------- */
 const I = () => [1,0,0, 0,1,0, 0,0,1, 0,0,0];
-function mul(a, b) {                       // a then b?  -> b ∘ a
+/* mul(a, b) = a . b, i.e. b is applied FIRST, then a. Compose in the same
+   order the OpenSCAD source reads: translate(...) rotate(...) child  becomes
+   mul(trans, mul(rot, ...)). Getting this backwards rotates the translation
+   vector instead of the part, which detaches everything from its mount. */
+function mul(a, b) {
   const o = new Array(12);
   for (let c = 0; c < 3; c++)
     for (let r = 0; r < 3; r++)
@@ -293,6 +298,17 @@ function box(m, x0,y0,z0, w,d,h, colour) {
   const q = [[0,1,2,3],[7,6,5,4],[0,4,5,1],[1,5,6,2],[2,6,7,3],[3,7,4,0]];
   for (const f of q) faces.push({ v: f.map(i => p[i]), c: colour });
 }
+// A prism whose width changes linearly with height: the yoke's column. Drawn
+// as one solid rather than a stack of slices, which showed as stair-steps.
+function taper(m, y0, d, z0, z1, w0, w1, colour) {
+  const p = [];
+  for (const [z, w] of [[z0, w0], [z1, w1]])
+    for (const [i, j] of [[0,0],[1,0],[1,1],[0,1]])
+      p.push(apply(m, [-w/2 + i*w, y0 + j*d, z]));
+  const q = [[0,1,2,3],[7,6,5,4],[0,4,5,1],[1,5,6,2],[2,6,7,3],[3,7,4,0]];
+  for (const f of q) faces.push({ v: f.map(i => p[i]), c: colour });
+}
+
 function cyl(m, cx,cy,z0, dia, h, colour, seg = 20) {
   const r = dia/2, ring = [];
   for (let i = 0; i < seg; i++) {
@@ -346,20 +362,24 @@ function build(pan, tilt) {
 
   // Part A: hub, low beam, column, motor face.
   cyl(P, 0, 0, D.pan_hub_z, D.pan_hub_od, D.pan_hub_h, C.yoke);
-  const beamLen = Math.abs(D.tilt_face_y) + D.plate_t;
-  box(P, -D.col_w/2, D.tilt_face_y, D.beam_z0, D.col_w, beamLen, D.beam_h, C.yoke);
-  box(P, -D.col_w/2, D.tilt_face_y, D.beam_z0, D.col_w, D.plate_t, D.tilt_axis_h - D.beam_z0, C.yoke);
+  const beamLen = Math.abs(D.tilt_face_y) + D.plate_t + D.rib_d;
+  box(P, -D.col_w/2, D.tilt_face_y - D.rib_d, D.beam_z0, D.col_w, beamLen, D.beam_h, C.yoke);
+  // Column, widening into the motor face so its wings are never an overhang.
+  taper(P, D.tilt_face_y, D.plate_t, D.beam_z0,
+        D.tilt_axis_h - D.tilt_plate_h/2, D.col_w, D.tilt_plate_w, C.yoke);
+  box(P, -D.rib_w/2, D.tilt_face_y - D.rib_d, D.beam_z0,
+      D.rib_w, D.rib_d, D.tilt_axis_h - D.motor_body/2 - 5 - D.beam_z0, C.yoke);
   box(P, -D.tilt_plate_w/2, D.tilt_face_y, D.tilt_axis_h - D.tilt_plate_h/2,
       D.tilt_plate_w, D.plate_t, D.tilt_plate_h, C.yoke);
 
   // Tilt motor, bolted to that face, shaft pointing back toward the pan axis.
-  const TM = mul(rotX(-90), mul(trans(0, D.tilt_face_y + D.plate_t, D.tilt_axis_h), P));
+  const TM = mul(P, mul(trans(0, D.tilt_face_y, D.tilt_axis_h), rotX(-90)));
   motor(TM);
 
   // Part B: the cradle, on the tilt shaft.
-  const CR = mul(rotZ(tilt),
-             mul(rotX(-90),
-             mul(trans(0, D.tilt_face_y + D.plate_t + 4, D.tilt_axis_h), P)));
+  const CR = mul(P,
+             mul(trans(0, D.tilt_face_y + D.plate_t + D.cradle_gap, D.tilt_axis_h),
+             mul(rotX(-90), rotZ(tilt))));
   cyl(CR, 0, 0, 0, D.cradle_hub_od, D.cradle_hub_h, C.cradle);
   const yTop = -D.plat_drop - D.plat_t;
   box(CR, -D.plat_w/2, yTop, 0, D.plat_w, D.plat_t, D.plat_l, C.cradle);
