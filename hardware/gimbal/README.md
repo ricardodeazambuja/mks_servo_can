@@ -41,15 +41,33 @@ all three terminal blocks and the entire user interface exposed.
 
 PLA or PETG, 0.2 mm layers, 4 perimeters, ≥40% infill in the clamp hubs. No
 supports needed in the orientations below, which are also how the STLs are
-exported. Each is oriented so the clamp screw tightens *across* layer lines
-rather than trying to peel them apart — a hub printed the other way up splits
-the first time you torque it.
+exported — **measured, not assumed**, see `check_printability.py`. Each part is
+oriented so the clamp screw tightens *across* layer lines rather than trying to
+peel them apart; a hub printed the other way up splits the first time you torque
+it.
 
 | Part | Orientation | Mass | Notes |
 | --- | --- | --- | --- |
 | A pan yoke | beam's underside on the bed, plate pointing up | 32 g | column tapers into the plate at ~10° from vertical, so the wings are never an overhang |
 | B camera cradle | standing on the hub's end face, platform vertical | 20 g | small footprint for a 54 mm part — use a brim |
 | C base plate | plate flat, legs up | 61 g | countersinks face the bed |
+
+`python check_printability.py` reads the exported STLs and measures this rather
+than taking it on trust. It reports down-facing patches by the *span* each has
+to bridge, not by area, because area is misleading here: every bolt hole through
+a vertical plate has a down-facing ceiling, so the yoke accumulates 129 mm² of
+them and still needs no support. What matters is that each one only crosses the
+plate it passes through.
+
+| Part | Bed footprint | Down-facing area | Widest bridge |
+| --- | --- | --- | --- |
+| pan yoke | 1139 mm² | 129 mm² over 7 patches | **4.0 mm** |
+| camera cradle | 668 mm² | 94 mm² over 5 patches | **4.7 mm** |
+| base plate | 4487 mm² | none | — |
+
+Every patch is a hole ceiling spanning a 4–5 mm plate, which any FDM printer
+bridges. The shallowest down-facing wall on either part is 48° from horizontal,
+comfortably inside the 45° rule.
 
 Both clamp hubs print with their **bore vertical**. That is deliberate: the
 layers then run around the bore, and the clamp screw pulls the slit closed
