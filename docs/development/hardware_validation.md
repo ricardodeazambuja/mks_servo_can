@@ -3,9 +3,10 @@
 A record of validating the library against real hardware, so the next person does
 not have to rediscover the setup, the firmware's gaps, or the measurement traps.
 
-Rig: MKS SERVO42D/57D_CAN at CAN ID 3 (the pen axis from
-`examples/calligraphy_plotter.py`), bare shaft, driven from a gs_usb adapter
-(`1d50:606f`, candleLight/CANable) over SocketCAN at 500 kbps.
+Rig: two MKS SERVO42D/57D_CAN boards on NEMA17 32 mm motors, both bare shaft,
+driven from a gs_usb adapter (`1d50:606f`, candleLight/CANable) over SocketCAN at
+500 kbps. CAN ID 3 is the pen axis and CAN ID 2 the Y axis from
+`examples/calligraphy_plotter.py`.
 
 ## Bringing the bus up
 
@@ -100,6 +101,57 @@ subdivisions, so any change to subdivision rescales it. And the RPM readback
 (`0x32`) lags — the first few samples after a move starts can still report the
 *previous* move's speed, including its sign. Sample past the ramp before trusting
 it.
+
+## Two motors on the bus
+
+A read-only scan of IDs 1–16 with `0x3A` finds both boards and nothing else.
+`MultiAxisController` behaves on real hardware: `initialize_all_axes` 5 ms,
+`get_all_positions_user` 3 ms, `get_all_statuses` 9 ms, each axis reporting in its
+own units (mm for Y via `LinearKinematics` at 40 mm/rev, degrees for the pen).
+Five rounds of interleaved concurrent pings and position reads showed no
+cross-talk — worth checking explicitly, since a group operation filing results
+against the wrong axis was a real defect here (`ec15859`). Bus counters stayed at
+zero errors with two nodes.
+
+Y axis figures, for comparison with the pen axis above: worst absolute error 48
+counts (0.117 mm), return-to-zero repeatable to ±1 count with a 72 count
+(0.178 mm) directional hysteresis.
+
+Requesting a speed above what the motor can reach makes the library raise a
+spurious `CommunicationError`: commanding Y at 400 mm/s (param 600) completed the
+motion but tripped the move-completion timeout, because `_calculate_move_timeout`
+estimates duration from `speed_param / 3000 * max_rpm_for_work_mode` and so
+assumes a speed the motor never achieves.
+
+## Work mode drives current, and therefore heat
+
+Manual §"Work Current": `OPEN` (400 RPM cap) and `CLOSE` (1500 RPM cap) draw a
+**fixed** current equal to `Ma` at all times, including while idle and merely
+enabled. Only `vFOC` (3000 RPM cap) self-adapts, with `Ma` as a ceiling. The
+factory default is `CR_vFOC`.
+
+Since the work mode cannot be read back on this firmware, infer it from the
+measured speed plateau: the pen axis topped out near 338 RPM (an `OPEN` mode) and
+Y reached 499 RPM (above the 400 cap, so a `CLOSE` mode). Both are therefore in
+fixed-current modes and dissipate full `Ma` continuously — which is why they get
+warm sitting still.
+
+The relevant defaults: `Ma` = 1600 mA on a SERVO42D, and `HoldMa` = 50%, so an
+idle enabled motor sits at ~800 mA. A 32 mm-body NEMA17 is typically rated
+1.0–1.33 A/phase, so the default is 1.2–1.6x over rated. Heating goes as I², so
+1600 mA runs 2.56x hotter than 1000 mA, and `HoldMa` 50% is 25x the idle heat of
+10%. `HoldMa` is ignored in vFOC mode.
+
+Nothing in the library or the examples ever sets working current — whatever is in
+EEPROM is what runs. `Ma`, `HoldMa` and the work mode have to be read off the OLED
+menu, since `0x00` is unavailable here.
+
+## These boards carry the F4/F5 bug
+
+The V1.0.5 changelog reads "Fix the bug of command F4H and F5H" — the position
+commands the library relies on. Both boards predate V1.0.5, so they carry that
+bug, which is the most likely explanation for the tens-of-counts positioning
+errors measured above rather than anything in the library.
 
 ## Test suite
 
