@@ -57,12 +57,12 @@ clamps), 1 × ¼"-20 (camera), 4 × M3×10 (base plate to motor).
 ## Building it
 
 ```
-openscad -D 'part="A"' --export-format binstl -o build/pan_yoke.stl      gimbal_parts.scad
-openscad -D 'part="B"' --export-format binstl -o build/camera_cradle.stl gimbal_parts.scad
-openscad -D 'part="C"' --export-format binstl -o build/base_plate.stl    gimbal_parts.scad
+openscad -D 'part="A"' --export-format binstl -o stl/pan_yoke.stl      gimbal_parts.scad
+openscad -D 'part="B"' --export-format binstl -o stl/camera_cradle.stl gimbal_parts.scad
+openscad -D 'part="C"' --export-format binstl -o stl/base_plate.stl    gimbal_parts.scad
 ```
 
-Pre-built STLs are in `build/`. To preview the whole thing:
+Pre-built STLs are in `stl/`. To preview the whole thing:
 
 ```
 openscad -D 'part="assembly"' -D pan=25 -D tilt=-20 gimbal_parts.scad

@@ -40,9 +40,9 @@
 // tightens across layer lines rather than trying to peel them apart.
 //
 // Render one part at a time:
-//   openscad -D 'part="A"' -o pan_yoke.stl      gimbal_parts.scad
-//   openscad -D 'part="B"' -o camera_cradle.stl gimbal_parts.scad
-//   openscad -D 'part="C"' -o base_plate.stl    gimbal_parts.scad
+//   openscad -D 'part="A"' -o stl/pan_yoke.stl      gimbal_parts.scad
+//   openscad -D 'part="B"' -o stl/camera_cradle.stl gimbal_parts.scad
+//   openscad -D 'part="C"' -o stl/base_plate.stl    gimbal_parts.scad
 //   openscad -D 'part="assembly"' -D pan=30 -D tilt=20 -o /dev/null gimbal_parts.scad
 
 part = "assembly";  // "A", "B", "C", "assembly"
