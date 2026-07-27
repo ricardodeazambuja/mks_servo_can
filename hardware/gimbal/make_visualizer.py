@@ -20,8 +20,9 @@ from check_clearances import (
     TILT_LIMITS,
     clearance,
     cradle_points,
-    obstacles,
     scad_values,
+    static_gaps,
+    swept_obstacles,
     to_global,
 )
 
@@ -33,13 +34,21 @@ PAN_LIMITS = (-170.0, 170.0)
 WANTED = [
     "motor_body", "motor_len", "motor_boss_d", "motor_boss_h",
     "shaft_d", "shaft_len", "driver_pcb", "driver_depth",
-    "tilt_axis_h", "tilt_face_y", "plate_t", "col_w", "beam_z0", "beam_h",
-    "cradle_gap", "rib_w", "rib_d",
-    "pan_hub_z", "pan_hub_h", "pan_hub_od",
-    "tilt_plate_w", "tilt_plate_h",
-    "cradle_hub_h", "cradle_hub_od",
-    "plat_l", "plat_w", "plat_t", "plat_drop", "rib_h",
-    "base_w", "base_t", "leg_h", "leg_d",
+    # pedestal
+    "ped_top", "ped_foot", "ped_h", "ped_plate_t",
+    "ped_top_r", "ped_foot_r",
+    "ap_w", "ap_roof", "ap_bottom", "ap_top_gap",
+    "ear_t", "ear_foot_inset", "ear_bolt_out", "foot_d",
+    # yoke
+    "slew_gap", "yoke_pad_d", "yoke_pad_t", "pan_hub_od", "pan_hub_h",
+    "arm_gap", "arm_t_top", "arm_t_root", "arm_x_root", "arm_y_root",
+    "tilt_axis_h", "tilt_pad", "pivot_pad_d",
+    # cradle and payload
+    "plat_w", "plat_l", "plat_t", "cheek_t", "axis_z", "hub_od", "cam_slot",
+    "cam_w", "cam_h", "cam_d",
+    # the assembly frame the .scad derives, so the viewer cannot re-derive it
+    # differently: desk at z = 0
+    "ped_top_z", "yoke_z", "tilt_z", "tilt_face_x",
 ]
 
 HTML = """<meta charset="utf-8">
@@ -191,7 +200,7 @@ table.dims td:last-child { text-align: right; }
 
 <header>
   <h1>Two-axis camera gimbal</h1>
-  <span class="sub">NEMA17 32&nbsp;mm &middot; MKS SERVO42D_CAN &middot; 2 printed parts</span>
+  <span class="sub">NEMA17 32&nbsp;mm &middot; MKS SERVO42D_CAN &middot; 3 printed parts</span>
   <span class="spacer"></span>
   <span class="sub" id="pose">pan +0.0&deg; &nbsp; tilt +0.0&deg;</span>
 </header>
@@ -238,9 +247,11 @@ table.dims td:last-child { text-align: right; }
     <div class="group">
       <div class="eyebrow">Clearance</div>
       <div class="status"><span class="dot" id="clrDot"></span><span id="clr">checking&hellip;</span></div>
-      <p class="note">The cradle sits entirely beyond the tilt motor along the
-        shaft, so it can never swing into the yoke column &mdash; the clearance
-        is structural, not a tuned number.</p>
+      <div class="status"><span class="dot" style="background:var(--muted)"></span><span id="clr2"></span></div>
+      <p class="note">The tilt axis crosses the pan axis, so the camera turns
+        about a line through its own body and stays inside the fork. What is left
+        to check is whether it clears what is <em>underneath</em> it &mdash; and
+        the sweep includes the payload, at both ends of its balance slot.</p>
     </div>
 
     <div class="group">
@@ -253,13 +264,14 @@ table.dims td:last-child { text-align: right; }
       <div class="legend">
         <span><span class="swatch" style="background:var(--accent)"></span>A &mdash; pan yoke</span>
         <span><span class="swatch" style="background:var(--cool)"></span>B &mdash; camera cradle</span>
-        <span><span class="swatch" style="background:#6b7480"></span>C &mdash; base plate</span>
+        <span><span class="swatch" style="background:#6b7480"></span>C &mdash; pedestal</span>
         <span><span class="swatch" style="background:#3c4249"></span>motor</span>
         <span><span class="swatch" style="background:#1d5c2f"></span>SERVO42D</span>
       </div>
-      <p class="note">Nothing clamps the driver end. The OLED and its three
-        buttons stay reachable &mdash; on firmware below&nbsp;v1.0.6 they are the
-        only way to read the work mode and the current limit.</p>
+      <p class="note">Nothing encloses the driver end. The pedestal is open on
+        all four sides, so the OLED and its three buttons stay reachable &mdash;
+        on firmware below&nbsp;v1.0.6 they are the only way to read the work mode
+        and the current limit.</p>
     </div>
   </aside>
 </div>
@@ -288,6 +300,8 @@ function rotZ(d){ const t=d*Math.PI/180,c=Math.cos(t),s=Math.sin(t);
   return [c,s,0, -s,c,0, 0,0,1, 0,0,0]; }
 function rotX(d){ const t=d*Math.PI/180,c=Math.cos(t),s=Math.sin(t);
   return [1,0,0, 0,c,s, 0,-s,c, 0,0,0]; }
+function rotY(d){ const t=d*Math.PI/180,c=Math.cos(t),s=Math.sin(t);
+  return [c,0,-s, 0,1,0, s,0,c, 0,0,0]; }
 const apply = (m,p) => [
   m[0]*p[0]+m[3]*p[1]+m[6]*p[2]+m[9],
   m[1]*p[0]+m[4]*p[1]+m[7]*p[2]+m[10],
@@ -303,13 +317,22 @@ function box(m, x0,y0,z0, w,d,h, colour) {
   const q = [[0,1,2,3],[7,6,5,4],[0,4,5,1],[1,5,6,2],[2,6,7,3],[3,7,4,0]];
   for (const f of q) faces.push({ v: f.map(i => p[i]), c: colour });
 }
-// A prism whose width changes linearly with height: the yoke's column. Drawn
-// as one solid rather than a stack of slices, which showed as stair-steps.
-function taper(m, y0, d, z0, z1, w0, w1, colour) {
+// One arbitrary quad. The pedestal's walls slope in two directions at once and
+// are pierced by an opening, so they are drawn from computed corners rather
+// than from an axis-aligned box.
+function quad(m, pts, colour) {
+  faces.push({ v: pts.map(p => apply(m, p)), c: colour });
+}
+
+// A solid lofted between two axis-aligned rectangles at two heights: the fork's
+// arms, which lean outward as they rise. Drawn as one solid rather than a stack
+// of slices, which showed as stair-steps.
+//   a, b: [x0, x1, y0, y1, z]
+function loft(m, a, b, colour) {
   const p = [];
-  for (const [z, w] of [[z0, w0], [z1, w1]])
-    for (const [i, j] of [[0,0],[1,0],[1,1],[0,1]])
-      p.push(apply(m, [-w/2 + i*w, y0 + j*d, z]));
+  for (const r of [a, b])
+    for (const [x, y] of [[r[0],r[2]],[r[1],r[2]],[r[1],r[3]],[r[0],r[3]]])
+      p.push(apply(m, [x, y, r[4]]));
   const q = [[0,1,2,3],[7,6,5,4],[0,4,5,1],[1,5,6,2],[2,6,7,3],[3,7,4,0]];
   for (const f of q) faces.push({ v: f.map(i => p[i]), c: colour });
 }
@@ -352,49 +375,91 @@ function motor(m) {
   box(m, -14, -p/2 - 1.2, -D.motor_len - D.driver_depth + 3, 28, 1.2, 9, C.oled);
 }
 
+/* Radius to the shroud's corner, along the diagonal, at the desk end. Mirrors
+   ped_diag_r() in the .scad - the ears are placed relative to it, so that a
+   change to the taper moves them with it. */
+function pedDiagR() {
+  return (D.ped_foot/2 - D.ped_foot_r) * Math.SQRT2 + D.ped_foot_r;
+}
+
+/* The shroud's half-width at a given height above the desk. The pedestal is
+   modelled in the .scad the way it prints - plate down, which is upside down -
+   so the taper is read back the other way up here. */
+function pedHW(z) {
+  const t = (D.ped_h - z) / D.ped_h;
+  return D.ped_top/2 + (D.ped_foot - D.ped_top)/2 * t;
+}
+
+/* One wall of the shroud, as a frame of four panels round its opening. The
+   opening is the point of the part: it is what leaves the driver's terminals and
+   its OLED and buttons reachable with the motor bolted in. */
+function shroudWall(m) {
+  const zb = D.ap_top_gap;                             // opening, bottom
+  const zt = D.ped_h - D.ped_plate_t - D.ap_bottom;    // opening, top
+  const w = D.ap_w/2, r = D.ap_roof/2;
+  // The opening's ends taper at 40 deg, and drawing them square would make this
+  // read as four legs - which is exactly the part this one replaced.
+  const rise = (w - r) / Math.tan(40*Math.PI/180);
+  const P = (t, z) => [t, pedHW(z), z];
+  const band = (z0, z1) => quad(m, [P(-pedHW(z0), z0), P(pedHW(z0), z0),
+                                    P(pedHW(z1), z1), P(-pedHW(z1), z1)], C.base);
+  band(0, zb);
+  band(zt, D.ped_h);
+  for (const s of [-1, 1]) quad(m, [
+    P(s*r, zb), P(s*w, zb + rise), P(s*w, zt - rise), P(s*r, zt),
+    P(s*pedHW(zt), zt), P(s*pedHW(zb), zb)], C.base);
+}
+
 function build(pan, tilt) {
   faces.length = 0;
 
-  // Base plate (part C) and the pan motor hanging beneath it.
-  const w = D.base_w;
-  box(I(), -w/2, -w/2, 0, w, w, D.base_t, C.base);
-  for (const sx of [-1,1]) for (const sy of [-1,1])
-    cyl(I(), sx*(w/2 - D.leg_d/2 - 1), sy*(w/2 - D.leg_d/2 - 1), -D.leg_h, D.leg_d, D.leg_h, C.base);
-  motor(I());
+  // --- part C: the pedestal, and the pan motor hanging inside it ------------
+  for (const a of [0, 90, 180, 270]) shroudWall(rotZ(a));
+  box(I(), -D.ped_top/2, -D.ped_top/2, D.ped_h - D.ped_plate_t,
+      D.ped_top, D.ped_top, D.ped_plate_t, C.base);
+  // Hold-down ears and their rubber feet, on the diagonals.
+  for (const a of [45, 135, 225, 315]) {
+    const E = rotZ(a);
+    const rf = pedDiagR() - D.ear_foot_inset, rb = pedDiagR() + D.ear_bolt_out;
+    cyl(E, 0, rb, 0, 11, D.ear_t, C.base, 12);
+    cyl(E, 0, rf, 0, D.foot_d, D.ear_t, C.base, 12);
+    cyl(E, 0, rf, -2.5, D.foot_d, 2.5, C.oled, 12);
+  }
+  motor(trans(0, 0, D.ped_h - D.ped_plate_t));
 
   // Everything from here turns with pan.
   const P = rotZ(pan);
 
-  // Part A: hub, low beam, column, motor face.
-  cyl(P, 0, 0, D.pan_hub_z, D.pan_hub_od, D.pan_hub_h, C.yoke);
-  const beamLen = Math.abs(D.tilt_face_y) + D.plate_t + D.rib_d;
-  box(P, -D.col_w/2, D.tilt_face_y - D.rib_d, D.beam_z0, D.col_w, beamLen, D.beam_h, C.yoke);
-  // Column, widening into the motor face so its wings are never an overhang.
-  taper(P, D.tilt_face_y, D.plate_t, D.beam_z0,
-        D.tilt_axis_h - D.tilt_plate_h/2, D.col_w, D.tilt_plate_w, C.yoke);
-  box(P, -D.rib_w/2, D.tilt_face_y - D.rib_d, D.beam_z0,
-      D.rib_w, D.rib_d, D.tilt_axis_h - D.motor_body/2 - 5 - D.beam_z0, C.yoke);
-  box(P, -D.tilt_plate_w/2, D.tilt_face_y, D.tilt_axis_h - D.tilt_plate_h/2,
-      D.tilt_plate_w, D.plate_t, D.tilt_plate_h, C.yoke);
+  // --- part A: the fork ----------------------------------------------------
+  cyl(P, 0, 0, D.yoke_z, D.yoke_pad_d, D.yoke_pad_t, C.yoke);
+  cyl(P, 0, 0, D.yoke_z, D.pan_hub_od, D.pan_hub_h, C.yoke);
+  for (const s of [-1, 1]) {
+    const xr = s > 0 ? [D.arm_x_root, D.arm_x_root + D.arm_t_root]
+                     : [-D.arm_x_root - D.arm_t_root, -D.arm_x_root];
+    const xt = s > 0 ? [D.arm_gap/2, D.arm_gap/2 + D.arm_t_top]
+                     : [-D.arm_gap/2 - D.arm_t_top, -D.arm_gap/2];
+    const pad = s > 0 ? D.tilt_pad : D.pivot_pad_d;
+    loft(P, [xr[0], xr[1], -D.arm_y_root/2, D.arm_y_root/2, D.yoke_z + D.yoke_pad_t],
+            [xt[0], xt[1], -pad/2, pad/2, D.tilt_z - pad/2], C.yoke);
+    box(P, xt[0], -pad/2, D.tilt_z - pad/2, xt[1] - xt[0], pad, pad, C.yoke);
+  }
 
-  // Tilt motor, bolted to that face, shaft pointing back toward the pan axis.
-  const TM = mul(P, mul(trans(0, D.tilt_face_y, D.tilt_axis_h), rotX(-90)));
-  motor(TM);
+  // Tilt motor, bolted to the outside of the +X arm, shaft pointing inward.
+  motor(mul(P, mul(trans(D.tilt_face_x, 0, D.tilt_z), rotY(-90))));
 
-  // Part B: the cradle, on the tilt shaft.
-  const CR = mul(P,
-             mul(trans(0, D.tilt_face_y + D.plate_t + D.cradle_gap, D.tilt_axis_h),
-             mul(rotX(-90), rotZ(tilt))));
-  cyl(CR, 0, 0, 0, D.cradle_hub_od, D.cradle_hub_h, C.cradle);
-  const yTop = -D.plat_drop - D.plat_t;
-  box(CR, -D.plat_w/2, yTop, 0, D.plat_w, D.plat_t, D.plat_l, C.cradle);
-  box(CR, -D.plat_w/2, yTop, 0, D.plat_w, D.plat_t + 2, D.cradle_hub_h, C.cradle);
-  for (const s of [-1,1])
-    box(CR, s*(D.plat_w/2 - 3.2), yTop - D.rib_h, 0, 3.2, D.plat_t + D.rib_h, D.plat_l, C.cradle);
-  // Stand-in camera. It sits on the platform's inner face and extends back
-  // across the tilt axis, which is the whole point of keeping plat_drop small:
-  // the body straddles the axis instead of hanging off it.
-  box(CR, -26, -D.plat_drop, 14, 52, 44, 34, '#23272e');
+  // --- part B: the cradle, and the payload it carries ----------------------
+  // Rotated about the tilt axis, which crosses the pan axis: the camera turns
+  // about a line through its own body rather than swinging off a bracket.
+  const CR = mul(P, mul(trans(0, 0, D.tilt_z), mul(rotX(tilt), trans(0, 0, -D.axis_z))));
+  box(CR, -D.plat_w/2, -D.plat_l/2, 0, D.plat_w, D.plat_l, D.plat_t, C.cradle);
+  for (const s of [-1, 1]) {
+    const x0 = s > 0 ? D.plat_w/2 - D.cheek_t : -D.plat_w/2;
+    loft(CR, [x0, x0 + D.cheek_t, -D.plat_l/2, D.plat_l/2, D.plat_t],
+             [x0, x0 + D.cheek_t, -D.hub_od/2, D.hub_od/2, D.axis_z], C.cradle);
+    cyl(mul(CR, mul(trans(x0, 0, D.axis_z), rotY(90))), 0, 0, 0,
+        D.hub_od, D.cheek_t, C.cradle);
+  }
+  box(CR, -D.cam_w/2, -D.cam_d/2, D.plat_t, D.cam_w, D.cam_d, D.cam_h, '#23272e');
 }
 
 /* ---------- render ---------- */
@@ -529,22 +594,26 @@ if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) sweepBtn.disa
 
 /* dimension table */
 const rows = [
-  ['tilt axis height', D.tilt_axis_h + ' mm'],
-  ['pan hub bore', D.shaft_d + ' mm D-shaft'],
+  ['overall height', (D.tilt_z + D.cam_h - D.axis_z + D.plat_t).toFixed(0) + ' mm'],
+  ['tilt axis, above desk', D.tilt_z.toFixed(1) + ' mm'],
+  ['tilt axis, above payload base', (D.axis_z - D.plat_t).toFixed(0) + ' mm'],
+  ['fork, clear span', D.arm_gap + ' mm'],
+  ['pan bearing pad', D.yoke_pad_d + ' mm on a flat face'],
+  ['shaft joints', D.shaft_d + ' mm D-shaft, screw on the flat'],
   ['motor face pitch', '31.0 mm sq, M3'],
-  ['camera face offset', D.plat_drop + ' mm from axis'],
-  ['platform', D.plat_l + ' \\u00d7 ' + D.plat_w + ' mm'],
-  ['base plate', D.base_w + ' mm sq'],
-  ['leg height', D.leg_h + ' mm'],
+  ['pedestal footprint', D.ped_foot + ' mm sq, 4 \\u00d7 M4'],
+  ['payload envelope', D.cam_w + '\\u00d7' + D.cam_d + '\\u00d7' + D.cam_h + ' mm'],
 ];
 document.getElementById('dimTable').innerHTML =
   rows.map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
 
 const clr = __CLEARANCE__;
 document.getElementById('clr').textContent =
-  `min ${clr.min.toFixed(1)} mm at ${clr.where}`;
+  `swept ${clr.swept.toFixed(1)} mm (${clr.where})`;
+document.getElementById('clr2').textContent =
+  `static ${clr.static.toFixed(1)} mm (${clr.staticWhere})`;
 document.getElementById('clrDot').style.background =
-  clr.min >= 3 ? 'var(--ok)' : 'var(--warn)';
+  clr.swept >= 3 ? 'var(--ok)' : 'var(--warn)';
 
 window.addEventListener('resize', draw);
 update();
@@ -559,17 +628,22 @@ def worst_clearance(values: dict) -> dict:
         values: Dimension table from the .scad file.
 
     Returns:
-        `{"min": mm, "where": label}` for the tightest point in the sweep.
+        `{"swept": mm, "where": label, "static": mm, "staticWhere": label}` -
+        the tightest point in the sweep, and the tightest gap that is fixed at
+        assembly instead. Both, because reporting only the sweep would let the
+        page claim 16 mm of clearance while the cradle sat 2.5 mm off an arm.
     """
     pts = cradle_points(values)
     best = (1e9, "")
     for tilt in np.arange(TILT_LIMITS[0], TILT_LIMITS[1] + 0.5, 0.5):
         g = to_global(pts, float(tilt), values)
-        for label, lo, hi in obstacles(values):
+        for label, lo, hi in swept_obstacles(values):
             c = clearance(g, lo, hi)
             if c < best[0]:
                 best = (c, label)
-    return {"min": round(best[0], 2), "where": best[1]}
+    tight = min(static_gaps(values), key=lambda g: g[1])
+    return {"swept": round(best[0], 2), "where": best[1],
+            "static": round(tight[1], 2), "staticWhere": tight[0]}
 
 
 def main() -> int:

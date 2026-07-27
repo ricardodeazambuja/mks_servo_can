@@ -9,18 +9,25 @@ measures, in the orientation each part is documented to print in:
   * the bed footprint, because a tall part on a small footprint tips
   * the shallowest wall angle, which is what actually decides support
 
-The overhang threshold is the usual 45 deg from vertical: a facet whose
-normal points more than that far downward is closer to horizontal than to
-vertical.
-
 **Area alone is the wrong test, and saying so is the point of this file.**
 Every bolt hole through a vertical plate has a down-facing ceiling, and a
 part with a dozen of them accumulates a large overhang area while printing
-perfectly - because each ceiling only has to bridge the thickness of the
-plate it passes through. What decides whether support is needed is the
-*span*: the shortest horizontal distance a patch has to cross before it
-lands on material again. So patches are found by connectivity and reported
-by span, and anything narrower than a routine bridge passes.
+perfectly - because each ceiling only has to bridge the width of the hole.
+What decides whether support is needed is the *span*, so patches are found
+by connectivity and reported by span, and anything narrower than a routine
+bridge passes.
+
+Which leaves the question of what a span is, and that took three attempts on
+this design alone. `_span` measures the one thing that decides it: how far
+the overhang reaches from material in the layer below. Both cheaper proxies
+were wrong in opposite directions on the same feature - see the note there,
+because the wrong ones were the plausible-looking ones.
+
+The measurements have earned their keep. On this design they found a hold-down
+ear whose 45 deg blend was buried in a wall that had already tapered out from
+under it, leaving a flat 13 x 14 mm shelf printing into thin air; four ears
+rotated onto the wall faces they were specified to avoid; and a 0.13 mm ledge
+running round a 56 mm perimeter. All three looked correct in a render.
 
 Usage:
     python check_printability.py
@@ -35,18 +42,24 @@ from stl import mesh
 
 HERE = pathlib.Path(__file__).parent
 
-# Each part, and the rotation that puts it in its documented print orientation.
-# "flip_z" turns the part upside down, which is how the base plate prints:
-# modelled with its legs hanging below the plate, printed with them pointing up.
+# Each part and the orientation it is documented to print in.
+#
+# There is no rotation column any more, and that is the point: `gimbal_parts.scad`
+# models every part in its print orientation, so what this reads off the STL is
+# what the slicer will see. The previous version had to flip the base plate here,
+# which meant this file and the .scad could disagree about which way up a part
+# printed and nothing would notice.
 PARTS = [
-    ("pan_yoke.stl", "beam underside on the bed", False),
-    ("camera_cradle.stl", "standing on the hub's end face", False),
-    ("base_plate.stl", "plate flat, legs up", True),
+    ("pan_yoke.stl", "pad on the bed, fork arms up"),
+    ("camera_cradle.stl", "platform on the bed, cheeks up"),
+    ("pedestal.stl", "top plate on the bed, desk end last"),
 ]
 
-# cos(45 deg). A facet normal with n_z below -this is a near-horizontal
-# down-face: unsupported unless it bridges.
-OVERHANG_COS = np.cos(np.radians(45.0))
+# A facet normal within this angle of straight down is a near-horizontal
+# down-face: unsupported unless it bridges. 44 rather than 45 deliberately - a
+# surface drafted at exactly the 45 deg rule sits on the threshold, and whether
+# it lands inside or outside comes down to rounding. Parts here draft at 40.
+OVERHANG_COS = np.cos(np.radians(44.0))
 
 # Down-faces within this distance of the lowest point are the part sitting on
 # the bed, not an overhang.
@@ -58,12 +71,11 @@ BED_TOL = 0.5
 BRIDGE_MM = 12.0
 
 
-def analyse(path: pathlib.Path, flip: bool) -> dict:
-    """Measures the printability of one STL in its print orientation.
+def analyse(path: pathlib.Path) -> dict:
+    """Measures the printability of one STL as modelled.
 
     Args:
         path: The STL to read.
-        flip: Whether to turn the part upside down first.
 
     Returns:
         Dict of measurements: bed footprint area, unsupported down-face area
@@ -71,9 +83,6 @@ def analyse(path: pathlib.Path, flip: bool) -> dict:
     """
     m = mesh.Mesh.from_file(str(path))
     tri = m.vectors.copy()
-    if flip:
-        tri[:, :, 2] *= -1.0
-        tri = tri[:, ::-1, :]  # keep winding, and therefore normals, consistent
 
     # Per-facet normal and area from the triangle itself, rather than trusting
     # the normals stored in the file.
@@ -88,14 +97,19 @@ def analyse(path: pathlib.Path, flip: bool) -> dict:
     z_max = tri[:, :, 2].max()
     centroid_z = tri[:, :, 2].mean(axis=1)
 
-    on_bed = (nz < -OVERHANG_COS) & (centroid_z <= z_min + BED_TOL)
-    overhang = (nz < -OVERHANG_COS) & ~on_bed
+    # Anything this close to the bed is the part sitting on it, or the chamfer
+    # that keeps elephant's foot off a mating face - not an overhang, whatever
+    # its angle. Excluding it by angle alone was enough to make the "shallowest
+    # wall" figure report that 0.6 mm chamfer on every part instead of a wall.
+    near_bed = centroid_z <= z_min + BED_TOL
+    on_bed = (nz < -OVERHANG_COS) & near_bed
+    overhang = (nz < -OVERHANG_COS) & ~near_bed
 
-    patches = _patches(tri[overhang], area[overhang])
+    patches = _patches(tri[overhang], area[overhang], tri)
 
     # Shallowest wall: the facet closest to horizontal that still faces
     # downward at all, ignoring the bed and true horizontals.
-    sloping = (nz < 0) & (nz >= -OVERHANG_COS) & ~on_bed
+    sloping = (nz < 0) & (nz >= -OVERHANG_COS) & ~near_bed
     worst_wall = np.degrees(np.arccos(np.clip(-nz[sloping].min(), -1, 1))) if sloping.any() else None
 
     return {
@@ -108,7 +122,106 @@ def analyse(path: pathlib.Path, flip: bool) -> dict:
     }
 
 
-def _patches(tri: np.ndarray, area: np.ndarray) -> list:
+def _bary(tri: np.ndarray, pts: np.ndarray) -> tuple:
+    """Projects points onto facets in plan and returns barycentric coordinates.
+
+    Args:
+        tri: Facets, shape (n, 3, 3). Only x and y are used.
+        pts: Query points, shape (m, 2).
+
+    Returns:
+        `(hit, zf)`, both shape (m, n): whether each point falls inside each
+        facet's plan projection, and the facet's z there.
+    """
+    a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
+    v0 = (b - a)[:, :2]
+    v1 = (c - a)[:, :2]
+    v2 = pts[:, None, :] - a[None, :, :2]
+    den = v0[:, 0] * v1[:, 1] - v1[:, 0] * v0[:, 1]
+    ok = np.abs(den) > 1e-12
+    safe = np.where(ok, den, 1.0)
+    u = (v2[:, :, 0] * v1[None, :, 1] - v1[None, :, 0] * v2[:, :, 1]) / safe
+    v = (v0[None, :, 0] * v2[:, :, 1] - v2[:, :, 0] * v0[None, :, 1]) / safe
+    hit = ok[None, :] & (u >= 0) & (v >= 0) & (u + v <= 1)
+    zf = (a[None, :, 2] + u * (b - a)[None, :, 2] + v * (c - a)[None, :, 2])
+    return hit, zf
+
+
+def _inside(tri: np.ndarray, pts: np.ndarray, z: float) -> np.ndarray:
+    """Which of the points are inside the solid, by ray parity straight upward.
+
+    Args:
+        tri: Facets to test against, shape (n, 3, 3).
+        pts: Query points, shape (m, 2).
+        z: The height to test at.
+
+    Returns:
+        Boolean array of shape (m). True where an upward ray crosses an odd
+        number of facets, which for a closed mesh means it started in material.
+    """
+    hit, zf = _bary(tri, pts)
+    return (np.count_nonzero(hit & (zf > z), axis=1) % 2).astype(bool)
+
+
+def _span(patch: np.ndarray, tri: np.ndarray, layer: float = 0.25,
+          pitch: float = 0.5, margin: float = 4.0) -> float:
+    """How far the overhang reaches from material in the layer below it.
+
+    This is the question a slicer answers, so it is the question asked here:
+    sample the patch's footprint on a grid, ask of each sample whether there is
+    solid material one layer lower, and measure how far the samples that have
+    none are from the ones that do. Twice that distance is the width of air the
+    extruder has to cross.
+
+    Two earlier attempts got this wrong in opposite directions, and both looked
+    reasonable:
+
+      * the shorter of the patch's two bbox dimensions - which called a 12 mm
+        aperture roof in a 4 mm wall "4 mm", the wall's thickness being the one
+        number in it that is not a span;
+      * the distance to the nearest boundary edge with material beside and below
+        it - which called the same roof "0.8 mm", because the 40 deg flank
+        beside it is material, just not material the next layer can stand on.
+
+    Args:
+        patch: The patch's facets, shape (m, 3, 3).
+        tri: Every facet in the mesh.
+        layer: How far below the patch to look for support.
+        pitch: Grid spacing for the sampling.
+        margin: How far outside the patch to look for supported ground.
+
+    Returns:
+        The span in mm: 0 when every sample is supported, and infinity when none
+        of them is and there is no supported ground nearby either.
+    """
+    z = float(patch[:, :, 2].min()) - layer
+    lo = patch[:, :, :2].reshape(-1, 2).min(axis=0) - margin
+    hi = patch[:, :, :2].reshape(-1, 2).max(axis=0) + margin
+
+    # Only facets overlapping the window can matter, and cutting the mesh down
+    # to those is what keeps this affordable: it turns 30k triangles into a few
+    # hundred.
+    keep = ((tri[:, :, 0].max(1) >= lo[0]) & (tri[:, :, 0].min(1) <= hi[0])
+            & (tri[:, :, 1].max(1) >= lo[1]) & (tri[:, :, 1].min(1) <= hi[1]))
+    sub = tri[keep]
+
+    gx = np.arange(lo[0], hi[0] + pitch, pitch)
+    gy = np.arange(lo[1], hi[1] + pitch, pitch)
+    pts = np.stack(np.meshgrid(gx, gy, indexing="ij"), axis=-1).reshape(-1, 2)
+
+    in_patch = _bary(patch, pts)[0].any(axis=1)
+    supported = _inside(sub, pts, z)
+
+    bare = in_patch & ~supported
+    if not bare.any():
+        return 0.0
+    if not supported.any():
+        return float("inf")
+    d = np.linalg.norm(pts[bare][:, None, :] - pts[supported][None, :, :], axis=2)
+    return float(2.0 * d.min(axis=1).max())
+
+
+def _patches(tri: np.ndarray, area: np.ndarray, mesh_tri: np.ndarray) -> list:
     """Groups overhang facets into connected patches and measures each span.
 
     Facets are joined when they share a vertex, so a hole's ceiling comes out
@@ -117,11 +230,10 @@ def _patches(tri: np.ndarray, area: np.ndarray) -> list:
     Args:
         tri: Overhang facets, shape (n, 3, 3).
         area: Their areas.
+        mesh_tri: Every facet in the mesh, for the span measurement.
 
     Returns:
-        One dict per patch with its area and its span, where span is the
-        shorter horizontal dimension - the distance the bridge actually has to
-        cross.
+        One dict per patch with its area and its span.
     """
     if len(tri) == 0:
         return []
@@ -154,11 +266,9 @@ def _patches(tri: np.ndarray, area: np.ndarray) -> list:
 
     out = []
     for g in groups.values():
-        pts = np.concatenate(g["pts"], axis=0)
-        dx = pts[:, 0].max() - pts[:, 0].min()
-        dy = pts[:, 1].max() - pts[:, 1].min()
-        out.append({"area": g["area"], "span": float(min(dx, dy)),
-                    "z": float(pts[:, 2].min())})
+        f = np.array(g["pts"])
+        out.append({"area": g["area"], "span": _span(f, mesh_tri),
+                    "z": float(f[:, :, 2].min())})
     return sorted(out, key=lambda p: -p["span"])
 
 
@@ -168,13 +278,13 @@ def main() -> int:
     print("-" * 62)
 
     problems = []
-    for name, orientation, flip in PARTS:
+    for name, orientation in PARTS:
         path = HERE / "stl" / name
         if not path.exists():
             print(f"{name:<20}  missing - run the openscad export first")
             problems.append(name)
             continue
-        r = analyse(path, flip)
+        r = analyse(path)
         print(f"{name:<20}{r['height']:>8.1f}{r['bed_area']:>10.0f}"
               f"{r['overhang_area']:>10.1f}{r['worst_span']:>14.1f}")
         print(f"{'  ' + orientation:<20}")

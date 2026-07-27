@@ -1,19 +1,47 @@
 # Two-axis camera gimbal
 
 A pan/tilt camera gimbal built from two NEMA17 32 mm motors, each carrying an
-MKS SERVO42D_CAN driver on its back face. Two printed parts are required; a
-third is optional but you will probably want it.
+MKS SERVO42D_CAN driver on its back face. Three printed parts, no supports, and
+it stands on a desk.
 
-| Part | Module | Joins |
-| --- | --- | --- |
-| **A** | `pan_yoke()` | pan motor's D-shaft → tilt motor's face |
-| **B** | `camera_cradle()` | tilt motor's D-shaft → camera |
-| C (optional) | `base_plate()` | pan motor → tripod or bench |
+| Part | Module | Joins | Mass |
+| --- | --- | --- | --- |
+| **A** | `pan_yoke()` | pan shaft → a fork carrying the tilt axis | 57 g |
+| **B** | `camera_cradle()` | tilt axis → camera | 40 g |
+| **C** | `pedestal()` | pan motor → desk | 114 g |
 
-Part C exists because a motor with a driver on its back **cannot stand on a flat
-surface**. The plate bolts to the pan motor's front face and hangs the motor
-underneath, so the driver and its connectors sit in free air. If you already
-have a bracket that does this, skip it.
+![the assembly](render/asm.png)
+
+## How the load gets to the desk
+
+FDM parts are roughly half as strong across layers as along them, so the design's
+job is to keep the steady loads out of layer-normal tension:
+
+| Load | Where it goes |
+| --- | --- |
+| camera weight | down each fork arm as **compression** — the arms print vertically |
+| overturning moment | into the yoke's **70 mm pad**, riding flat on the pedestal's top plate |
+| pan torque | the only thing the 5 mm shaft joint has to transmit |
+| all of it | a **tapered shroud** in shell shear, onto a 96 mm footprint you can screw down |
+
+Three consequences worth stating, because each replaced something that looked
+fine and wasn't:
+
+**The tilt axis crosses the pan axis.** The camera turns about a line through its
+own body, so it stays inside the fork and balances about the axis instead of
+hanging off a bracket. A cantilevered arm puts the payload's *static* weight into
+the root as tension across the layers, which is the one direction the material is
+weak in.
+
+**The tilt axis is supported at both ends** — the motor's shaft on one side, a
+pivot screw in the other arm on the other. A 5 mm shaft in an 11 mm printed bore
+is a poor moment bearing and a fine torque coupling, so it is only asked to be
+the second.
+
+**The pan bearing is a face, not a shaft.** The yoke's pad slides on the
+pedestal's top plate, which is the flattest surface an FDM printer makes: the
+first layer. The pad bears on a 13 mm-wide ring at its rim, not across its whole
+face, so a couple of tenths of warp cannot decide which three points it rocks on.
 
 ## What the driver dictates
 
@@ -22,144 +50,196 @@ The SERVO42D covers the whole back face and puts hardware on all four edges
 
 | Edge | What is there |
 | --- | --- |
-| top | 4-way screw terminal, motor phases, wires exit upward |
+| top | 4-way screw terminal, motor phases |
 | left | 5-way terminal — EVCC, EGND, IN_1, CAN_H, CAN_L |
 | right | 6-way terminal — V+, GND, COM, EN, STP, DIR |
 | **bottom** | **OLED display and the Next / Enter / Menu buttons** |
 
 The bottom edge is the binding constraint. On firmware below V1.0.6 the work
 mode, `Ma` (working current) and `HoldMa` cannot be read back over CAN at all —
-`Axis.initialize()` will report `work mode unreadable` — so the OLED and its
-three buttons are the *only* way to see or change them. A bracket that covers
-them makes the motor unconfigurable.
+`Axis.initialize()` reports `work mode unreadable` — so the OLED and its three
+buttons are the *only* way to see or change them. A bracket that covers them
+makes the motor unconfigurable.
 
-So neither part touches the driver end. Both locate on the motor's front face
-(the 31 mm bolt square and the 22 mm boss) and on the D-shaft, leaving the PCB,
-all three terminal blocks and the entire user interface exposed.
+So the pan motor hangs inside a shroud that is open on all four sides, with
+14 mm of air below it for fingers and wire bends. This is also why the hold-down
+ears are on the corners: an ear on a flat face needs 20 mm of wall above the
+opening to blend into, and that 20 mm is exactly where the OLED sits.
+
+![the pedestal, from the desk end](render/C_desk.png)
 
 ## Printing
 
-PLA or PETG, 0.2 mm layers, 4 perimeters, ≥40% infill in the clamp hubs. No
-supports needed in the orientations below, which are also how the STLs are
-exported — **measured, not assumed**, see `check_printability.py`. Each part is
-oriented so the clamp screw tightens *across* layer lines rather than trying to
-peel them apart; a hub printed the other way up splits the first time you torque
-it.
+PLA or PETG, 0.2 mm layers, 4 perimeters, ≥40% infill. **No supports**, in the
+orientations below — which are also how the parts are modelled, so what
+`check_printability.py` reads off the STL is what the slicer sees.
 
-| Part | Orientation | Mass | Notes |
-| --- | --- | --- | --- |
-| A pan yoke | beam's underside on the bed, plate pointing up | 32 g | column tapers into the plate at ~10° from vertical, so the wings are never an overhang |
-| B camera cradle | standing on the hub's end face, platform vertical | 20 g | small footprint for a 54 mm part — use a brim |
-| C base plate | plate flat, legs up | 61 g | countersinks face the bed |
+| Part | Orientation | Height | Bed footprint | Widest bridge |
+| --- | --- | --- | --- | --- |
+| A pan yoke | pad on the bed, arms up | 81 mm | 2190 mm² | 10.0 mm |
+| B camera cradle | platform on the bed, cheeks up | 32 mm | 3126 mm² | 4.0 mm |
+| C pedestal | top plate on the bed, desk end last | 67 mm | 4772 mm² | 10.0 mm |
 
-`python check_printability.py` reads the exported STLs and measures this rather
-than taking it on trust. It reports down-facing patches by the *span* each has
-to bridge, not by area, because area is misleading here: every bolt hole through
-a vertical plate has a down-facing ceiling, so the yoke accumulates 129 mm² of
-them and still needs no support. What matters is that each one only crosses the
-plate it passes through.
+The shallowest down-facing wall on any part is 45° from horizontal. Nothing
+drafts at exactly 45° on purpose: that is the threshold every slicer compares
+against, so surfaces here draft at **40°** and land unambiguously on the right
+side of it.
 
-| Part | Bed footprint | Down-facing area | Widest bridge |
-| --- | --- | --- | --- |
-| pan yoke | 1139 mm² | 129 mm² over 7 patches | **4.0 mm** |
-| camera cradle | 668 mm² | 94 mm² over 5 patches | **4.7 mm** |
-| base plate | 4487 mm² | none | — |
+Other things the slicer was allowed to dictate:
 
-Every patch is a hole ceiling spanning a 4–5 mm plate, which any FDM printer
-bridges. The shallowest down-facing wall on either part is 48° from horizontal,
-comfortably inside the 45° rule.
+- Load-bearing walls are whole multiples of 0.4 mm, so they fill with perimeters
+  rather than leaving a sliver of gap-fill down the middle.
+- Every bed edge is chamfered 0.6 mm. Elephant's foot squashes the first layer
+  outward by a couple of tenths, and on two of these parts the first layer *is*
+  the mating face.
+- The apertures and the arms taper at both ends instead of stopping square —
+  which turns a 42 mm span into a 10 mm one, and hands the wall's shear off into
+  the corners diagonally rather than ending in two stress-raising notches.
+- The cradle's bore is printed with the **D-flat upward**, so the bore's ceiling
+  is a flat 4.5 mm bridge rather than a drooping arc. It is also the face that
+  takes the torque.
+- Shaft bores have a lead-in chamfer, so a squashed first layer cannot stop the
+  part going on.
 
-Both clamp hubs print with their **bore vertical**. That is deliberate: the
-layers then run around the bore, and the clamp screw pulls the slit closed
-within a layer instead of trying to peel layers apart. A hub printed on its
-side splits the first time you torque it.
+## Hardware
 
-Hardware needed: 8 × M3×8 (motor faces), 2 × M3×20 + 2 × M3 nuts (shaft
-clamps), 1 × ¼"-20 (camera), 4 × M3×10 (base plate to motor).
+| Qty | Item | For |
+| --- | --- | --- |
+| 4 | M3×8 countersunk | pan motor to the pedestal's plate |
+| 4 | M3×12 | tilt motor to the fork arm |
+| 2 | M4×12 | the shaft joints, bearing on each D-flat |
+| 1 | M4×14 | the cradle's pivot, threaded into the far arm |
+| 1 | ¼"-20 | the camera |
+| 4 | 12 mm self-adhesive rubber feet | the pedestal's ears |
+| 4 | M4 wood screws | *optional* — screwing it to the bench |
 
-## Building it
+The two shaft screws are **self-tapping into the plastic** (3.3 mm pilot, ~9 mm
+of thread). Drill to 4.0 mm and fit an M3 heat-set insert instead if you would
+rather not trust a printed thread.
 
-```
-openscad -D 'part="A"' --export-format binstl -o stl/pan_yoke.stl      gimbal_parts.scad
-openscad -D 'part="B"' --export-format binstl -o stl/camera_cradle.stl gimbal_parts.scad
-openscad -D 'part="C"' --export-format binstl -o stl/base_plate.stl    gimbal_parts.scad
-```
+### Why there is no split clamp
 
-Pre-built STLs are in `stl/`. To preview the whole thing:
+Both hubs are a close D-bore plus one screw bearing on the shaft's flat, and this
+is the one place the design argues with its predecessor's *reasoning* rather than
+its geometry.
 
-```
-openscad -D 'part="assembly"' -D pan=25 -D tilt=-20 gimbal_parts.scad
-```
+A split clamp has to close, and both of these hubs stand on something stiff — the
+yoke's on a 70 mm pad, the cradle's on a 78 mm platform. Slitting a hub that is
+bonded along its whole base to a plate like that buys the slit's stress
+concentration and none of its compliance. The D-flat is already a *positive*
+drive: it carries the torque whether or not anything is clamped. So the screw
+only has to take up the bore clearance and stop the part lifting, which a screw
+straight onto the flat does without needing anything to flex.
+
+## Assembly order
+
+It matters, because the tilt shaft and the pivot screw come in from opposite
+sides:
+
+1. Bolt the pan motor up into the pedestal's plate (countersunk screws, from
+   above). Fit the rubber feet.
+2. Slide the yoke onto the pan shaft, down onto the plate, and tighten its screw
+   onto the flat.
+3. Bolt the tilt motor to the outside of the **+X** arm, shaft pointing inward.
+4. Slide the cradle onto the tilt shaft, then run the M4×14 pivot through the
+   other arm into the cradle's journal. It threads into the *arm*, so its head
+   can pull up tight without clamping the axis.
+5. Tighten the cradle's screw onto the tilt shaft's flat.
+6. Bolt the camera on and slide it along the slot until the tilt axis balances.
+7. Zip-tie the tilt motor's harness to the yoke's pad and the pedestal's corner
+   slots, leaving a service loop for ±170° of pan.
+
+Which way the D-flat happens to face is set by which of the four bolt
+orientations you use and where the rotor is — so **set the tilt zero in firmware**
+once it is together, rather than trying to make the flat land somewhere.
 
 ## Verifying a change
 
 `gimbal_parts.scad` is parametric, and a plausible-looking edit can quietly move
-the camera into the yoke. OpenSCAD will not tell you — it renders
-interpenetrating solids without complaint, and a collision only appears at
-particular angles.
+the camera into the yoke.
 
 ```
-python check_clearances.py          # exits non-zero on a clash
-python check_clearances.py --verbose
+python check_clearances.py            # exits non-zero on a clash
+python check_printability.py          # exits non-zero if anything needs support
+python check_clearances.py --fast     # skip the slow exact pass
 ```
 
-It sweeps the full soft-limit range, reads its dimensions straight out of the
-`.scad`, and includes a representative camera envelope. That last part matters:
-the parts cleared each other comfortably at `tilt_axis_h = 62`, but the *camera*
-came within 2.8 mm of the yoke beam at −39° of tilt. The current 70 mm leaves
-10.8 mm. The payload is the largest thing that moves, so it belongs in the check.
+`check_clearances.py` reports three kinds of number, and mixing them up is how
+this design shipped a 4.4 mm interpenetration with a check that said +2.5 mm:
 
-Current worst-case clearances:
+**swept** — varies with tilt. Includes the payload at both ends of its balance
+slot, because the payload is the largest thing that moves.
 
-| Against | Clearance | At tilt |
+**static** — set once when you assemble it. Each carries its own minimum, because
+they are not the same requirement: a swept clearance absorbs warp, a slipped
+joint and a camera bigger than its screw, while the gap between a rotating cradle
+and a fixed arm absorbs warp and nothing else. "Spare shaft" is not air at all —
+it is tolerance against a motor whose shaft is shorter than the 20 mm assumed
+here, the one dimension on these motors that genuinely varies by supplier.
+
+**exact** — OpenSCAD's own `intersection()` of what moves with what does not,
+exported and measured. This is the authoritative one. It does not approximate
+anything, and it is the only check that would have caught the fork being narrower
+than the cradle:
+
+```
+openscad -D 'part="interference"' -D tilt=-45 -D 'against="yoke"' \
+         --export-format binstl -o /tmp/x.stl gimbal_parts.scad
+```
+
+An empty intersection makes OpenSCAD decline to write a file at all, which is
+itself the answer. Where it does write one, the test is on **volume**, not on
+whether the mesh is empty: coincident faces are everywhere in an assembly — a
+motor's face bolts flat against a plate — and CGAL returns those contacts as a
+zero-thickness solid with a few dozen facets in it.
+
+Current state:
+
+| | Clearance | |
 | --- | --- | --- |
-| yoke beam | 10.8 mm | −39° |
-| yoke column | 3.5 mm | −45° |
-| tilt motor + driver | 7.5 mm | −45° |
-| yoke back rib | 15.6 mm | +90° |
-| base plate | 23.8 mm | −39° |
+| pedestal plate | 28.5 mm | swept, worst at tilt +58° |
+| yoke pad | 24.1 mm | swept |
+| yoke hub | 22.7 mm | swept |
+| fork arm | 3.0 mm | swept, worst at tilt −45° |
+| camera to cheek | 2.0 mm | static, each side |
+| tilt bore vs shaft tip | 1.2 mm | static — bore 11 mm, shaft reaches 9.8 mm in |
+| exact overlap | 0 mm³ | at tilt −45, −20, 0, +45, +90 |
 
-The yoke-column figure is `cradle_gap`, a fixed assembly gap along the shaft
-rather than a swept clearance — you set it when you slide the cradle on, and it
-does not vary with angle.
+### Why the swept margins are so large
 
-## The one number to check against your motors
+They are not chosen. The fork's height is set by its arms' draft angle, not by
+the payload: the arms have to splay 19 mm outboard to clear the cradle, and they
+cannot do that faster than 40° per millimetre of rise without needing support.
+That fixes the tilt axis at 60 mm, which leaves far more room underneath than the
+sweep needs — so a payload larger than the 52 × 44 × 34 mm envelope assumed here
+will still clear everything below it. What it will *not* clear is the cheeks: the
+camera has to fit **between** them, and that gap is 56 mm.
 
-Everything along the tilt shaft is budgeted against an assumed **20 mm shaft
-length** from the front face, which is the conservative end of what 32 mm-body
-NEMA17s ship with:
+The two couplings worth knowing before you edit anything:
 
-```
-plate 4.0  +  gap 3.5  +  cradle hub 12.0  =  19.5 mm of 20.0
-```
-
-**Measure your shaft before printing.** If it is longer — 22 or 24 mm is common —
-you have spare, and raising `cradle_gap` is the best use of it. If it is shorter,
-reduce `cradle_hub_h`, and re-run `check_clearances.py`, which reads all three
-numbers out of the `.scad`.
-
-Also confirm the D-flat: the design assumes a 5 mm shaft cut to 4.5 mm across
-the flat (`shaft_d` and `shaft_flat`). A different flat depth just needs
-`shaft_flat` changed; the bore follows it.
+- **The arms must reach full width below the cradle's lowest sweep.** They splay
+  to `arm_gap / 2` by `arm_mid_z` and stand vertical above it. Fold that into one
+  hull and the arms only reach full width at the motor pad's bottom edge — which
+  rises *with* the tilt axis, so raising the axis never opens the fork and the
+  cradle interpenetrates it at every angle. That was the bug.
+- **The cradle's bore must be deeper than the shaft reaches.** Whatever the bore
+  does not contain protrudes past it, into the space the camera occupies.
 
 ## Viewer
 
-`gimbal_viewer.html` is a self-contained page with pan/tilt sliders, pose
-presets and an orbit view. It is generated, not hand-maintained, so its geometry
-cannot drift from the printed parts:
+`gimbal_viewer.html` is a self-contained page with pan/tilt sliders, pose presets
+and an orbit view. It is generated, not hand-maintained, so its geometry cannot
+drift from the printed parts:
 
 ```
 python make_visualizer.py
 ```
 
-It reads every dimension out of `gimbal_parts.scad` and runs the real clearance
-sweep to fill in the figure it quotes.
-
-Renders of each part, and of the assembly, are in `render/`.
+It reads every dimension out of `gimbal_parts.scad` — including the assembly
+frame the `.scad` derives — and runs the real clearance sweep to fill in the
+figures it quotes. Renders of each part are in `render/`.
 
 ## Driving it
-
-The gimbal example runs this two-axis build directly:
 
 ```
 # against the simulator
@@ -177,14 +257,41 @@ perfectly good tracking gimbal.
 
 Soft limits assumed by both the example and the clearance check: pan ±170°,
 tilt −45°…+90°. Pan is limited rather than continuous because the camera cabling
-has to come back down through the yoke.
+has to come back down past the yoke.
 
 ## Balance, and why it matters more here than usual
 
-`plat_drop` is deliberately small (12 mm) so the camera body straddles the tilt
-axis instead of hanging off it. A stepper holding a static gravity torque burns
-current continuously — and in the `OPEN` and `CLOSE` work modes these drivers
-hold **full `Ma` regardless of load**, so an unbalanced axis is not merely wasted
-torque, it is a motor that runs hot doing nothing. Slide the camera along the
-three ¼"-20 positions until the tilt axis balances, and re-check after any lens
-change.
+The tilt axis sits 17 mm above the platform, inside the payload's body rather
+than under it, and the ¼"-20 runs in a **20 mm slot** so the fore/aft trim is
+continuous rather than three fixed holes.
+
+A stepper holding a static gravity torque burns current continuously — and in the
+`OPEN` and `CLOSE` work modes these drivers hold **full `Ma` regardless of
+load**, so an unbalanced axis is not merely wasted torque, it is a motor that runs
+hot doing nothing. Slide the camera until the tilt axis balances, and re-check
+after any lens change. A strip of thin rubber under the camera stops it rotating
+about its screw.
+
+## The one number to check against your motors
+
+Everything along both shafts is budgeted against an assumed **20 mm shaft length**
+from the front face, which is the conservative end of what 32 mm-body NEMA17s
+ship with. **Measure yours before printing.** With a shaft 2 mm shorter than
+assumed, the joints still engage 7.8 mm (tilt) and 10.0 mm (pan); the checker
+reports both. Also confirm the D-flat: the design assumes a 5 mm shaft cut to
+4.5 mm across the flat (`shaft_d`, `shaft_flat`), and a different flat depth just
+needs `shaft_flat` changed — every bore follows it.
+
+## Building it
+
+```
+openscad -D 'part="A"' --export-format binstl -o stl/pan_yoke.stl      gimbal_parts.scad
+openscad -D 'part="B"' --export-format binstl -o stl/camera_cradle.stl gimbal_parts.scad
+openscad -D 'part="C"' --export-format binstl -o stl/pedestal.stl      gimbal_parts.scad
+```
+
+Pre-built STLs are in `stl/`. To preview the whole thing:
+
+```
+openscad -D 'part="assembly"' -D pan=25 -D tilt=-20 gimbal_parts.scad
+```
