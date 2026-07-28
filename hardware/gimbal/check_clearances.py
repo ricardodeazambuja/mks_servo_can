@@ -317,8 +317,8 @@ FIXED_MEMBERS = ("pedestal", "pan motor", "yoke", "tilt motor", "pivot pin")
 # is conservative but says nothing about the corners themselves.
 #
 # Every 15 degrees rather than at five hand-picked angles, because that is what
-# the Manifold backend bought: 58 booleans in under 4 s where CGAL wanted 20 s
-# each. A test's coverage should be set by what the geometry needs, not by what
+# the Manifold backend bought: 56 booleans in a few seconds where CGAL wanted
+# 20 s each. A test's coverage should be set by what the geometry needs, not by what
 # the renderer could afford, and picking angles by hand is picking the angles you
 # already thought of.
 EXACT_CASES = tuple(

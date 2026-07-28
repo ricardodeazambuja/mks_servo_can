@@ -444,21 +444,41 @@ figures it quotes. Renders of each part are in `render/`.
 
 ```
 # against the simulator
-mks-servo-simulator --num-motors 2 --start-can-id 2 --latency-ms 0
-python examples/camera_gimbal_tracker.py --two-axis --can-ids "pan=2,tilt=3"
+mks-servo-simulator --num-motors 3 --start-can-id 1 --latency-ms 0
+python examples/camera_gimbal_tracker.py --two-axis
 
-# against the hardware
+# against the hardware: zero it first, every time it has been powered off
 python examples/camera_gimbal_tracker.py --hardware --channel can0 \
-    --two-axis --can-ids "pan=2,tilt=3"
+    --two-axis --set-zero
+python examples/camera_gimbal_tracker.py --hardware --channel can0 \
+    --two-axis --zeroed
 ```
 
 `--two-axis` drops the roll stage; roll changes how the frame is oriented about
 the optical axis, not where the camera points, so a two-motor build is a
-perfectly good tracking gimbal.
+perfectly good tracking gimbal. It also defaults the CAN IDs to pan (yaw) = 2
+and tilt (pitch) = 3, which is how the boards on this build are addressed.
 
-Soft limits assumed by both the example and the clearance check: pan ±170°,
-tilt −45°…+90°. Pan is limited rather than continuous because the camera cabling
-has to come back down past the yoke.
+**Zero the axes before driving the hardware, and re-zero after every power
+cycle.** The motor sets its encoder to zero at power-on, so position 0 is
+wherever the shaft was standing at switch-on rather than the middle of the
+travel. Soft limits are measured from that zero: power up with pan 80° round
+from centre and a ±90° limit permits −10°…+170°, reporting success the whole way
+into the cable loom. `--set-zero` releases both motors, waits while you centre
+them by hand, and defines that position as zero; `--hardware` refuses to run
+without `--zeroed` because the first thing the tracking loop does is slew every
+axis to 0.
+
+Soft limits: **pan ±90°**, tilt −45°…+90°. Pan is limited rather than continuous
+because the camera cabling has to come back down past the yoke, and ±90° is
+where the loom on the assembled machine runs out of slack — this said ±170°
+until one was built. A slip ring is what buys the rest of the turn.
+
+Those limits are a property of the cabling, not of the printed geometry, so the
+clearance check does not depend on them: it sweeps tilt over its full −45°…+90°
+and pans only the pedestal, because everything else is bolted to the yoke and
+turns with it. The pedestal's top plate repeats every 90°, so 15/30/45° covers
+its corners.
 
 ## Balance, and why it matters more here than usual
 

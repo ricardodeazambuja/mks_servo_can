@@ -95,7 +95,10 @@ from typing import Optional, Tuple
 
 from mks_servo_can import (
     AlphaBetaGammaTracker,
+    Axis,
     CANInterface,
+    MotorError,
+    RotaryKinematics,
     ServoStream,
     StreamAxis,
     motor_profile,
@@ -113,7 +116,13 @@ logger = logging.getLogger("gimbal")
 # Soft limits. Pan is restricted rather than continuous because cabling to the
 # camera has to come back down through the yoke; a slip ring would let you open
 # this up. Tilt is restricted to keep the camera clear of the base.
-PAN_LIMITS = (-170.0, 170.0)
+#
+# +/-90 on pan is measured off the built machine, not chosen: the loom to the
+# tilt motor and the camera comes back down through the yoke, and it runs out of
+# slack there. This said +/-170 until the first assembled gimbal showed that was
+# most of a turn past what the cables tolerate. If you add a slip ring, this is
+# the number to open up - and it is the only one.
+PAN_LIMITS = (-90.0, 90.0)
 TILT_LIMITS = (-45.0, 90.0)
 ROLL_LIMITS = (-30.0, 30.0)
 
@@ -361,7 +370,16 @@ def build_axes(
     Returns:
         The `StreamAxis` objects for the requested axes.
     """
+    # A two-axis build is the printed gimbal, and on that machine the boards are
+    # 2 and 3 - the pan (yaw) motor is 2 and the tilt (pitch) motor is 3, which
+    # is the one that used to carry the pen. Defaulting to that here means the
+    # hardware case does not need --can-ids to be correct, and getting it wrong
+    # drives the yaw axis with the tilt limits.
+    # Roll keeps an id either way: every spec below is constructed before the
+    # include_roll filter is applied at the end of this function.
     ids = {"pan": 1, "tilt": 2, "roll": 3}
+    if not include_roll:
+        ids.update({"pan": 2, "tilt": 3})
     ids.update(can_ids or {})
     built = [
         StreamAxis(
@@ -453,6 +471,89 @@ def report_design_margins() -> None:
     print()
     print("  => acceleration and slew rate are not the constraint. Latency is.")
     print()
+
+
+async def set_zero(
+    can_if: CANInterface, include_roll: bool = True,
+    can_ids: Optional[dict] = None,
+) -> None:
+    """
+    Walks the operator through defining the mechanical centre as zero.
+
+    THE SOFT LIMITS ARE MEANINGLESS WITHOUT THIS. The motor sets its encoder to
+    zero when it powers on, so position 0 is wherever the shaft happened to be
+    sitting at switch-on, not the middle of the machine's travel. Power up with
+    pan at +80 deg of its real range and `PAN_LIMITS` of +/-90 permits -10..+170
+    - the limits report success the whole way into the cable loom. The limits
+    constrain numbers; only this makes those numbers mean an angle.
+
+    So: motors off, centre both axes by hand, and tell the motor that this is
+    zero. Nothing is commanded to move at any point, because until zero is
+    established there is no such thing as a safe target.
+
+    Args:
+        can_if: A connected `CANInterface`.
+        include_roll: Whether a roll axis is present.
+        can_ids: Optional mapping of axis name to CAN ID.
+
+    Raises:
+        MotorError, CommunicationError: If a motor will not disable or accept
+            the new zero.
+    """
+    specs = build_axes(include_roll=include_roll, can_ids=can_ids)
+    axes = {
+        spec.name: Axis(
+            can_if, motor_can_id=spec.can_id, name=spec.name,
+            kinematics=RotaryKinematics(steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION),
+        )
+        for spec in specs
+    }
+
+    print("Releasing the motors so the axes can be turned by hand.")
+    for name, axis in axes.items():
+        await axis.disable_motor()
+        print(f"  {name:5s} (CAN {axis.can_id}) released")
+
+    print(
+        "\nCentre every axis by hand now:\n"
+        "  pan  - camera facing straight forward, cable loom slack and even\n"
+        "  tilt - camera level, its own weight balanced on the axis\n"
+        + ("  roll - horizon level in frame\n" if include_roll else "")
+        + "\nTake the slack in the loom to one side and back to check that the "
+        "centre you\npick really is the middle of the travel, not the middle of "
+        "what is convenient."
+    )
+    input("\nPress Enter when both axes are centred: ")
+
+    print()
+    for name, axis in axes.items():
+        before = await axis.get_current_position_user()
+        await axis.set_current_position_as_zero()
+        # Read it back rather than trusting the write. This is one CAN round
+        # trip against the risk of running a whole session on limits anchored to
+        # a zero the motor never accepted.
+        after = await axis.get_current_position_user()
+        ok = abs(after) < 0.1
+        print(
+            f"  {'OK ' if ok else 'FAIL'} {name:5s} was {before:+8.2f} deg, "
+            f"now reads {after:+8.2f} deg"
+        )
+        if not ok:
+            raise MotorError(
+                f"Axis '{name}' did not accept the new zero: still reads "
+                f"{after:.2f} deg."
+            )
+
+    lim = {"pan": PAN_LIMITS, "tilt": TILT_LIMITS, "roll": ROLL_LIMITS}
+    print("\nZero set. The limits now mean these angles about the centre:")
+    for name in axes:
+        low, high = lim[name]
+        print(f"  {name:5s} {low:+7.1f} .. {high:+7.1f} deg")
+    print(
+        "\nThis holds until the motors lose power. After any power cycle the "
+        "encoder\nzeroes itself wherever the shaft is standing, so run "
+        "--set-zero again."
+    )
 
 
 async def run_tracking(
@@ -612,7 +713,18 @@ async def main() -> None:
     )
     parser.add_argument(
         "--can-ids", default=None,
-        help="per-axis CAN IDs, e.g. 'pan=2,tilt=3'",
+        help="per-axis CAN IDs, e.g. 'pan=2,tilt=3' (two-axis defaults to this)",
+    )
+    parser.add_argument(
+        "--set-zero", action="store_true",
+        help="release the motors, have you centre the axes by hand, and define "
+             "that as zero; do this after every power cycle before tracking",
+    )
+    parser.add_argument(
+        "--zeroed", action="store_true",
+        help="confirm the axes have been zeroed with --set-zero since the last "
+             "power cycle; required by --hardware, because the soft limits are "
+             "measured from that zero and the motor re-zeroes itself at power-on",
     )
     parser.add_argument("--quiet", action="store_true", help="summary only")
     parser.add_argument(
@@ -627,7 +739,23 @@ async def main() -> None:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    report_design_margins()
+    # The first thing this loop does is slew every axis to 0.0, so on hardware a
+    # wrong zero is not a degraded run - it is the run that drives the machine
+    # into its own cabling before tracking starts. Refuse rather than warn.
+    if args.hardware and not (args.zeroed or args.set_zero):
+        parser.error(
+            "refusing to drive hardware without --zeroed.\n"
+            "The motors zero their encoders wherever they are standing at "
+            "power-on, so the\nsoft limits do not describe an angle until the "
+            "centre has been set. Run:\n\n"
+            "    python examples/camera_gimbal_tracker.py --hardware "
+            "--two-axis --set-zero\n\n"
+            "then re-run with --zeroed. If you have already done that since "
+            "the motors last\nlost power, just add --zeroed."
+        )
+
+    if not args.set_zero:
+        report_design_margins()
 
     if args.hardware:
         can_if = CANInterface(
@@ -644,7 +772,6 @@ async def main() -> None:
 
     await can_if.connect()
     try:
-        print(f"Tracking for {args.duration:.0f}s at {CONTROL_RATE_HZ:.0f} Hz\n")
         can_ids = None
         if args.can_ids:
             can_ids = {
@@ -653,6 +780,14 @@ async def main() -> None:
                     pair.split("=") for pair in args.can_ids.split(",")
                 )
             }
+
+        if args.set_zero:
+            await set_zero(
+                can_if, include_roll=not args.two_axis, can_ids=can_ids
+            )
+            return
+
+        print(f"Tracking for {args.duration:.0f}s at {CONTROL_RATE_HZ:.0f} Hz\n")
         result = await run_tracking(
             can_if, args.duration, quiet=args.quiet,
             include_roll=not args.two_axis, can_ids=can_ids,
