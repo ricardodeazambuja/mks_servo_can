@@ -447,12 +447,34 @@ figures it quotes. Renders of each part are in `render/`.
 mks-servo-simulator --num-motors 3 --start-can-id 1 --latency-ms 0
 python examples/camera_gimbal_tracker.py --two-axis
 
-# against the hardware: zero it first, every time it has been powered off
+# against the hardware
 python examples/camera_gimbal_tracker.py --hardware --channel can0 \
-    --two-axis --set-zero
+    --two-axis --set-zero          # once, by hand, if it was not parked
 python examples/camera_gimbal_tracker.py --hardware --channel can0 \
-    --two-axis --zeroed
+    --two-axis --zeroed            # track
+python examples/camera_gimbal_tracker.py --hardware --channel can0 \
+    --two-axis --zeroed --park     # before switching off
 ```
+
+**Park before powering down and home survives the power cycle.** The motor
+zeroes its encoder wherever the shaft is standing at switch-on, so if the
+machine is always switched off at home, then zero *is* home next time — the
+same property that makes an unparked machine dangerous carries the reference
+across for free, with no motion at power-on and no firmware feature. `--park`
+drives both axes to 0 at 30°/s, reads the encoder back to confirm they landed
+within 0.5°, and leaves them holding so nothing nudges them before the switch.
+Do not leave it holding for long: these drivers pull full current regardless of
+load, and the motor reaches PLA's glass transition doing it.
+
+It degrades safely. Forget to park, or move an axis by hand while the power is
+off, and you are simply back to `--set-zero`; nothing drifts silently, because a
+machine powered off somewhere else comes up believing it is at zero and you are
+the one who knows it was not parked.
+
+The motor can also store a home of its own (`0x9A`, firmware ≥ V1.0.3) and drive
+back to it at power-on. That is not used here on purpose: it moves the machine
+unsupervised the moment it is switched on, up to 180° on the shorter-way setting,
+on an axis limited to 90°.
 
 `--two-axis` drops the roll stage; roll changes how the frame is oriented about
 the optical axis, not where the camera points, so a two-motor build is a

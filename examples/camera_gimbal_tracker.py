@@ -556,6 +556,106 @@ async def set_zero(
     )
 
 
+# How fast to drive back to home when parking. Deliberately slow: this is the
+# one move made with nobody watching a tracking loop, and a gimbal walking back
+# to centre at 30 deg/s is easy to catch by hand if the zero turns out wrong.
+PARK_SPEED_DEG_S = 30.0
+
+# How close to zero a parked axis has to land for the park to count.
+PARK_TOL_DEG = 0.5
+
+
+async def park_at_home(
+    can_if: CANInterface, include_roll: bool = True,
+    can_ids: Optional[dict] = None,
+) -> None:
+    """
+    Drives every axis back to zero and holds it there, ready for power-off.
+
+    This is what makes home survive a power cycle without any firmware feature.
+    The motor zeroes its encoder wherever the shaft is standing at switch-on, so
+    if the machine is *always* switched off at home, then zero is home the next
+    time it comes up - the same property that makes an unparked machine
+    dangerous is what carries the reference across, for free.
+
+    It degrades safely. Forget to park, and the next session is simply back to
+    needing `--set-zero`; nothing silently drifts, because a machine powered off
+    somewhere else comes up believing it is at zero and the operator is the one
+    who knows it was not parked. That is why this prints what it did rather than
+    exiting quietly.
+
+    The motors are left **enabled and holding** at the end, because a released
+    axis can be nudged between parking and switch-off, which would put the
+    reference back where it started. Do not leave it in this state: these
+    drivers hold full current regardless of load, and the motor reaches PLA's
+    glass transition doing it.
+
+    Args:
+        can_if: A connected `CANInterface`.
+        include_roll: Whether a roll axis is present.
+        can_ids: Optional mapping of axis name to CAN ID.
+
+    Raises:
+        MotorError: If an axis does not reach home.
+    """
+    specs = build_axes(include_roll=include_roll, can_ids=can_ids)
+    axes = {
+        spec.name: Axis(
+            can_if, motor_can_id=spec.can_id, name=spec.name,
+            kinematics=RotaryKinematics(
+                steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION
+            ),
+        )
+        for spec in specs
+    }
+
+    print(f"Parking at home, {PARK_SPEED_DEG_S:.0f} deg/s.\n")
+    for name, axis in axes.items():
+        # Ask for move-completion messages back before making a waited move.
+        #
+        # `ServoStream` mutes the motors on entry (0x8C) and restores them with
+        # active initiation still OFF, deliberately: a streaming loop overwrites
+        # its own target every few milliseconds and the abort frame for the
+        # superseded move is indistinguishable from the acknowledgement of the
+        # new one. But "active" is exactly what makes the motor volunteer the
+        # completion message, so an ordinary `wait=True` move made after a
+        # tracking run waits for a frame that will never come. Parking straight
+        # after tracking - the whole point of this mode - timed out at 5.6 s
+        # with the axis sitting right where it had been left.
+        await axis._low_level_api.set_slave_respond_active(
+            axis.can_id, respond_enabled=True, active_enabled=True
+        )
+        await axis.enable_motor()
+        before = await axis.get_current_position_user()
+        await axis.move_to_position_abs_user(0.0, speed_user=PARK_SPEED_DEG_S)
+        # Read the encoder rather than trusting the move to have landed: the
+        # whole point of parking is where the shaft physically ends up, which is
+        # exactly the thing a completed-move notification does not tell you.
+        after = await axis.get_current_position_user()
+        ok = abs(after) <= PARK_TOL_DEG
+        print(
+            f"  {'OK ' if ok else 'FAIL'} {name:5s} {before:+8.2f} -> "
+            f"{after:+8.2f} deg"
+        )
+        if not ok:
+            raise MotorError(
+                f"Axis '{name}' stopped {after:+.2f} deg from home, outside the "
+                f"{PARK_TOL_DEG:.1f} deg the park allows. Do not power off yet: "
+                f"this position would become the next session's zero."
+            )
+
+    print(
+        "\nAt home and holding. **Power the motors off now**, and the next "
+        "power-on\ncomes up already zeroed - no --set-zero needed, just "
+        "--zeroed.\n\n"
+        "Two things this does not survive: moving an axis by hand after the "
+        "power is\noff, and powering down anywhere other than here. Either way "
+        "the fix is the\nsame, --set-zero again.\n\n"
+        "Do not leave it holding. These drivers pull full current regardless "
+        "of load."
+    )
+
+
 async def run_tracking(
     can_if: CANInterface, duration: float, quiet: bool = False,
     include_roll: bool = True, can_ids: Optional[dict] = None,
@@ -721,6 +821,11 @@ async def main() -> None:
              "that as zero; do this after every power cycle before tracking",
     )
     parser.add_argument(
+        "--park", action="store_true",
+        help="drive every axis back to home and hold, so the machine can be "
+             "powered off there and comes up already zeroed; needs --zeroed",
+    )
+    parser.add_argument(
         "--zeroed", action="store_true",
         help="confirm the axes have been zeroed with --set-zero since the last "
              "power cycle; required by --hardware, because the soft limits are "
@@ -754,7 +859,7 @@ async def main() -> None:
             "the motors last\nlost power, just add --zeroed."
         )
 
-    if not args.set_zero:
+    if not (args.set_zero or args.park):
         report_design_margins()
 
     if args.hardware:
@@ -783,6 +888,12 @@ async def main() -> None:
 
         if args.set_zero:
             await set_zero(
+                can_if, include_roll=not args.two_axis, can_ids=can_ids
+            )
+            return
+
+        if args.park:
+            await park_at_home(
                 can_if, include_roll=not args.two_axis, can_ids=can_ids
             )
             return
