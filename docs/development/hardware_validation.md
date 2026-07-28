@@ -206,6 +206,54 @@ On the lab boards detection costs 0.51 s per axis (two unanswered probes at
 `initialize(detect_firmware=False)` to skip it; the work mode then stays unknown,
 which is conservative rather than wrong.
 
+## Diagnosing an axis that answers but will not move
+
+A motor whose logic board is perfectly healthy can be mechanically dead, and it
+looks nothing like a fault over CAN. On the assembled gimbal the pan axis
+answered every command — `enable`, `disable`, `status`, every parameter write —
+and acknowledged each move with `F5 01` and often `F5 02 complete`, while the
+shaft went nowhere. The cause turned out to be inside the motor: **the bearing
+preload spring had been displaced**, binding the bearing.
+
+The symptoms, and why each one misleads:
+
+| Symptom | Reads as | Actually |
+| --- | --- | --- |
+| Moves stop short, then lurch | driver or tuning fault | stick-slip against friction |
+| Hot while merely holding | holding current too high | current spent fighting friction |
+| More current makes it *worse* | wrong current setting | harder break-free, bigger lurch |
+| Feels **smooth** turned by hand | motor demagnetised | friction swamping the detent ripple |
+| Direction-dependent resistance | limit or config asymmetry | mechanical, and it is the giveaway |
+
+What actually narrowed it, in order:
+
+1. **`0x39` following error.** The decisive reading. A commanded 10° move
+   advanced the internal commanded angle by the full 10° while the encoder moved
+   2.22°, then 0.00°, and the error was never closed with the motor stationary
+   and protection reporting `ok`. That is a stall stated in numbers, and it also
+   explains the "flips to a new position when forced" report: the commanded
+   angle runs away, and freeing the shaft lets the rotor snap to wherever it got
+   to.
+2. **Make both axes identical.** Nothing can be read back on this firmware
+   (`0x00` is V1.0.6 and unanswered), so the only comparison available is to
+   write the same configuration to both and see whether they still differ. They
+   did — which ruled out configuration entirely, including work mode, both
+   currents, subdivision and direction.
+3. **Watch the encoder while turning the axis by hand.** Position tracked the
+   hand exactly, which ruled out a slipping set screw on the D-flat — the
+   otherwise obvious suspect for "motor turns, load does not".
+4. **Decouple and turn the bare shaft, unpowered.** An unpowered stepper should
+   turn easily with light notchy detent. This one was very hard, which puts the
+   fault inside the motor.
+
+One trap worth stating, because it nearly sent the diagnosis the wrong way:
+**disconnecting the supply does not disconnect the windings.** A stepper is a
+generator when turned, and its phases can still form a closed loop through the
+output stage's body diodes with the board unpowered, which brakes the shaft
+smoothly and heavily. So "hard to turn with the power off" does not by itself
+mean a mechanical fault — unplug the motor's phase connector from the driver to
+tell the two apart.
+
 ## Test suite
 
 `python -m pytest tests/ -q` → **826 passed, 26 skipped**, against the simulator,
