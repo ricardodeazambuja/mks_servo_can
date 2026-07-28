@@ -119,10 +119,12 @@ motors bolt straight to a printed part, so a PLA build that holds position all
 day will creep at the mounting faces. PETG moves that limit ~20 °C away. If you
 are printing PLA anyway, drop `HoldMa` on both axes and balance the tilt properly.
 
-The shallowest down-facing wall on any part is **48°** from horizontal. Nothing
-drafts at exactly 45° on purpose: that is the threshold every slicer compares
-against, so surfaces here draft at **40°** and land unambiguously on the right
-side of it.
+The shallowest down-facing wall is **48°** from horizontal on three parts and 46°
+on the yoke, where it is not a wall at all but the flank of a countersink in a
+vertical face; the underside of that cone is a 6.4 mm bridge and is measured as
+one. Nothing drafts at exactly 45° on purpose: that is the threshold every slicer
+compares against, so surfaces here draft at **40°** and land unambiguously on the
+right side of it.
 
 Other things the slicer was allowed to dictate:
 
@@ -164,6 +166,32 @@ Other things the slicer was allowed to dictate:
 M3×10 through the 7.2 mm arm leaves 2.8 mm. That sounds thin and is not: 3 mm of
 M3 in steel is good for over 3 kN, against the ~5 N it holds. An M3×12 in the arm
 would bottom out in the tapping and never clamp at all.
+
+**Both sets of motor screws are countersunk, for two different reasons.** On the
+pedestal's plate the heads have to end up below flush because the yoke's pad
+slides across that face. On the fork arm they are countersunk because the motor is
+*outboard*, so the heads land on the arm's **inner** face — and the cradle's cheek
+is 3 mm away, directly opposite the lower two. A socket cap head stands 3.0 mm
+proud and would touch it with nothing to spare.
+
+### Can you get a tool on it?
+
+Every fastener here is checked for the 45 mm of straight, empty air a driver needs
+in front of it, against the parts present *at that screw's step in the assembly
+order* — `python check_clearances.py` reports it under **reach**. This is not
+belt-and-braces: it found two real problems that reasoning about the renders had
+passed.
+
+The pan set screw's flat faced −X for two revisions of this design, which aimed
+the hex key straight into the fork's own arm — 122 mm³ of key inside solid
+plastic. The arms are at ±X and only 22 mm wide in Y, so the flat now faces **+Y**
+(`pan_screw_a`), where the run is clear all the way out; −Y is left to the cable
+ties. Which way the shaft's D-flat happens to face is arbitrary anyway, since the
+tilt zero is set in firmware.
+
+And the camera screw **cannot be reached with the cradle level**: the pan hub sits
+26 mm under the balance slot and a driver needs 45. Tilt up first — which is why
+the assembly order says so, and why that check runs at +90° rather than 0°.
 
 ### Holding things to a shaft
 
@@ -225,8 +253,12 @@ It matters, because the tilt shaft and the pivot pin come in from opposite sides
 6. Slide the cradle onto the tilt shaft. With it roughly in place, push the pivot
    pin in through the outside of the **−X** arm so its journal enters the bearing,
    seat its flange on the arm and fit the two keeper screws.
-7. Tighten the cradle's set screw onto the tilt shaft's flat.
-8. Bolt the camera on and slide it along the slot until the tilt axis balances.
+7. Tighten the cradle's set screw onto the tilt shaft's flat. It comes down through
+   the top of the hub, so do it at **tilt 0**, where the hole points up.
+8. **Tilt up to about +90°**, then bolt the camera on and slide it along the slot
+   until the axis balances. Level, there is only 26 mm between the slot and the
+   pan hub — not enough to get a driver in, which the `reach` check will tell you
+   if you ever move something.
 9. Zip-tie the tilt motor's harness to the yoke's pad and the pedestal's corner
    slots, leaving a service loop for ±170° of pan.
 

@@ -563,6 +563,13 @@ pan_hub_h   = 12.0;
 // hub's 22 mm diameter follows from wanting that flat to be a 1 mm boss on it
 // rather than a cut into it.
 grub_flat_x = 12.0;
+// Which way round the axis the flat, its insert and its screw face. Zero would
+// point them at -X, which is where the fork's own arm is: `part="access"` reports
+// 145 mm^3 of hex key inside the arm at that angle. The arms are at +/-X and only
+// 22 mm wide in Y, so +/-90 is clear all the way out - and -90 puts the screw at
+// +Y, leaving the -Y side to the cable ties. Which way the shaft's D-flat happens
+// to face is arbitrary anyway; it gets zeroed in firmware.
+pan_screw_a = -90;
 
 // The fork. Wide because the payload sets it: a 52 mm camera has to swing
 // *between* the cradle's cheeks for the tilt axis to pass through its body, and
@@ -636,8 +643,11 @@ module pan_yoke() {
                     cylinder(d = yoke_pad_d, h = yoke_pad_t - foot_ch);
             }
             // Hub, coned into the pad rather than butted onto it, and with a
-            // flat down one side for the screw head.
-            hull() {
+            // flat down one side for the insert to be pressed in square. The flat
+            // and everything through it turn together with `pan_screw_a`, so the
+            // screw's angle is one number and cannot get out of step with the
+            // bore's flat or with the boss the insert sits in.
+            rotate([0, 0, pan_screw_a]) hull() {
                 cylinder(d = pan_hub_od, h = pan_hub_h);
                 translate([-grub_flat_x, -6, 0]) cube([1, 12, pan_hub_h]);
             }
@@ -646,16 +656,18 @@ module pan_yoke() {
         }
 
         // --- pan shaft -------------------------------------------------------
-        translate([0, 0, -eps]) d_bore_z(pan_hub_h + 2 * eps);
-        // Lead-in, so a squashed first layer cannot stop the yoke going on.
-        translate([0, 0, -eps])
-            cylinder(d1 = shaft_d + 1.6, d2 = shaft_d + fit_shaft, h = 0.8 + eps);
-        // Set screw onto the flat: insert first, then clearance to the shaft.
-        // The insert hole is the wider `insert_d_h` because it prints on its
-        // side, and a hole printed on its side comes out undersize at the top.
-        translate([-grub_flat_x - eps, 0, pan_hub_h / 2]) rotate([0, 90, 0]) {
-            cylinder(d = insert_d_h, h = insert_depth + eps);
-            cylinder(d = grub_clear, h = grub_flat_x - shaft_flat_off + eps);
+        rotate([0, 0, pan_screw_a]) {
+            translate([0, 0, -eps]) d_bore_z(pan_hub_h + 2 * eps);
+            // Lead-in, so a squashed first layer cannot stop the yoke going on.
+            translate([0, 0, -eps])
+                cylinder(d1 = shaft_d + 1.6, d2 = shaft_d + fit_shaft, h = 0.8 + eps);
+            // Set screw onto the flat: insert first, then clearance to the shaft.
+            // The insert hole is the wider `insert_d_h` because it prints on its
+            // side, and a hole printed on its side comes out undersize at the top.
+            translate([-grub_flat_x - eps, 0, pan_hub_h / 2]) rotate([0, 90, 0]) {
+                cylinder(d = insert_d_h, h = insert_depth + eps);
+                cylinder(d = grub_clear, h = grub_flat_x - shaft_flat_off + eps);
+            }
         }
 
         // --- bearing relief --------------------------------------------------
@@ -665,8 +677,17 @@ module pan_yoke() {
         }
 
         // --- tilt motor, on the +X arm ---------------------------------------
+        // Countersunk, and on the *inner* face, which is the face the heads end
+        // up on: the motor is outboard, so these screws pass through the arm from
+        // inside. That inner face has the cradle's cheek 3 mm away, and the lower
+        // two screws sit directly opposite cheek material - an M3 socket cap head
+        // stands 3.0 mm proud and would touch it with nothing to spare. Flush
+        // heads give the gap back.
         translate([arm_gap / 2 - eps, 0, tilt_axis_h]) rotate([0, 90, 0]) {
             nema_bolt_holes(arm_t_top + 2 * eps, m3_free_h);
+            for (x = [-1, 1], y = [-1, 1])
+                translate([x * motor_bolt_span / 2, y * motor_bolt_span / 2, -eps])
+                    cylinder(d1 = m3_cs_d, d2 = m3_free_h, h = m3_cs_h + eps);
         }
         translate([arm_gap / 2 - eps, 0, tilt_axis_h])
             tear_x(motor_boss_d + fit_boss, arm_t_top + 2 * eps);
@@ -1015,12 +1036,109 @@ module fit_check() {
 }
 
 // ---------------------------------------------------------------------------
+// Can you actually get a tool on it?
+// ---------------------------------------------------------------------------
+//
+// A screw you cannot reach is not a fastener, it is a mistake you find with the
+// part already bolted down. Every clearance in this file is about parts avoiding
+// parts; this is about the 45 mm of straight, empty air a driver needs in front
+// of a screw, which no other check here looks at and which reasoning about it
+// gets wrong - the pan set screw's flat faced -X for two revisions of this design
+// and pointed the hex key straight into the fork's own arm.
+//
+// The obstacles are the parts present *at that screw's step in the assembly
+// order*, not the finished machine. That is what makes the order in the README a
+// thing this file can check rather than a thing it asserts: put the steps in the
+// wrong sequence and one of these fails.
+//
+//   openscad -D 'part="access"' -D 'screw="pan set screw"' \
+//            --export-format binstl -o /tmp/x.stl gimbal_parts.scad
+screw = "pan set screw";
+
+tool_d   = 4.0;    // a small screwdriver's shank, or a hex key's holder
+tool_len = 45.0;   // how much straight run a hand needs behind it
+tool_off = 0.05;   // stand off the seat, so a coincident face is not an overlap
+
+module _driver() {
+    translate([0, 0, tool_off]) cylinder(d = tool_d, h = tool_len);
+}
+
+// The cradle's transform, so tools on cradle-mounted screws turn with it.
+module _tilted(tilt_deg) {
+    translate([0, 0, tilt_z]) rotate([tilt_deg, 0, 0]) translate([0, 0, -tilt_z])
+        children();
+}
+
+module access_tool(screw = "pan set screw", tilt_deg = 0) {
+    if (screw == "pan motor")
+        // Straight down onto the plate, before the yoke covers them.
+        for (x = [-1, 1], y = [-1, 1])
+            translate([x * motor_bolt_span / 2, y * motor_bolt_span / 2, ped_top_z])
+                _driver();
+    else if (screw == "tilt motor")
+        // The heads are on the *inner* face of the +X arm, so the driver comes
+        // across the fork - past the other arm, which is the interesting part.
+        for (y = [-1, 1], z = [-1, 1])
+            translate([arm_gap / 2, y * motor_bolt_span / 2,
+                       tilt_z + z * motor_bolt_span / 2])
+                rotate([0, -90, 0]) _driver();
+    else if (screw == "pan set screw" || screw == "pan set screw, assembled")
+        translate([0, 0, yoke_z + pan_hub_h / 2]) rotate([0, 0, pan_screw_a])
+            translate([-grub_flat_x, 0, 0]) rotate([0, -90, 0]) _driver();
+    else if (screw == "tilt set screw")
+        _tilted(tilt_deg)
+            translate([plat_w / 2 - cheek_t / 2, 0, tilt_z + hub_od / 2]) _driver();
+    else if (screw == "pivot keepers")
+        // Outward, away from the machine. Pointing this one the other way was the
+        // first thing the check caught, and it was the check that was wrong: a
+        // driver aimed +X reads as 850 mm^3 of interference with the flange it is
+        // supposed to be turning a screw in. A tool path has a direction, and
+        // getting it backwards fails loudly rather than passing quietly - which is
+        // the only reason that mistake was cheap.
+        for (s = [-1, 1])
+            translate([-tilt_face_x - pin_flange_t, s * pin_screw_r, tilt_z])
+                rotate([0, -90, 0]) _driver();
+    else if (screw == "camera screw")
+        // Up from underneath the platform, at both ends of the balance slot.
+        _tilted(tilt_deg) for (s = [-1, 1])
+            translate([0, s * cam_slot / 2, tilt_z - axis_z]) rotate([180, 0, 0])
+                _driver();
+}
+
+// What is in the way, which depends on how far through the assembly you are.
+module access_stage(screw = "pan set screw", tilt_deg = 0) {
+    if (screw == "pan motor") {
+        fixed_assembly("pedestal");
+        fixed_assembly("pan motor");
+    } else if (screw == "tilt motor" || screw == "pan set screw") {
+        fixed_assembly("pedestal");
+        fixed_assembly("pan motor");
+        fixed_assembly("yoke");
+        if (screw == "tilt motor") fixed_assembly("tilt motor");
+    } else {
+        // Everything, because these are the last three steps - and the set screw
+        // gets checked twice, once at its own step and once against the finished
+        // machine, since re-balancing means going back to it.
+        fixed_assembly("all");
+        moving_assembly(tilt_deg, screw != "camera screw");
+    }
+}
+
+module access_check(screw = "pan set screw", tilt_deg = 0) {
+    intersection() {
+        access_tool(screw, tilt_deg);
+        access_stage(screw, tilt_deg);
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 if (part == "A") pan_yoke();
 else if (part == "B") camera_cradle();
 else if (part == "C") pedestal();
 else if (part == "D") pivot_pin();
 else if (part == "fit") fit_check();
+else if (part == "access") access_check(screw, tilt);
 else if (part == "section") section(pan, tilt);
 else if (part == "interference") interference(pan, tilt, against);
 else assembly(pan, tilt);

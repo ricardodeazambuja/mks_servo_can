@@ -446,6 +446,80 @@ def glide_gaps(v: dict) -> list:
     ]
 
 
+# Every fastener, and the pose it is done up in. A screw you cannot get a driver
+# onto is not a fastener, and no other check in this file looks at the air *in
+# front* of a screw - only at parts avoiding parts.
+#
+# The camera screw is checked at tilt +90 and not at 0 because at 0 it genuinely
+# does not work: the pan hub is 26 mm below the slot and a driver needs 45. That is
+# why the assembly order says to tilt up first, and checking it at +90 is what
+# holds that instruction to being true.
+ACCESS_CASES = (
+    ("pan motor", 0.0),
+    ("tilt motor", 0.0),
+    ("pan set screw", 0.0),
+    ("pan set screw, assembled", 0.0),
+    ("tilt set screw", 0.0),
+    ("pivot keepers", 0.0),
+    ("camera screw", 90.0),
+)
+
+
+def _one_access(job: tuple) -> tuple:
+    """Measures how much of one driver's path is inside something solid.
+
+    Args:
+        job: `(index, screw, tilt)`; the index names the scratch file.
+
+    Returns:
+        `(screw, tilt, mm3)` - zero when the tool has a clear run at it.
+    """
+    index, name, tilt = job
+    tmp = SCAD.with_name(f"_access_{index}.stl")
+    try:
+        tmp.unlink(missing_ok=True)
+        subprocess.run(
+            ["openscad", "-D", 'part="access"', "-D", f'screw="{name}"',
+             "-D", f"tilt={tilt}", "--export-format", "binstl",
+             "-o", str(tmp), str(SCAD)],
+            capture_output=True, check=False,
+        )
+        return name, tilt, _stl_volume(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def exact_access(verbose: bool = False) -> list:
+    """Checks a driver can reach every screw at its step in the assembly order.
+
+    The obstacles are the parts present at that step rather than the finished
+    machine, which is what turns the assembly order in the README from an assertion
+    into something this file checks: sequence the steps wrongly and one of these
+    starts failing.
+
+    It has already earned it twice. The pan set screw's flat faced -X for two
+    revisions and aimed the hex key straight into the fork's own arm - 122 mm^3 of
+    key inside solid plastic - and the camera screw cannot be reached at all with
+    the cradle level.
+
+    Returns:
+        List of (screw, tilt, mm3) for every fastener a tool cannot reach.
+
+    Raises:
+        FileNotFoundError: If openscad is not installed.
+    """
+    jobs = [(i, name, tilt) for i, (name, tilt) in enumerate(ACCESS_CASES)]
+    with futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        results = list(pool.map(_one_access, jobs))
+    out = []
+    for name, tilt, vol in results:
+        if verbose:
+            print(f"  {name:<26} tilt {tilt:+5.1f} {vol:10.4f} mm^3")
+        if vol > EXACT_TOL_MM3:
+            out.append((name, tilt, vol))
+    return out
+
+
 def exact_fit() -> float:
     """Overlap between the pivot pin and the fork arm it passes through, in mm^3.
 
@@ -532,6 +606,11 @@ def static_gaps(v: dict) -> list:
         ("keeper screw to pad edge",
          v["pivot_pad_d"] / 2 - v["pin_screw_r"] - v["m3_pilot"] / 2, 1.6,
          "in the -X arm's pivot pad"),
+        # The tilt motor's screw heads land on the *inner* face of the arm, with
+        # the cheek 3 mm away and the lower two directly opposite it. Countersunk
+        # they are flush; a socket cap head is 3.0 mm tall and would touch.
+        ("tilt screw shank in the arm", v["arm_t_top"] - v["m3_cs_h"], 3.2,
+         f"{v['arm_t_top']:.1f} mm arm, less a {v['m3_cs_h']:.1f} mm countersink"),
     ] + glide_gaps(v)
 
 
@@ -573,7 +652,7 @@ def main() -> int:
               "pin_overrun", "pin_screw_r", "pin_hole_d", "m3_pilot",
               "glide_d", "glide_r", "glide_a", "yoke_ring_w", "ped_top",
               "ped_top_r", "motor_bolt_span", "m3_cs_d", "slew_gap",
-              "ped_plate_t")
+              "ped_plate_t", "arm_t_top", "m3_cs_h")
     missing = [k for k in needed if k not in v]
     if missing:
         print(f"could not read {missing} from {SCAD.name}")
@@ -634,6 +713,20 @@ def main() -> int:
                       f"{fit:.1f} mm^3 - it is not in its hole")
             else:
                 print("  OK  the pivot pin fits its hole in the fork arm")
+
+        print("\nreach, a driver's 45 mm at each screw's step in the order")
+        try:
+            blocked = exact_access(args.verbose)
+        except FileNotFoundError:
+            print("  SKIP openscad not on PATH")
+        else:
+            for name, tilt, vol in blocked:
+                ok = False
+                print(f"  FAIL no room for a driver on the {name} "
+                      f"(tilt {tilt:+.0f}): {vol:.1f} mm^3 of it is inside a part")
+            if not blocked:
+                print(f"  OK  all {len(ACCESS_CASES)} fasteners: "
+                      + ", ".join(n for n, _ in ACCESS_CASES))
 
     print(f"\nrequirement: swept >= {REQUIRED_MM:.1f} mm, static as noted, "
           "exact overlap zero")
