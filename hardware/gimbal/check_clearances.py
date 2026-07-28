@@ -499,6 +499,7 @@ ACCESS_CASES = (
     ("pan set screw, assembled", 0.0),
     ("tilt set screw", 0.0),
     ("pivot keepers", 0.0),
+    ("hold-down", 0.0),
     ("camera screw", 90.0),
 )
 

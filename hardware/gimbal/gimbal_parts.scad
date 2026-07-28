@@ -331,10 +331,24 @@ ped_h       = ped_plate_t + ped_shroud_h;
 // Each ear carries a hold-down screw *and* a rubber foot, so the shroud's thin
 // desk-end rim floats clear of the bench instead of trying to be a bearing
 // surface.
-ear_t      = 4.5;
+// The ear is the only thing in this machine loaded by a *person* rather than by
+// gravity, and that changes its numbers by two orders of magnitude. Everything
+// else carries a 3.4 N payload; an M4 wood screw driven home by hand puts about
+// 150 N through this tab, and it does it in bending, across the layers, which is
+// the weak direction. At 4.5 mm thick with the bolt 5 mm outboard of the wall
+// that came to 20 MPa - at PLA's layer-normal yield with no factor left at all,
+// and `check_stress.py` failed it.
+//
+// The repair is mostly the lever arm rather than the thickness: a screw sitting
+// almost over the wall it is holding down puts its load into that wall instead of
+// into a flange in bending. 2 mm out instead of 5, a thicker tab, and a wider
+// root between them take it to 2.8 MPa. The shroud tapers *inward* as it rises,
+// so a bolt that close to the wall is still clear from straight above - which is
+// not an argument, it is what `part="access"` checks.
+ear_t      = 7.0;
 ear_blend  = 20.0;  // how far back up the corner the hull reaches
 ear_foot_r = 7.5;
-ear_bolt_r = 5.5;
+ear_bolt_r = 6.5;
 ear_seed_w = 12.0;  // spread across the corner, so the blend is a wedge not a cone
 
 // Where the shroud's outer surface actually is, at a given height. The ear has
@@ -351,7 +365,7 @@ function ped_diag_r(z) = (ped_hw(z) - ped_cr(z)) * sqrt(2) + ped_cr(z);
 // outboard where a screwdriver reaches it" - survives a change to the taper.
 // They are also literals, which is what lets the viewer read them.
 ear_foot_inset = 8.0;
-ear_bolt_out   = 5.0;
+ear_bolt_out   = 2.0;
 ear_foot_d = ped_diag_r(ped_h) - ear_foot_inset;
 ear_bolt_d = ped_diag_r(ped_h) + ear_bolt_out;
 ear_seed_z = ped_h - ear_t - ear_blend;
@@ -618,11 +632,49 @@ module tear_x(d, len) {
 //
 // Splaying to full width by a fixed height and standing vertical above it
 // decouples the two, at the cost of one more hull.
+// How far the arm flares out again where it lands on the pad, and over what
+// height. This is a fillet, and it is here because of a number: a 50 N grab at
+// the camera puts 4 MPa across the layers at this junction, which was a factor of
+// two on PLA's layer-normal allowable *before* counting the stress raiser of a
+// square corner. A square corner is also exactly where a printed part cracks, and
+// it is where every layer line is perpendicular to the load. Spreading the root
+// over 12 mm of extra width takes it to 1.6 MPa and gives the crack nowhere to
+// start.
+// A fillet is small, and here it has to be: the splay above it needs 23 mm of
+// rise to clear its 16 mm of run at a printable angle, and it only has until
+// `arm_mid_z`. A 9 mm foot ate 9 mm of that rise and turned a 55 degree splay
+// into a 41 degree overhang - a repair in one place breaking a constraint in
+// another, found by the printability check rather than by thinking about it.
+//
+// 3.5 mm leaves the splay at 52 degrees. That buys the stress *concentration*
+// rather than the stress: it takes the sharp corner out of the crack-prone
+// junction, and moves the critical section 3.5 mm up where the moment is
+// slightly smaller. The margin stays about 2x, and 2x against an invented 50 N
+// yank that already has a factor of three on it is where this stops.
+arm_foot_w = 6.0;   // extra half-width at the pad
+arm_foot_h = 3.5;   // and how far up it blends away
+
 module _yoke_arm(s) {
     mid = [s * (arm_gap / 2 + arm_t_top / 2), 0, arm_mid_z];
+    root = [s * (arm_x_root + arm_t_root / 2), 0, yoke_pad_t - eps];
+    // Three sections, not two: the flared foot, the root proper, then the splay.
+    //
+    // The foot is clipped to the pad it stands on, and that is not tidying up -
+    // the *unflared* root corner already sits 34.8 mm out on a 35 mm pad, so any
+    // flare at all hangs its corners over the edge in mid air. The first version
+    // did exactly that and turned a 9 mm worst bridge into a 32 mm one. Clipping
+    // by construction means the flare cannot outgrow its support however the pad
+    // or the arm's position changes later.
+    intersection() {
+        hull() {
+            translate(root) rrect(arm_t_root + 2 * arm_foot_w,
+                                  arm_y_root + 2 * arm_foot_w, eps, 4);
+            translate(root + [0, 0, arm_foot_h]) rrect(arm_t_root, arm_y_root, eps, 3);
+        }
+        cylinder(d = yoke_pad_d, h = tilt_axis_h);
+    }
     hull() {
-        translate([s * (arm_x_root + arm_t_root / 2), 0, yoke_pad_t - eps])
-            rrect(arm_t_root, arm_y_root, eps, 3);
+        translate(root + [0, 0, arm_foot_h]) rrect(arm_t_root, arm_y_root, eps, 3);
         translate(mid) rrect(arm_t_top, arm_y_mid, eps, 3);
     }
     hull() {
@@ -1098,6 +1150,14 @@ module access_tool(screw = "pan set screw", tilt_deg = 0) {
         for (s = [-1, 1])
             translate([-tilt_face_x - pin_flange_t, s * pin_screw_r, tilt_z])
                 rotate([0, -90, 0]) _driver();
+    else if (screw == "hold-down")
+        // Straight down onto the ears, past a shroud that tapers inward as it
+        // rises - which is the reason a bolt 2 mm off the wall is still reachable,
+        // and the reason that claim is checked rather than asserted.
+        for (a = [45, 135, 225, 315]) rotate([0, 0, a])
+            translate([(ped_diag_r(ped_h) + ear_bolt_out) / sqrt(2),
+                       (ped_diag_r(ped_h) + ear_bolt_out) / sqrt(2), ear_t])
+                _driver();
     else if (screw == "camera screw")
         // Up from underneath the platform, at both ends of the balance slot.
         _tilted(tilt_deg) for (s = [-1, 1])
@@ -1110,6 +1170,8 @@ module access_stage(screw = "pan set screw", tilt_deg = 0) {
     if (screw == "pan motor") {
         fixed_assembly("pedestal");
         fixed_assembly("pan motor");
+    } else if (screw == "hold-down") {
+        fixed_assembly("pedestal");
     } else if (screw == "tilt motor" || screw == "pan set screw") {
         fixed_assembly("pedestal");
         fixed_assembly("pan motor");

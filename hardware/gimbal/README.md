@@ -4,11 +4,11 @@ A pan/tilt camera gimbal built from two NEMA17 32 mm motors, each carrying an
 MKS SERVO42D_CAN driver on its back face. Four printed parts, no supports, and it
 stands on a desk.
 
-| Part | Module | Joins | Mass |
+| Part | Module | Joins | Mass, as printed |
 | --- | --- | --- | --- |
-| **A** | `pan_yoke()` | pan shaft → a fork carrying the tilt axis | 58 g |
-| **B** | `camera_cradle()` | tilt axis → camera | 42 g |
-| **C** | `pedestal()` | pan motor → desk | 114 g |
+| **A** | `pan_yoke()` | pan shaft → a fork carrying the tilt axis | 45 g |
+| **B** | `camera_cradle()` | tilt axis → camera | 29 g |
+| **C** | `pedestal()` | pan motor → desk | 97 g |
 | **D** | `pivot_pin()` | fork arm → the tilt axis' far bearing | 3 g |
 
 Bought parts that matter: one **6700 ball bearing** (10 × 15 × 4) at the far end
@@ -105,12 +105,20 @@ opening to blend into, and that 20 mm is exactly where the OLED sits.
 below — which are also how the parts are modelled, so what
 `check_printability.py` reads off the STL is what the slicer sees.
 
-| Part | Orientation | Height | Bed footprint | Widest bridge |
-| --- | --- | --- | --- | --- |
-| A pan yoke | pad on the bed, arms up | 84 mm | 2707 mm² | 9.0 mm |
-| B camera cradle | platform on the bed, cheeks up | 37 mm | 3090 mm² | 10.0 mm |
-| C pedestal | top plate on the bed, desk end last | 67 mm | 4557 mm² | 10.0 mm |
-| D pivot pin | flange on the bed, journal up | 19 mm | 281 mm² | none |
+| Part | Orientation | Height | Widest bridge | Filament | Time |
+| --- | --- | --- | --- | --- | --- |
+| A pan yoke | pad on the bed, arms up | 84 mm | 9.1 mm | 36.1 cm³ | 4h 16m |
+| B camera cradle | platform on the bed, cheeks up | 37 mm | 10.0 mm | 23.0 cm³ | 2h 28m |
+| C pedestal | top plate on the bed, desk end last | 67 mm | 11.0 mm | 78.3 cm³ | 7h 45m |
+| D pivot pin | flange on the bed, journal up | 19 mm | none | 2.1 cm³ | 22m |
+| | | | **total** | **139.6 cm³** | **14.9 h** |
+
+The filament and time columns are PrusaSlicer's own, at the settings above, not
+an estimate from the part's volume — `check_slicing.py` reads them back out of the
+G-code. Slicing them is also how the *support* question gets a second opinion:
+three of the four parts raise no stability issue at all, and the yoke's one
+complaint is its top solid shell bridging over sparse infill, which disappears at
+100% infill and has nothing to do with the shape.
 
 The material choice is a thermal one, not a strength one. In the `OPEN` and
 `CLOSE` work modes these drivers hold **full `Ma` regardless of load**, and a
@@ -275,14 +283,25 @@ once it is together, rather than trying to make the flat land somewhere.
 the camera into the yoke.
 
 ```
-python check_clearances.py            # exits non-zero on a clash
-python check_printability.py          # exits non-zero if anything needs support
-python check_physics.py               # exits non-zero if it will not balance or stand
-python check_clearances.py --fast     # skip the exact pass: instant instead of ~2 min
+python check_clearances.py            # can it touch itself, and can you reach every screw
+python check_printability.py          # will it print without support, measured off the mesh
+python check_slicing.py               # ...and what a real slicer says about that
+python check_physics.py               # will it balance and will it stand up
+python check_stress.py                # is any section overloaded, and which way do its layers run
+python check_slicing.py --calibrate   # prove the slicer's detector still detects
+python check_clearances.py --fast     # skip the exact pass
 ```
 
-Each answers a different question: *can it be made*, *can it touch itself*, and
-*what happens once something heavy is bolted to it*.
+Five checks, five different questions. Two of them deliberately overlap:
+`check_printability` measures the geometry and `check_slicing` asks PrusaSlicer,
+which is a model of a slicer versus the slicer itself. When they agree that is
+worth something; when they disagree, one of them is wrong and you find out which.
+
+They have found, between them: a hold-down ear that a hand-driven screw would
+have split off along a layer line, a set screw pointing into the fork's own arm, a
+camera screw no driver can reach with the cradle level, three bridges that a
+tolerance quietly deleted from the measurement, and a fillet whose corners hung
+over the edge of the pad it was filleting.
 
 The exact pass is 22 CGAL booleans at about 19 s each. They run six at a time,
 which is the difference between two minutes and seven — and seven is long enough
@@ -467,6 +486,44 @@ It also removes work from the other axis. A payload balanced on the tilt axis do
 not move horizontally when it tilts, so the pan axis sees almost no overturning
 moment at any angle — the yoke's pad is left carrying weight and vibration rather
 than a lever arm.
+
+## Strength, and which way the layers run
+
+The load table at the top of this file used to be an argument. `check_stress.py`
+turns it into numbers: the stress at each section, whether it pulls *across* the
+layers or along them, and the margin against the right allowable — 45 MPa in
+plane, 20 MPa across, both divided by three.
+
+| Section | Stress | Layers | Margin |
+| --- | --- | --- | --- |
+| yoke, arm root above the fillet | 3.8 MPa | across | 2× |
+| pedestal, hold-down ear root | 2.8 MPa | across | 2× |
+| cradle, platform mid-span | 0.3 MPa | along | 59× |
+| pin, journal root | 0.1 MPa | across | 78× |
+| cradle cheek, shroud wall, arm compression | ≤0.01 MPa | | 800×+ |
+
+Two of those are worth the words:
+
+**The hold-down ear was a genuine failure at 20 MPa** — an M4 wood screw driven
+home by hand puts ~150 N through a tab, in bending, across the layers, and at
+4.5 mm thick with the bolt 5 mm outboard it was at PLA's layer-normal yield with
+nothing left over. It is the only load in the machine set by a *person* rather
+than by gravity, and it was the largest by a factor of forty. The repair is mostly
+the lever arm: the bolt now sits 2 mm off the wall rather than 5, so its load goes
+into the wall instead of into a flange, with a thicker tab and a wider root behind
+that.
+
+**The arm root gets a fillet rather than a bigger section.** 2× is where it lands
+against a 50 N yank on the camera that already has a factor of three on it, and
+the section cannot grow: the un-flared arm corner already sits 34.8 mm out on a
+35 mm pad. What the fillet is for is the *concentration* at a square corner where
+every layer line is perpendicular to the load — which is where a printed part
+cracks, and which the arithmetic above cannot see.
+
+Sizing it was its own lesson. The first fillet was 9 mm tall, which ate 9 mm of
+the splay's rise above it and turned a 55° self-supporting slope into a 41°
+overhang — a repair in one place breaking a constraint in another, caught by the
+printability check rather than by thinking about it.
 
 ## Standing on a desk
 
