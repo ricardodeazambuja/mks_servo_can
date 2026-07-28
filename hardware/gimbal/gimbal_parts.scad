@@ -4,6 +4,7 @@
 //   PART A  pan_yoke()        pan shaft  -> fork carrying the tilt axis
 //   PART B  camera_cradle()   tilt axis  -> camera
 //   PART C  pedestal()        pan motor  -> desk
+//   PART D  pivot_pin()       fork arm   -> the tilt axis' far bearing
 //
 //
 // EVERY PART IS MODELLED IN THE ORIENTATION IT PRINTS IN
@@ -45,20 +46,26 @@
 // to keep the steady loads out of layer-normal tension:
 //
 //   camera weight -> down each fork arm as *compression* (arms print vertically)
-//   overturning   -> the yoke's 52 mm pad rides flat on the pedestal's top plate,
-//                    so the moment is carried by a wide sliding face rather than
-//                    by a 5 mm shaft and a printed clamp
-//   pan torque    -> the only thing the shaft clamp has to transmit
+//   overturning   -> the yoke's 70 mm pad, riding on three PTFE glide pads on
+//                    the pedestal's top plate, so the moment is carried by a
+//                    wide face rather than by a 5 mm shaft and a printed clamp
+//   pan torque    -> the only thing the shaft joint has to transmit
 //   everything    -> a tapered shroud loaded in shell shear, not four posts in
-//                    bending, onto a 84 mm footprint that can be screwed down
+//                    bending, onto a 96 mm footprint that can be screwed down
+//
+// The tilt axis is carried at the motor end by the motor's own bearings and at
+// the far end by a 6700 ball bearing, so the printed bore never has to be a
+// bearing - see PART D.
 //
 // Render one part at a time:
 //   openscad -D 'part="A"' -o stl/pan_yoke.stl      gimbal_parts.scad
 //   openscad -D 'part="B"' -o stl/camera_cradle.stl gimbal_parts.scad
 //   openscad -D 'part="C"' -o stl/pedestal.stl      gimbal_parts.scad
+//   openscad -D 'part="D"' -o stl/pivot_pin.stl     gimbal_parts.scad
 //   openscad -D 'part="assembly"' -D pan=30 -D tilt=20 gimbal_parts.scad
+//   openscad -D 'part="section"'  -D tilt=-20 gimbal_parts.scad   # cutaway
 
-part = "assembly";  // "A", "B", "C", "assembly"
+part = "assembly";  // "A", "B", "C", "D", "assembly", "section"
 pan  = 0;           // assembly preview only, degrees
 tilt = 0;           // assembly preview only, degrees
 
@@ -92,12 +99,63 @@ m3_free        = 3.4;     // clearance, vertical hole
 m3_free_h      = 3.6;     // clearance, hole printed on its side (droops closed)
 m3_cs_d        = 6.4;     // countersunk head, at the surface
 m3_cs_h        = 1.9;     // and its depth
+m3_pilot       = 2.5;     // self-tapping into plastic
 m4_free        = 4.5;
 cam_screw_d    = 6.6;     // 1/4"-20 clearance
 
 // Fit allowances, tuned for a typical 0.4 mm nozzle
 fit_shaft      = 0.15;    // added to the bore, taken up by the clamp
 fit_boss       = 0.40;
+
+// ---------------------------------------------------------------------------
+// How anything gets held to a shaft
+// ---------------------------------------------------------------------------
+//
+// Every joint onto a 5 mm D-shaft in this design is the same three things, and
+// they do three different jobs:
+//
+//   the D-bore      takes the torque. It is a *positive* drive: the flat cannot
+//                   slip past the flat, clamped or not.
+//   a brass insert  takes the thread. A screw tapped straight into PLA is a
+//                   one-shot thread - it strips the second or third time you set
+//                   the balance and take the cradle off again, which on this
+//                   machine is a routine operation, not an accident.
+//   a set screw     takes up the bore clearance and stops the part sliding along
+//                   the shaft. It bears on the flat, so it pushes the bore's
+//                   round side onto the shaft's round side instead of trying to
+//                   grip on one corner.
+//
+// Both hubs are sized so a *standard* set screw length ends flush: the screw has
+// to cross the insert and then a clearance hole to reach the flat, and that total
+// is what sets `grub_flat_x` and the hub diameter, not the other way round.
+insert_d       = 4.0;     // heat-set insert, hole printed upright (Ruthex M3)
+insert_d_h     = 4.2;     // the same hole printed on its side, which droops shut
+insert_depth   = 5.7;
+grub_clear     = 3.2;     // the screw's own clearance, beyond the insert
+
+// ---------------------------------------------------------------------------
+// 6700 ball bearing, 10 x 15 x 4 - the tilt axis' far end
+// ---------------------------------------------------------------------------
+//
+// The far end of the tilt axis used to be a screw shank turning in a printed
+// journal. That works for about as long as the plastic lasts: a 4.6 mm plain
+// bearing under a 2 N radial load wears into an oval, and every micron of that
+// wear is backlash in the axis a tracker is trying to point. The bearing is not
+// here for load - a 6700 is good for 200 N static, against the 2 N it sees - it
+// is here so the axis has a *defined* radial play of about a hundredth of a
+// millimetre, and keeps it.
+brg_od         = 15.0;
+brg_id         = 10.0;
+brg_w          = 4.0;
+// Outer race presses into the cradle's cheek; inner race rides on the pin.
+brg_seat_d     = brg_od - 0.1;   // light press into a printed pocket
+brg_seat_depth = brg_w + 0.2;    // so the race sits fully below the face
+// Behind the seat: clears the *inner* race and the shield, which turn relative
+// to it, while leaving an annulus for the outer race to bottom against. An
+// inner race of a 6700 is about 11.7 across and the outer race starts at 13.2,
+// so 12.8 lands between them.
+brg_relief_d   = 12.8;
+brg_journal_d  = brg_id + 0.05;  // press onto the pin, which prints slightly fat
 
 // Extrusion-friendly wall thicknesses. Anything load bearing is a whole number
 // of 0.4 mm extrusions, so the slicer fills it with perimeters instead of
@@ -219,6 +277,37 @@ module nema17_with_driver(shaft_rot = 0, with_shaft = true) {
 // That orientation is what makes it printable without a scrap of support -
 // the walls draft *outward* at 13 deg as they rise, and the plate's mating face
 // is the one surface an FDM printer makes perfectly flat, the first layer.
+
+// The running gap at the pan axis, and what fills it.
+//
+// The previous version left 0.4 mm of air here and then claimed the yoke's pad
+// carried the overturning moment. It would have - after deflecting 0.4 mm, by
+// which point the 5 mm shaft had already taken the load the pad was there to keep
+// off it. An interface that only engages once something has bent is not an
+// interface, and this is the one place in the machine where two printed faces
+// have to slide on each other under load.
+//
+// So the gap is *filled*, by three Ø8 self-adhesive PTFE discs recessed into the
+// plate. Three, not a ring: three points cannot rock, and a printed 70 mm face
+// that warps two tenths would otherwise pick its own three. The cost is friction,
+// and it is small - about 11 N.mm against the motor's ~400 N.mm of holding torque
+// - which is the entire argument for PTFE over plastic on plastic, where it would
+// be four times that.
+//
+// They go on the plate rather than on the yoke because of the four countersunk
+// motor screws: a recess in the yoke's ring at this radius would sweep across
+// their heads once per revolution, and there is no radius that clears them and
+// still lands inside the ring. Fixed to the plate, the pads simply sit between
+// them - and `check_clearances.py` checks all three of "inside the yoke's ring",
+// "clear of a screw head" and "on the plate", because that placement is now a
+// constraint shared between two parts and nothing in either file would notice it
+// breaking.
+slew_gap     = 0.4;
+glide_d      = 8.4;    // recess for a Ø8 pad
+glide_t      = 0.8;
+glide_recess = glide_t - slew_gap;   // so the pad stands exactly slew_gap proud
+glide_r      = 28.5;
+glide_a      = 30;     // first pad's angle; the triad is +/-120 from it
 
 ped_plate_t = 5.0;
 ped_top     = 74.0;   // across flats at the plate; sized by the yoke's pad
@@ -390,6 +479,14 @@ module pedestal() {
         translate([0, 0, -eps]) cylinder(d = motor_boss_d + fit_boss,
                                         h = ped_plate_t + 2 * eps);
 
+        // Glide pad recesses, in the face the yoke runs on. `glide_a` is 30 and
+        // not 0: the pads have to sit between the four countersunk screws at
+        // 45/135/225/315, and a 120 deg triad can only be 15 deg off them at
+        // best - which it is here, and which leaves 1.9 mm of plate.
+        for (a = [glide_a, glide_a + 120, glide_a + 240]) rotate([0, 0, a])
+            translate([glide_r, 0, -eps])
+                cylinder(d = glide_d, h = glide_recess + eps);
+
         // --- desk end --------------------------------------------------------
         for (a = [0, 90, 180, 270]) rotate([0, 0, a]) {
             translate(concat(diag(ear_bolt_d), ped_h - ear_t - eps))
@@ -421,23 +518,27 @@ module pedestal() {
 // compression straight down two vertical arms, and leaves the payload where it
 // belongs: over the axis it is being turned about.
 //
-// The other half of the job is the bearing. A 5 mm shaft in a printed hub is a
-// poor thrust bearing and a worse moment bearing, so it is not asked to be
-// either: the 64 mm pad underneath rides flat on the pedestal's top plate, and
-// the shaft is left with nothing to transmit but torque.
+// The other half of the job is the pan bearing. A 5 mm shaft in a printed hub is
+// a poor thrust bearing and a worse moment bearing, so it is not asked to be
+// either: the 70 mm pad underneath carries both, and the shaft is left with
+// nothing to transmit but torque.
+//
+// What the pad runs on is three PTFE glide pads set into the pedestal's plate -
+// see `slew_gap` there for why the gap is filled rather than left as air, and why
+// the pads live on the other part.
 //
 // Print as modelled - pad down. Nothing here needs support.
 
-slew_gap    = 0.4;    // between the pad and the pedestal's plate
 yoke_pad_d  = 70.0;
 yoke_pad_t  = 4.0;
-// The pad bears on a ring at its rim, not on its whole face. A 64 mm printed
-// disc will warp a couple of tenths and then rock on whichever three points
-// stand proudest; relieving the middle decides which points those are.
+// The pad bears on a ring at its rim, not on its whole face, and the glide pads
+// run on that ring. Its width is therefore not free: `glide_r` has to land
+// inside it with room to spare, and the checker says so out loud.
 yoke_ring_w = 13.0;
 yoke_relief = 0.6;
 
-pan_hub_od  = 20.0;
+// 22, not 20, and it is the set screw that says so: see `grub_flat_x`.
+pan_hub_od  = 22.0;
 pan_hub_h   = 12.0;
 
 // The shaft joints are a close D-bore plus one screw bearing on the shaft's
@@ -452,10 +553,16 @@ pan_hub_h   = 12.0;
 // the screw only has to take up the bore clearance and stop the part lifting,
 // which a screw straight onto the flat does without needing anything to flex.
 //
-// M4 self-tapping into the plastic, ~9 mm of thread. Drill to 4.0 mm and fit a
-// heat-set insert if you would rather not trust a printed thread.
-grub_pilot  = 3.3;
-grub_flat_x = 11.0;   // a flat on the hub for the screw head to seat against
+// A flat down one side of the hub for the insert to be pressed into square. Its
+// distance from the axis is not a styling choice: an M3 set screw has to cross
+// the insert and then the clearance hole to touch the shaft's flat, and
+//
+//   12.0 - (shaft_flat_off + fit_shaft/2) = 9.93 mm
+//
+// which is what makes a stock M3x10 finish flush instead of standing proud. The
+// hub's 22 mm diameter follows from wanting that flat to be a 1 mm boss on it
+// rather than a cut into it.
+grub_flat_x = 12.0;
 
 // The fork. Wide because the payload sets it: a 52 mm camera has to swing
 // *between* the cradle's cheeks for the tilt axis to pass through its body, and
@@ -467,10 +574,21 @@ arm_y_root  = 22.0;
 arm_x_root  = 23.0;   // inner face where the arm lands on the pad
 arm_mid_z   = 27.0;   // splayed out by here, vertical above it
 arm_y_mid   = 26.0;
-tilt_axis_h = 60.0;   // above the pad's underside; set by the cradle's sweep
+// Above the pad's underside, and set by the cradle's sweep: at tilt -45 the
+// platform's rear corner drops to 34 mm below the axis, and it has to still be
+// above `arm_mid_z` - where the arms have finished splaying - or it swings into
+// the part of the fork that is still leaning inward. 63 leaves 2.8 mm.
+tilt_axis_h = 63.0;
 tilt_pad    = 42.0;   // motor face pad: 31 mm bolt square + 5.5 mm of material
 tilt_pad_r  = 7.0;
-pivot_pad_d = 26.0;   // the other arm only carries a pivot screw
+pivot_pad_d = 26.0;   // the other arm carries the pivot pin and its two keepers
+
+// The pivot pin's interface with this arm. The pin itself is PART D; what the
+// fork owns is a plain through hole for its journal and two keeper screws.
+pin_hole_d   = brg_journal_d + 0.35;  // slip fit, and it droops a little shut
+pin_flange_d = 22.0;
+pin_flange_t = 3.0;
+pin_screw_r  = 8.0;   // clear of both the journal and the pad's edge
 
 // A hole through a wall printed on its side, with a peak on top instead of a
 // flat roof: turns a 22 mm ceiling into a 12 mm one and puts the sag above the
@@ -532,9 +650,13 @@ module pan_yoke() {
         // Lead-in, so a squashed first layer cannot stop the yoke going on.
         translate([0, 0, -eps])
             cylinder(d1 = shaft_d + 1.6, d2 = shaft_d + fit_shaft, h = 0.8 + eps);
-        // Screw onto the flat.
-        translate([-grub_flat_x - 1, 0, pan_hub_h / 2]) rotate([0, 90, 0])
-            cylinder(d = grub_pilot, h = grub_flat_x + 1);
+        // Set screw onto the flat: insert first, then clearance to the shaft.
+        // The insert hole is the wider `insert_d_h` because it prints on its
+        // side, and a hole printed on its side comes out undersize at the top.
+        translate([-grub_flat_x - eps, 0, pan_hub_h / 2]) rotate([0, 90, 0]) {
+            cylinder(d = insert_d_h, h = insert_depth + eps);
+            cylinder(d = grub_clear, h = grub_flat_x - shaft_flat_off + eps);
+        }
 
         // --- bearing relief --------------------------------------------------
         translate([0, 0, -eps]) difference() {
@@ -549,13 +671,18 @@ module pan_yoke() {
         translate([arm_gap / 2 - eps, 0, tilt_axis_h])
             tear_x(motor_boss_d + fit_boss, arm_t_top + 2 * eps);
 
-        // --- pivot, on the -X arm --------------------------------------------
-        // A pilot, not a clearance hole: the pivot screw threads into *this*
-        // arm and the cradle rides on the shank that sticks out past it. That
-        // way the screw's head can pull up tight against the arm without
-        // clamping the axis it is there to let rotate.
+        // --- pivot pin, on the -X arm ----------------------------------------
+        // A through hole for the pin's journal and two keeper screws either side
+        // of it. The pin goes in from *outside*, which is the whole reason it is
+        // a separate part: a journal moulded onto this arm - or onto the cradle -
+        // could only be assembled by springing the fork apart by more than the
+        // 3 mm of side clearance it has, and the fork cannot be made wider
+        // without the tilt shaft running out of engagement.
         translate([-arm_gap / 2 - arm_t_top - eps, 0, tilt_axis_h]) rotate([0, 90, 0])
-            cylinder(d = grub_pilot, h = arm_t_top + 2 * eps);
+            cylinder(d = pin_hole_d, h = arm_t_top + 2 * eps);
+        for (s = [-1, 1])
+            translate([-arm_gap / 2 - arm_t_top - eps, s * pin_screw_r, tilt_axis_h])
+                rotate([0, 90, 0]) cylinder(d = m3_pilot, h = arm_t_top + 2 * eps);
 
         // --- cable tie, at the back of the pad -------------------------------
         for (s = [-1, 1])
@@ -572,10 +699,10 @@ module pan_yoke() {
 // full Ma continuously in the OPEN and CLOSE work modes, so an unbalanced tilt
 // axis is not merely wasted torque, it is a motor running hot doing nothing.
 //
-// The far cheek rides on a pivot screw in the other fork arm. The tilt axis is
-// therefore supported at both ends, which is the difference between a shaft
-// carrying a bending moment and a shaft carrying only torque - and the shaft in
-// question is 5 mm of steel in a printed bore.
+// The far cheek carries a 6700 ball bearing, riding on the pin in the other fork
+// arm. The tilt axis is therefore supported at both ends, which is the difference
+// between a shaft carrying a bending moment and a shaft carrying only torque -
+// and the shaft in question is 5 mm of steel in a printed bore.
 //
 // Print platform-down. Bending from the camera's weight then runs *along* the
 // layers, and the bore's ceiling is the D-flat: a 4.5 mm flat bridge, which is
@@ -597,26 +724,29 @@ plat_r   = 6.0;
 // into the space the camera occupies. The tilt motor's shaft ran 3.1 mm into the
 // camera envelope before this was 11.
 cheek_t  = 11.0;
-axis_z   = 22.0;   // tilt axis above the platform's underside: mid-camera
-hub_od   = 20.0;
+// The tilt axis, above the platform's underside. This is the *balance* number,
+// not a styling one: put it below the payload's centre of mass and the axis is a
+// pendulum the motor has to hold up all day. Platform base plus half a 44 mm
+// camera is 27; the cradle's own mass sits low and pulls the combined centre
+// down to about 25 for anything between 150 g and 600 g of payload, which leaves
+// under 7 N.mm of standing torque across that whole range.
+axis_z   = 25.0;
+hub_od   = 20.0;   // the shaft side
+// The bearing side is fatter because it has to be: a 14.9 mm pocket needs wall
+// round it, and 24 leaves 4.6 mm.
+pivot_hub_od = 24.0;
 cam_slot = 20.0;   // fore/aft travel for balancing
 
-// Pivot: an M4 screwed into the far arm, with the cradle riding on its shank.
-// The screw is fixed to the *arm*, not to the cradle, so its head can bottom out
-// on the arm without clamping the axis it is supposed to let rotate.
-pivot_journal = 4.6;
-pivot_depth   = 6.5;   // blind, so the tip cannot reach into the camera's space
-
-module _cradle_cheek(s) {
+module _cradle_cheek(s, hub) {
     x0 = s > 0 ? plat_w / 2 - cheek_t : -plat_w / 2;
     hull() {
         translate([x0, -plat_l / 2, plat_t - eps]) cube([cheek_t, plat_l, eps]);
-        translate([x0, -hub_od / 2 - 2, axis_z - hub_od / 2])
-            cube([cheek_t, hub_od + 4, eps]);
+        translate([x0, -hub / 2 - 2, axis_z - hub / 2])
+            cube([cheek_t, hub + 4, eps]);
         // Hulling the cheek into the hub leaves the hub's lower half inside the
         // solid, so the one shape here that would have been an overhang - a
         // cylinder lying on its side - never has an underside at all.
-        translate([x0, 0, axis_z]) rotate([0, 90, 0]) cylinder(d = hub_od, h = cheek_t);
+        translate([x0, 0, axis_z]) rotate([0, 90, 0]) cylinder(d = hub, h = cheek_t);
     }
 }
 
@@ -628,20 +758,33 @@ module camera_cradle() {
                 translate([0, 0, foot_ch])
                     rrect(plat_w, plat_l, plat_t - foot_ch, plat_r);
             }
-            for (s = [-1, 1]) _cradle_cheek(s);
+            _cradle_cheek(1, hub_od);
+            _cradle_cheek(-1, pivot_hub_od);
         }
 
         // --- tilt shaft, in the +X cheek --------------------------------------
         translate([plat_w / 2 - cheek_t, 0, axis_z]) d_bore_x(cheek_t + eps);
         translate([plat_w / 2 + eps, 0, axis_z]) rotate([0, -90, 0])
             cylinder(d1 = shaft_d + 1.6, d2 = shaft_d + fit_shaft, h = 0.8 + eps);
-        // Screw onto the flat, straight down from the top of the hub.
-        translate([plat_w / 2 - cheek_t / 2, 0, axis_z + shaft_flat_off])
-            cylinder(d = grub_pilot, h = hub_od);
+        // Set screw onto the flat, straight down from the top of the hub, with
+        // its insert at the top where a soldering iron can reach it. Printed
+        // upright, so this one gets the narrower `insert_d`.
+        translate([plat_w / 2 - cheek_t / 2, 0, axis_z + shaft_flat_off]) {
+            cylinder(d = grub_clear, h = hub_od / 2 - shaft_flat_off + eps);
+            translate([0, 0, hub_od / 2 - shaft_flat_off - insert_depth])
+                cylinder(d = insert_d, h = insert_depth + 2 * eps);
+        }
 
-        // --- pivot, in the -X cheek -------------------------------------------
-        translate([-plat_w / 2 - eps, 0, axis_z]) rotate([0, 90, 0])
-            cylinder(d = pivot_journal, h = pivot_depth);
+        // --- pivot bearing, in the -X cheek -----------------------------------
+        // The pocket opens outward and bottoms on a shoulder, so the outer race
+        // is located by a printed face rather than by how hard you pressed it.
+        // Behind the shoulder the relief runs right through the cheek: it clears
+        // the inner race, and it means the bearing can be pushed back out with a
+        // rod instead of levered out of a blind hole.
+        translate([-plat_w / 2 - eps, 0, axis_z]) rotate([0, 90, 0]) {
+            cylinder(d = brg_seat_d, h = brg_seat_depth + eps);
+            cylinder(d = brg_relief_d, h = cheek_t + 2 * eps);
+        }
 
         // --- camera screw -----------------------------------------------------
         // A slot, not a row of holes: balance is a continuous adjustment, and it
@@ -649,6 +792,83 @@ module camera_cradle() {
         translate([0, 0, -eps]) hull() for (y = [-1, 1])
             translate([0, y * cam_slot / 2, 0])
                 cylinder(d = cam_screw_d, h = plat_t + 2 * eps);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PART D - pivot pin
+// ---------------------------------------------------------------------------
+//
+// The tilt axis' far journal, and the fourth part exists because of assembly
+// order rather than because of load. The bearing has to end up in the cradle's
+// cheek and on something attached to the fork, and the cradle only has 3 mm of
+// side clearance to slide in - less than the bearing is wide. A journal moulded
+// onto either part therefore cannot be got into the other one without springing
+// the fork, and the fork cannot be widened to make room because the tilt shaft
+// is 20 mm long and already only reaches 9.8 mm into its bore.
+//
+// A pin fitted from *outside* the arm has none of that problem: the cradle drops
+// in with clearance all round, and the pin goes through afterwards. It also comes
+// back out, which matters more than it sounds - taking the cradle off is how you
+// re-balance after a lens change.
+//
+// Print flange-down: the journal comes out round because it is a vertical
+// cylinder, the countersinks open at the first layer, and the bending stress in
+// the journal at 2 N is 0.1 MPa, so which way the layers run is irrelevant here.
+
+tilt_gap  = arm_gap / 2 - plat_w / 2;   // side clearance, per side
+// How far the journal stands proud of the arm's inner face: across the gap, into
+// the bearing, and 1.5 mm beyond it into the cheek's relief. That overrun is the
+// axial tolerance of the whole joint - the cradle can sit 1.5 mm further from
+// this arm than nominal and the bearing is still fully on the journal.
+pin_overrun = 1.5;
+pin_stick   = tilt_gap + brg_seat_depth + pin_overrun;
+pin_len     = arm_t_top + pin_stick;
+
+module pivot_pin() {
+    difference() {
+        union() {
+            hull() {
+                cylinder(d = pin_flange_d - 2 * foot_ch, h = eps);
+                translate([0, 0, foot_ch])
+                    cylinder(d = pin_flange_d, h = pin_flange_t - foot_ch);
+            }
+            translate([0, 0, pin_flange_t - eps]) {
+                cylinder(d = brg_journal_d, h = pin_len - 0.6 + eps);
+                // Lead-in, so the bearing starts square instead of on one edge.
+                translate([0, 0, pin_len - 0.6])
+                    cylinder(d1 = brg_journal_d, d2 = brg_journal_d - 1.2, h = 0.6);
+            }
+        }
+        // Two keeper screws. They hold the pin in; they are not in the load path,
+        // which is the journal against the walls of its hole.
+        for (s = [-1, 1]) translate([0, s * pin_screw_r, -eps]) {
+            cylinder(d = m3_free, h = pin_flange_t + 2 * eps);
+            cylinder(d1 = m3_cs_d, d2 = m3_free, h = m3_cs_h + eps);
+        }
+    }
+}
+
+// The bearing itself, in two pieces, because its two races belong to different
+// rigid bodies: the outer one turns with the cradle and the inner one sits still
+// on the pin. Modelling it as one solid ring would make the interference test
+// compare the pin with something clamped to the part rotating around it.
+//
+// Both races are drawn at their *seat* sizes rather than their catalogue sizes,
+// so the press fits do not read as collisions. A press fit is an intentional
+// overlap of a tenth of a millimetre, and the exact test would report it as
+// 14 mm^3 of interpenetration - true, and not what the test is for.
+module bearing_outer() {
+    color("#8f979f") difference() {
+        cylinder(d = brg_seat_d - 0.02, h = brg_w);
+        translate([0, 0, -eps]) cylinder(d = brg_od - 1.8, h = brg_w + 2 * eps);
+    }
+}
+
+module bearing_inner() {
+    color("#8f979f") difference() {
+        cylinder(d = brg_id + 1.7, h = brg_w);
+        translate([0, 0, -eps]) cylinder(d = brg_journal_d + 0.02, h = brg_w + 2 * eps);
     }
 }
 
@@ -678,6 +898,10 @@ module moving_assembly(tilt_deg = 0, with_camera = true) {
         color("#2a7fd8") translate([0, 0, tilt_z - axis_z]) camera_cradle();
         translate([tilt_face_x, 0, tilt_z]) rotate([0, -90, 0])
             nema17_shaft(shaft_rot = 180);
+        // The bearing's outer race, pressed into the far cheek and turning with
+        // it. Its inner race is on the pin, in fixed_assembly().
+        translate([-plat_w / 2, 0, tilt_z]) rotate([0, 90, 0])
+            translate([0, 0, brg_seat_depth - brg_w]) bearing_outer();
         if (with_camera)
             color("#23272e", 0.55)
                 translate([-cam_w / 2, -cam_d / 2, tilt_z - axis_z + plat_t])
@@ -693,18 +917,53 @@ module fixed_assembly(only = "all") {
     // Pan motor, hanging inside the shroud, shaft up through the plate.
     if (only == "all" || only == "pan motor")
         translate([0, 0, ped_top_z - ped_plate_t]) nema17_with_driver();
+    if (only == "all" || only == "pedestal")
+        // The glide pads, filling the gap the yoke runs on. Drawn with the
+        // pedestal because they are stuck to its plate and do not turn.
+        color("#e8e8e4") for (a = [glide_a, glide_a + 120, glide_a + 240])
+            rotate([0, 0, a]) translate([glide_r, 0, ped_top_z - glide_recess])
+                cylinder(d = glide_d - 0.4, h = glide_t);
     if (only == "all" || only == "yoke")
         color("#d8632a") translate([0, 0, yoke_z]) pan_yoke();
     // Tilt motor, bolted to the outside of the +X arm, shaft pointing in.
     if (only == "all" || only == "tilt motor")
         translate([tilt_face_x, 0, tilt_z]) rotate([0, -90, 0])
             nema17_with_driver(with_shaft = false);
+    // Pivot pin, through the -X arm from outside, carrying the bearing's inner
+    // race. Both are fixed to the fork, so both belong on this side of the test.
+    if (only == "all" || only == "pivot pin")
+        color("#c0c6cc") translate([-tilt_face_x - pin_flange_t, 0, tilt_z])
+            rotate([0, 90, 0]) {
+                pivot_pin();
+                translate([0, 0, pin_flange_t + arm_t_top + tilt_gap
+                                 + brg_seat_depth - brg_w])
+                    bearing_inner();
+            }
 }
 
 module assembly(pan_deg = 0, tilt_deg = 0, show_camera = true) {
     rotate([0, 0, pan_deg]) {
         fixed_assembly();
         moving_assembly(tilt_deg, show_camera);
+    }
+}
+
+// The assembly cut on the y = 0 plane, which is the plane both axes lie in - so
+// one image shows the pan shaft in its hub, the glide pads in their recesses and
+// the pivot bearing on its pin. Every one of those is a fit you cannot see from
+// outside, and a fit nobody looks at is a fit nobody notices is wrong.
+//
+// The payload is left out: it is a solid block 52 mm wide and it hides most of
+// what the cut is for.
+//
+//   openscad -D 'part="section"' -D tilt=-20 gimbal_parts.scad
+// The cutter is coloured, and that is not decoration: in a preview render the
+// faces an intersection exposes take the colour of whatever did the cutting, so
+// an uncoloured cube turns the entire cutaway into one flat silhouette.
+module section(pan_deg = 0, tilt_deg = 0) {
+    intersection() {
+        assembly(pan_deg, tilt_deg, false);
+        color("#b9bfc7") translate([-300, 0, -50]) cube([600, 400, 400]);
     }
 }
 
@@ -726,7 +985,7 @@ module assembly(pan_deg = 0, tilt_deg = 0, show_camera = true) {
 //
 //   openscad -D 'part="interference"' -D tilt=-45 --export-format binstl \
 //            -o /tmp/x.stl gimbal_parts.scad
-against = "all";   // "pedestal", "pan motor", "yoke", "tilt motor"
+against = "all";   // "pedestal", "pan motor", "yoke", "tilt motor", "pivot pin"
 
 module interference(pan_deg = 0, tilt_deg = 0, only = "all") {
     intersection() {
@@ -735,10 +994,33 @@ module interference(pan_deg = 0, tilt_deg = 0, only = "all") {
     }
 }
 
+// The one pair of parts that are *both* fixed and still have to fit each other:
+// the pivot pin and the fork arm it passes through. The interference test above
+// cannot see it - it compares what moves against what does not, and these are
+// both on the same side of that line - so the only thing holding the pin in the
+// right place was the same arithmetic written out twice, once to cut the hole and
+// once to position the part. Which is exactly the shape of mistake that puts a
+// flange on the wrong side of a wall and looks perfectly fine in a render.
+//
+// The pin's journal is 10.05 in a 10.4 hole and its flange lands on the arm's
+// outer face, so the honest answer here is zero: a clearance fit and one
+// coincident face.
+//
+//   openscad -D 'part="fit"' --export-format binstl -o /tmp/x.stl gimbal_parts.scad
+module fit_check() {
+    intersection() {
+        fixed_assembly("pivot pin");
+        fixed_assembly("yoke");
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 if (part == "A") pan_yoke();
 else if (part == "B") camera_cradle();
 else if (part == "C") pedestal();
+else if (part == "D") pivot_pin();
+else if (part == "fit") fit_check();
+else if (part == "section") section(pan, tilt);
 else if (part == "interference") interference(pan, tilt, against);
 else assembly(pan, tilt);

@@ -40,6 +40,8 @@ import sys
 import numpy as np
 from stl import mesh
 
+from check_clearances import warn_if_stale
+
 HERE = pathlib.Path(__file__).parent
 
 # Each part and the orientation it is documented to print in.
@@ -53,6 +55,7 @@ PARTS = [
     ("pan_yoke.stl", "pad on the bed, fork arms up"),
     ("camera_cradle.stl", "platform on the bed, cheeks up"),
     ("pedestal.stl", "top plate on the bed, desk end last"),
+    ("pivot_pin.stl", "flange on the bed, journal up"),
 ]
 
 # A facet normal within this angle of straight down is a near-horizontal
@@ -61,9 +64,34 @@ PARTS = [
 # it lands inside or outside comes down to rounding. Parts here draft at 40.
 OVERHANG_COS = np.cos(np.radians(44.0))
 
-# Down-faces within this distance of the lowest point are the part sitting on
-# the bed, not an overhang.
-BED_TOL = 0.5
+# The bed. This is a modelling tolerance, not a distance - just above the `eps`
+# the .scad uses for its zero-height hull sections.
+#
+# There used to be one "near the bed" threshold of 0.5 mm serving both of the
+# measurements below, and it could not: a 0.6 mm bed chamfer has to count as bed
+# and the ceiling of a 0.4 mm-deep glide-pad recess has to not, and no single
+# height separates 0.4 from 0.6. Three 10 mm bridges dropped out of the
+# measurement the moment those pockets were added, and the part still passed. So
+# the two questions get the two thresholds they actually need.
+BED_TOL = 0.02
+
+# For the wall-angle measurement only: a down-facing surface that begins within a
+# chamfer's height of the bed is a chamfer, not a wall. Every bed edge here is
+# chamfered at 45 deg, which is shallower than any wall in the design, so without
+# this the figure is always "45 deg" and always means the chamfer.
+#
+# Asking instead whether a facet *touches* the bed nearly works and is not
+# robust: CGAL re-triangulates during the booleans, and 5 mm^2 of the pivot pin's
+# chamfer came out as triangles with no vertex on the bed at all.
+CHAMFER_MAX = 1.0
+
+# The shallowest-wall figure walks up from the shallowest facet until it has this
+# much area, and reports where it got to. Without it the number is set by whatever
+# single sliver the tessellator left where a lead-in cone meets a bore: one
+# 0.14 mm^2 triangle at 45.4 deg was being reported as this design's shallowest
+# wall while the shallowest actual wall was 48 deg. A wall you can measure with a
+# protractor is not 0.14 mm^2 in area.
+WALL_MIN_MM2 = 1.0
 
 # A patch narrower than this bridges without support. Conservative: FDM
 # routinely spans 20 mm or more, and every patch in this design is a hole
@@ -95,22 +123,20 @@ def analyse(path: pathlib.Path) -> dict:
 
     z_min = tri[:, :, 2].min()
     z_max = tri[:, :, 2].max()
-    centroid_z = tri[:, :, 2].mean(axis=1)
 
-    # Anything this close to the bed is the part sitting on it, or the chamfer
-    # that keeps elephant's foot off a mating face - not an overhang, whatever
-    # its angle. Excluding it by angle alone was enough to make the "shallowest
-    # wall" figure report that 0.6 mm chamfer on every part instead of a wall.
-    near_bed = centroid_z <= z_min + BED_TOL
-    on_bed = (nz < -OVERHANG_COS) & near_bed
-    overhang = (nz < -OVERHANG_COS) & ~near_bed
+    # A down-face lying *on* the bed is the first layer: the extruder is laying it
+    # onto glass. A down-face that starts anywhere above it is an overhang however
+    # low it is - which is what the glide-pad recesses are, 0.4 mm up.
+    low = tri[:, :, 2].min(axis=1)
+    on_bed = (nz < -OVERHANG_COS) & (tri[:, :, 2].max(axis=1) <= z_min + BED_TOL)
+    overhang = (nz < -OVERHANG_COS) & (low > z_min + BED_TOL)
 
     patches = _patches(tri[overhang], area[overhang], tri)
 
     # Shallowest wall: the facet closest to horizontal that still faces
     # downward at all, ignoring the bed and true horizontals.
-    sloping = (nz < 0) & (nz >= -OVERHANG_COS) & ~near_bed
-    worst_wall = np.degrees(np.arccos(np.clip(-nz[sloping].min(), -1, 1))) if sloping.any() else None
+    sloping = (nz < 0) & (nz >= -OVERHANG_COS) & (low > z_min + CHAMFER_MAX)
+    worst_wall, sliver = _shallowest(nz, area, sloping)
 
     return {
         "height": z_max - z_min,
@@ -119,7 +145,32 @@ def analyse(path: pathlib.Path) -> dict:
         "patches": patches,
         "worst_span": max((p["span"] for p in patches), default=0.0),
         "worst_wall_deg": worst_wall,
+        "sliver_mm2": sliver,
     }
+
+
+def _shallowest(nz: np.ndarray, area: np.ndarray, mask: np.ndarray) -> tuple:
+    """The shallowest down-facing wall, discounting tessellation slivers.
+
+    Args:
+        nz: Per-facet normal z component.
+        area: Per-facet area.
+        mask: Which facets count as sloping walls.
+
+    Returns:
+        `(degrees_from_horizontal, sliver_mm2)` - the angle reached once
+        `WALL_MIN_MM2` of facet area has been accumulated from the shallowest
+        facet upward, and how much area was shallower than that. Reporting the
+        second number is the point: it is what tells you whether the first one
+        skipped a real surface or a triangle you could not see.
+    """
+    if not mask.any():
+        return None, 0.0
+    deg = np.degrees(np.arccos(np.clip(-nz[mask], -1, 1)))
+    order = np.argsort(deg)
+    cum = np.cumsum(area[mask][order])
+    i = min(int(np.searchsorted(cum, WALL_MIN_MM2)), len(order) - 1)
+    return float(deg[order][i]), float(cum[i - 1]) if i else 0.0
 
 
 def _bary(tri: np.ndarray, pts: np.ndarray) -> tuple:
@@ -273,6 +324,7 @@ def _patches(tri: np.ndarray, area: np.ndarray, mesh_tri: np.ndarray) -> list:
 
 
 def main() -> int:
+    warn_if_stale(HERE / "stl" / name for name, _ in PARTS)
     print(f"{'part':<20}{'height':>8}{'bed':>10}{'overhang':>10}{'widest span':>14}")
     print(f"{'':<20}{'mm':>8}{'mm^2':>10}{'mm^2':>10}{'mm':>14}")
     print("-" * 62)
@@ -289,11 +341,15 @@ def main() -> int:
               f"{r['overhang_area']:>10.1f}{r['worst_span']:>14.1f}")
         print(f"{'  ' + orientation:<20}")
         if r["worst_wall_deg"] is not None:
+            sliver = (f", past {r['sliver_mm2']:.2f} mm^2 of slivers"
+                      if r["sliver_mm2"] > 0.005 else "")
             print(f"    shallowest down-facing wall: {r['worst_wall_deg']:.0f} deg "
-                  f"from horizontal (45+ is self-supporting)")
+                  f"from horizontal (45+ is self-supporting){sliver}")
         if r["patches"]:
+            verdict = ("" if r["worst_span"] > BRIDGE_MM
+                       else f" - all bridge below {BRIDGE_MM:.0f} mm")
             print(f"    {len(r['patches'])} down-facing patches, widest span "
-                  f"{r['worst_span']:.1f} mm - all bridge below {BRIDGE_MM:.0f} mm")
+                  f"{r['worst_span']:.1f} mm{verdict}")
         # A tall part on a small footprint will tip regardless of overhangs.
         if r["bed_area"] > 0 and r["height"] / np.sqrt(r["bed_area"]) > 3.0:
             print("    NOTE tall relative to its footprint - use a brim")

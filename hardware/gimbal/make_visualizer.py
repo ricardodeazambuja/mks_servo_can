@@ -39,13 +39,17 @@ WANTED = [
     "ped_top_r", "ped_foot_r",
     "ap_w", "ap_roof", "ap_bottom", "ap_top_gap",
     "ear_t", "ear_foot_inset", "ear_bolt_out", "foot_d",
+    # the pan interface: three PTFE pads in the plate, filling `slew_gap`
+    "slew_gap", "glide_d", "glide_t", "glide_r", "glide_a", "glide_recess",
     # yoke
-    "slew_gap", "yoke_pad_d", "yoke_pad_t", "pan_hub_od", "pan_hub_h",
+    "yoke_pad_d", "yoke_pad_t", "pan_hub_od", "pan_hub_h",
     "arm_gap", "arm_t_top", "arm_t_root", "arm_x_root", "arm_y_root",
     "tilt_axis_h", "tilt_pad", "pivot_pad_d",
     # cradle and payload
     "plat_w", "plat_l", "plat_t", "cheek_t", "axis_z", "hub_od", "cam_slot",
-    "cam_w", "cam_h", "cam_d",
+    "pivot_hub_od", "cam_w", "cam_h", "cam_d",
+    # the tilt axis' far end: bearing, and the pin it rides on
+    "brg_od", "brg_id", "brg_w", "pin_flange_d", "pin_flange_t", "pin_len",
     # the assembly frame the .scad derives, so the viewer cannot re-derive it
     # differently: desk at z = 0
     "ped_top_z", "yoke_z", "tilt_z", "tilt_face_x",
@@ -200,7 +204,7 @@ table.dims td:last-child { text-align: right; }
 
 <header>
   <h1>Two-axis camera gimbal</h1>
-  <span class="sub">NEMA17 32&nbsp;mm &middot; MKS SERVO42D_CAN &middot; 3 printed parts</span>
+  <span class="sub">NEMA17 32&nbsp;mm &middot; MKS SERVO42D_CAN &middot; 4 printed parts</span>
   <span class="spacer"></span>
   <span class="sub" id="pose">pan +0.0&deg; &nbsp; tilt +0.0&deg;</span>
 </header>
@@ -265,8 +269,10 @@ table.dims td:last-child { text-align: right; }
         <span><span class="swatch" style="background:var(--accent)"></span>A &mdash; pan yoke</span>
         <span><span class="swatch" style="background:var(--cool)"></span>B &mdash; camera cradle</span>
         <span><span class="swatch" style="background:#6b7480"></span>C &mdash; pedestal</span>
+        <span><span class="swatch" style="background:#9aa3ad"></span>D &mdash; pivot pin</span>
         <span><span class="swatch" style="background:#3c4249"></span>motor</span>
         <span><span class="swatch" style="background:#1d5c2f"></span>SERVO42D</span>
+        <span><span class="swatch" style="background:#e8e8e4"></span>PTFE</span>
       </div>
       <p class="note">Nothing encloses the driver end. The pedestal is open on
         all four sides, so the OLED and its three buttons stay reachable &mdash;
@@ -359,6 +365,7 @@ const C = {
   driver: '#1d5c2f',
   oled:   '#0b0d12',
   metal:  '#9aa3ad',
+  ptfe:   '#e8e8e4',
   yoke:   getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#e0752f',
   cradle: getComputedStyle(document.documentElement).getPropertyValue('--cool').trim() || '#4aa3d8',
   base:   '#6b7480',
@@ -425,6 +432,14 @@ function build(pan, tilt) {
     cyl(E, 0, rf, 0, D.foot_d, D.ear_t, C.base, 12);
     cyl(E, 0, rf, -2.5, D.foot_d, 2.5, C.oled, 12);
   }
+  // The three PTFE glide pads the yoke runs on, set into the plate. They are the
+  // pan bearing: without them the yoke's pad hovers and the shaft takes the
+  // overturning moment on its own.
+  for (const k of [0, 1, 2]) {
+    const a = (D.glide_a + 120*k) * Math.PI/180;
+    cyl(I(), D.glide_r*Math.cos(a), D.glide_r*Math.sin(a),
+        D.ped_h - D.glide_recess, D.glide_d - 0.4, D.glide_t, C.ptfe, 14);
+  }
   motor(trans(0, 0, D.ped_h - D.ped_plate_t));
 
   // Everything from here turns with pan.
@@ -447,6 +462,14 @@ function build(pan, tilt) {
   // Tilt motor, bolted to the outside of the +X arm, shaft pointing inward.
   motor(mul(P, mul(trans(D.tilt_face_x, 0, D.tilt_z), rotY(-90))));
 
+  // Part D, in from the outside of the -X arm: flange, then the journal the
+  // 6700's inner race sits on. The bearing itself is inside the cheek's pocket
+  // and so cannot be drawn here - the dimension table names it instead.
+  const PIN = mul(P, mul(trans(-D.tilt_face_x - D.pin_flange_t, 0, D.tilt_z),
+                         rotY(90)));
+  cyl(PIN, 0, 0, 0, D.pin_flange_d, D.pin_flange_t, C.metal, 16);
+  cyl(PIN, 0, 0, D.pin_flange_t, D.brg_id, D.pin_len, C.metal, 16);
+
   // --- part B: the cradle, and the payload it carries ----------------------
   // Rotated about the tilt axis, which crosses the pan axis: the camera turns
   // about a line through its own body rather than swinging off a bracket.
@@ -454,10 +477,13 @@ function build(pan, tilt) {
   box(CR, -D.plat_w/2, -D.plat_l/2, 0, D.plat_w, D.plat_l, D.plat_t, C.cradle);
   for (const s of [-1, 1]) {
     const x0 = s > 0 ? D.plat_w/2 - D.cheek_t : -D.plat_w/2;
+    // The pivot cheek's hub is the fatter of the two: it has a 15 mm bearing
+    // pocket to put wall round.
+    const hub = s > 0 ? D.hub_od : D.pivot_hub_od;
     loft(CR, [x0, x0 + D.cheek_t, -D.plat_l/2, D.plat_l/2, D.plat_t],
-             [x0, x0 + D.cheek_t, -D.hub_od/2, D.hub_od/2, D.axis_z], C.cradle);
+             [x0, x0 + D.cheek_t, -hub/2, hub/2, D.axis_z], C.cradle);
     cyl(mul(CR, mul(trans(x0, 0, D.axis_z), rotY(90))), 0, 0, 0,
-        D.hub_od, D.cheek_t, C.cradle);
+        hub, D.cheek_t, C.cradle);
   }
   box(CR, -D.cam_w/2, -D.cam_d/2, D.plat_t, D.cam_w, D.cam_d, D.cam_h, '#23272e');
 }
@@ -598,8 +624,9 @@ const rows = [
   ['tilt axis, above desk', D.tilt_z.toFixed(1) + ' mm'],
   ['tilt axis, above payload base', (D.axis_z - D.plat_t).toFixed(0) + ' mm'],
   ['fork, clear span', D.arm_gap + ' mm'],
-  ['pan bearing pad', D.yoke_pad_d + ' mm on a flat face'],
-  ['shaft joints', D.shaft_d + ' mm D-shaft, screw on the flat'],
+  ['pan bearing', D.yoke_pad_d + ' mm pad on 3 PTFE pads'],
+  ['tilt axis, far end', `6700 bearing, ${D.brg_id}\\u00d7${D.brg_od}\\u00d7${D.brg_w}`],
+  ['shaft joints', D.shaft_d + ' mm D-shaft, insert + set screw'],
   ['motor face pitch', '31.0 mm sq, M3'],
   ['pedestal footprint', D.ped_foot + ' mm sq, 4 \\u00d7 M4'],
   ['payload envelope', D.cam_w + '\\u00d7' + D.cam_d + '\\u00d7' + D.cam_h + ' mm'],

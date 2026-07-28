@@ -110,6 +110,29 @@ def scad_values(path: pathlib.Path) -> dict:
     return values
 
 
+def warn_if_stale(paths) -> bool:
+    """Warns when an exported STL is older than the model it came from.
+
+    The two checkers that measure meshes rather than dimensions are only as
+    truthful as the last export, and the failure is silent in the worst way: the
+    numbers all look plausible, they are just describing the previous design. This
+    only warns, because a fresh clone hands every file the same timestamp and a
+    hard failure there would be noise.
+
+    Args:
+        paths: STL paths to check.
+
+    Returns:
+        True if anything looked stale.
+    """
+    stale = [p for p in paths if p.exists()
+             and p.stat().st_mtime < SCAD.stat().st_mtime]
+    for p in stale:
+        print(f"  NOTE {p.name} is older than {SCAD.name} - re-export before "
+              f"trusting these numbers")
+    return bool(stale)
+
+
 def cradle_points(v: dict) -> np.ndarray:
     """Everything that moves, in the cradle's own frame.
 
@@ -137,12 +160,16 @@ def cradle_points(v: dict) -> np.ndarray:
                 pts.append((x, y, z))
 
     # Cheeks, sampled round the hub bosses, which are the highest part of the
-    # cradle and the closest to the fork's arms.
-    for x in (-hw, hw, -hw + v["cheek_t"], hw - v["cheek_t"]):
+    # cradle and the closest to the fork's arms. The two hubs are different
+    # diameters - the pivot side has to hold a 15 mm bearing - so each is sampled
+    # at its own, rather than both at the smaller one.
+    for x, hub in ((hw, v["hub_od"]), (hw - v["cheek_t"], v["hub_od"]),
+                   (-hw, v["pivot_hub_od"]),
+                   (-hw + v["cheek_t"], v["pivot_hub_od"])):
         for a in np.linspace(0, 2 * np.pi, 16, endpoint=False):
             pts.append((x,
-                        v["hub_od"] / 2 * np.cos(a),
-                        v["axis_z"] + v["hub_od"] / 2 * np.sin(a)))
+                        hub / 2 * np.cos(a),
+                        v["axis_z"] + hub / 2 * np.sin(a)))
 
     # The camera, at both extremes of the balance slot and in the middle.
     cw, ch, cd = v["cam_w"] / 2, v["cam_h"], v["cam_d"] / 2
@@ -247,11 +274,20 @@ def swept_obstacles(v: dict) -> list:
     ]
 
 
-# The exact test's members, and the tilts it checks. Coarse on purpose: each one
+# The exact test's members, and the poses it checks. Coarse on purpose: each one
 # is a CGAL boolean over the whole assembly, a few seconds apiece. The analytic
 # sweep finds the worst angle; this confirms the geometry the sweep only models.
-EXACT_TILTS = (-45.0, -20.0, 0.0, 45.0, 90.0)
-FIXED_MEMBERS = ("pedestal", "pan motor", "yoke", "tilt motor")
+FIXED_MEMBERS = ("pedestal", "pan motor", "yoke", "tilt motor", "pivot pin")
+
+# Pan is swept for the pedestal alone, and that is not laziness. Everything else
+# in FIXED_MEMBERS is bolted to the yoke, so it turns *with* the cradle and their
+# relative geometry is pan-invariant. The pedestal does not: its top plate is a
+# rounded square, so its corners pass under the cradle's nose at 45 deg and not at
+# 0. The analytic sweep covers that with a half-space at the plate's height, which
+# is conservative but says nothing about the corners themselves.
+EXACT_CASES = tuple(
+    (0.0, tilt, FIXED_MEMBERS) for tilt in (-45.0, -20.0, 0.0, 45.0, 90.0)
+) + ((45.0, -45.0, ("pedestal",)), (45.0, 90.0, ("pedestal",)))
 
 # Coincident faces are everywhere in an assembly - a motor's face bolts flat
 # against a plate - and CGAL returns those contacts as a zero-thickness solid
@@ -295,7 +331,7 @@ def exact_overlaps(verbose: bool = False) -> list:
     the real geometry, and its volume is either zero or it is not.
 
     Returns:
-        List of (label, tilt, mm3) for every pair that overlaps.
+        List of (label, pan, tilt, mm3) for every pair that overlaps.
 
     Raises:
         FileNotFoundError: If openscad is not installed.
@@ -303,23 +339,108 @@ def exact_overlaps(verbose: bool = False) -> list:
     out = []
     tmp = SCAD.with_name("_interference.stl")
     try:
-        for tilt in EXACT_TILTS:
-            for member in FIXED_MEMBERS:
+        for pan, tilt, members in EXACT_CASES:
+            for member in members:
                 tmp.unlink(missing_ok=True)
                 subprocess.run(
                     ["openscad", "-D", 'part="interference"', "-D", f"tilt={tilt}",
-                     "-D", f'against="{member}"', "--export-format", "binstl",
-                     "-o", str(tmp), str(SCAD)],
+                     "-D", f"pan={pan}", "-D", f'against="{member}"',
+                     "--export-format", "binstl", "-o", str(tmp), str(SCAD)],
                     capture_output=True, check=False,
                 )
                 vol = _stl_volume(tmp)
                 if verbose:
-                    print(f"  tilt {tilt:+6.1f}  {member:<12} {vol:10.4f} mm^3")
+                    print(f"  pan {pan:+5.1f} tilt {tilt:+6.1f}  {member:<12} "
+                          f"{vol:10.4f} mm^3")
                 if vol > EXACT_TOL_MM3:
-                    out.append((member, tilt, vol))
+                    out.append((member, pan, tilt, vol))
     finally:
         tmp.unlink(missing_ok=True)
     return out
+
+
+def _rrect_inset(x: float, y: float, half: float, r: float) -> float:
+    """How far a point sits inside a rounded square centred on the origin.
+
+    Args:
+        x: Point's x.
+        y: Point's y.
+        half: Half the square's across-flats size.
+        r: Corner radius.
+
+    Returns:
+        Distance from the point to the nearest edge, positive inside.
+    """
+    qx, qy = abs(x) - (half - r), abs(y) - (half - r)
+    outside = np.hypot(max(qx, 0.0), max(qy, 0.0))
+    return float(r - (outside + min(max(qx, qy), 0.0)))
+
+
+def glide_gaps(v: dict) -> list:
+    """Where the three PTFE glide pads sit, and what they have to miss.
+
+    Their placement is a constraint shared between two parts that never appear in
+    the same module: the recesses are in the pedestal's plate, the surface they
+    bear on is the ring on the yoke's pad, and the things they must not overlap
+    are the pedestal's own countersunk motor screws. Nothing in the .scad relates
+    those three, so a change to `glide_r`, `yoke_ring_w` or the plate's size can
+    put a pad half off its bearing surface and no render will look wrong.
+
+    Args:
+        v: Dimension table.
+
+    Returns:
+        List of (label, mm, minimum, note), worst case over the three pads.
+    """
+    pr = v["glide_d"] / 2
+    ring_in = v["yoke_pad_d"] / 2 - v["yoke_ring_w"]
+    ring_out = v["yoke_pad_d"] / 2
+    bolt = v["motor_bolt_span"] / 2 * np.sqrt(2)          # screws on the diagonals
+    inside, on_plate, off_screw = [], [], []
+    for k in range(3):
+        a = np.radians(v["glide_a"] + 120 * k)
+        x, y = v["glide_r"] * np.cos(a), v["glide_r"] * np.sin(a)
+        inside.append(min(v["glide_r"] - pr - ring_in, ring_out - v["glide_r"] - pr))
+        on_plate.append(_rrect_inset(x, y, v["ped_top"] / 2, v["ped_top_r"]) - pr)
+        for b in (45, 135, 225, 315):
+            bx, by = bolt * np.cos(np.radians(b)), bolt * np.sin(np.radians(b))
+            off_screw.append(np.hypot(x - bx, y - by) - pr - v["m3_cs_d"] / 2)
+    return [
+        ("glide pad in the ring", min(inside), 1.0,
+         f"yoke's bearing ring is {ring_in:.1f}..{ring_out:.1f} mm radius"),
+        ("glide pad on the plate", min(on_plate), 1.0,
+         f"plate is {v['ped_top']:.0f} mm across flats"),
+        ("glide pad to a motor screw", min(off_screw), 1.0,
+         "countersinks at 45/135/225/315"),
+    ]
+
+
+def exact_fit() -> float:
+    """Overlap between the pivot pin and the fork arm it passes through, in mm^3.
+
+    Both are fixed, so `exact_overlaps` - which compares what moves against what
+    does not - cannot see this pair at all. Until this existed, the only thing
+    holding the pin in the right place was the same arithmetic written twice: once
+    to cut the hole in the arm, once to position the part in the assembly. A
+    clearance fit and one coincident face should come to zero.
+
+    Returns:
+        The overlap volume in mm^3.
+
+    Raises:
+        FileNotFoundError: If openscad is not installed.
+    """
+    tmp = SCAD.with_name("_fit.stl")
+    try:
+        tmp.unlink(missing_ok=True)
+        subprocess.run(
+            ["openscad", "-D", 'part="fit"', "--export-format", "binstl",
+             "-o", str(tmp), str(SCAD)],
+            capture_output=True, check=False,
+        )
+        return _stl_volume(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def static_gaps(v: dict) -> list:
@@ -340,6 +461,9 @@ def static_gaps(v: dict) -> list:
     short = 2.0   # how much less shaft than 20 mm a given motor might have
     # How far the tilt shaft reaches past the near face of the cradle's bore.
     reach = v["shaft_len"] - (v["tilt_face_x"] - v["plat_w"] / 2)
+    # What is left of the cheek behind the bearing's pocket, for the pin's tip to
+    # run into.
+    relief = v["cheek_t"] - v["brg_seat_depth"]
     return [
         ("cradle to fork arm", v["arm_gap"] / 2 - v["plat_w"] / 2, 2.0,
          "each side; set along the tilt axis, not by any angle"),
@@ -356,7 +480,28 @@ def static_gaps(v: dict) -> list:
          min(v["pan_hub_h"],
              v["shaft_len"] - v["ped_plate_t"] - v["slew_gap"]) - short, 6.0,
          f"with a shaft {short:.0f} mm shorter than {v['shaft_len']:.0f} mm"),
-    ]
+        # The pivot bearing. Three separate things can be got wrong here and only
+        # the first of them is about strength.
+        ("bearing seat wall",
+         (v["pivot_hub_od"] - v["brg_seat_d"]) / 2, 1.6,
+         f"round a {v['brg_seat_d']:.1f} mm pocket in the cheek"),
+        # The pin's journal runs past the bearing into the cheek's relief, and
+        # that overrun *is* the axial tolerance of the joint: the cradle can sit
+        # this much further from the pivot arm than nominal with the bearing still
+        # fully supported.
+        ("pin overrun past the race", v["pin_overrun"], 0.5,
+         "axial slack the tilt joint can absorb"),
+        ("relief left past the pin tip", relief - v["pin_overrun"], 1.0,
+         f"cheek is {v['cheek_t']:.0f} mm, pocket takes {v['brg_seat_depth']:.1f}"),
+        # A screw at this radius has to clear the journal's hole on one side and
+        # the pad's edge on the other, in an arm only as thick as its own length.
+        ("keeper screw to journal",
+         v["pin_screw_r"] - (v["m3_pilot"] + v["pin_hole_d"]) / 2, 1.0,
+         f"{v['pin_screw_r']:.0f} mm out from the axis"),
+        ("keeper screw to pad edge",
+         v["pivot_pad_d"] / 2 - v["pin_screw_r"] - v["m3_pilot"] / 2, 1.6,
+         "in the -X arm's pivot pad"),
+    ] + glide_gaps(v)
 
 
 def clearance(points: np.ndarray, lo, hi) -> float:
@@ -392,7 +537,12 @@ def main() -> int:
     needed = ("plat_w", "plat_l", "plat_t", "axis_z", "cheek_t", "hub_od",
               "cam_w", "cam_h", "cam_d", "cam_slot", "tilt_z", "yoke_z",
               "ped_top_z", "yoke_pad_d", "yoke_pad_t", "pan_hub_od",
-              "pan_hub_h", "arm_gap", "tilt_face_x", "shaft_len")
+              "pan_hub_h", "arm_gap", "tilt_face_x", "shaft_len",
+              "pivot_hub_od", "pivot_pad_d", "brg_seat_d", "brg_seat_depth",
+              "pin_overrun", "pin_screw_r", "pin_hole_d", "m3_pilot",
+              "glide_d", "glide_r", "glide_a", "yoke_ring_w", "ped_top",
+              "ped_top_r", "motor_bolt_span", "m3_cs_d", "slew_gap",
+              "ped_plate_t")
     missing = [k for k in needed if k not in v]
     if missing:
         print(f"could not read {missing} from {SCAD.name}")
@@ -439,18 +589,27 @@ def main() -> int:
         else:
             if bad:
                 ok = False
-                for member, tilt, vol in bad:
+                for member, pan, tilt, vol in bad:
                     print(f"  FAIL cradle overlaps the {member} by {vol:.1f} mm^3 "
-                          f"at tilt {tilt:+.0f}")
+                          f"at pan {pan:+.0f}, tilt {tilt:+.0f}")
             else:
-                print(f"  OK  no overlap above {EXACT_TOL_MM3} mm^3 at tilt "
-                      + ", ".join(f"{t:+.0f}" for t in EXACT_TILTS))
+                print(f"  OK  no overlap above {EXACT_TOL_MM3} mm^3 over "
+                      + ", ".join(f"({p:+.0f},{t:+.0f})" for p, t, _ in EXACT_CASES)
+                      + " as (pan, tilt)")
+            fit = exact_fit()
+            if fit > EXACT_TOL_MM3:
+                ok = False
+                print(f"  FAIL the pivot pin overlaps the fork arm by "
+                      f"{fit:.1f} mm^3 - it is not in its hole")
+            else:
+                print("  OK  the pivot pin fits its hole in the fork arm")
 
     print(f"\nrequirement: swept >= {REQUIRED_MM:.1f} mm, static as noted, "
           "exact overlap zero")
     if not ok:
-        print("insufficient clearance - raise tilt_axis_h, or shrink the payload "
-              "envelope in gimbal_parts.scad if it is genuinely smaller")
+        print("look at which line failed before changing anything: a swept "
+              "failure usually wants tilt_axis_h raised, a static one wants the "
+              "feature that owns the number - they are not the same repair")
     return 0 if ok else 1
 
 

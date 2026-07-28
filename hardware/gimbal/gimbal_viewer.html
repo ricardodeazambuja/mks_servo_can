@@ -147,7 +147,7 @@ table.dims td:last-child { text-align: right; }
 
 <header>
   <h1>Two-axis camera gimbal</h1>
-  <span class="sub">NEMA17 32&nbsp;mm &middot; MKS SERVO42D_CAN &middot; 3 printed parts</span>
+  <span class="sub">NEMA17 32&nbsp;mm &middot; MKS SERVO42D_CAN &middot; 4 printed parts</span>
   <span class="spacer"></span>
   <span class="sub" id="pose">pan +0.0&deg; &nbsp; tilt +0.0&deg;</span>
 </header>
@@ -212,8 +212,10 @@ table.dims td:last-child { text-align: right; }
         <span><span class="swatch" style="background:var(--accent)"></span>A &mdash; pan yoke</span>
         <span><span class="swatch" style="background:var(--cool)"></span>B &mdash; camera cradle</span>
         <span><span class="swatch" style="background:#6b7480"></span>C &mdash; pedestal</span>
+        <span><span class="swatch" style="background:#9aa3ad"></span>D &mdash; pivot pin</span>
         <span><span class="swatch" style="background:#3c4249"></span>motor</span>
         <span><span class="swatch" style="background:#1d5c2f"></span>SERVO42D</span>
+        <span><span class="swatch" style="background:#e8e8e4"></span>PTFE</span>
       </div>
       <p class="note">Nothing encloses the driver end. The pedestal is open on
         all four sides, so the OLED and its three buttons stay reachable &mdash;
@@ -224,7 +226,7 @@ table.dims td:last-child { text-align: right; }
 </div>
 
 <script>
-const D = {"motor_body": 42.3, "motor_len": 32.0, "motor_boss_d": 22.0, "motor_boss_h": 2.0, "shaft_d": 5.0, "shaft_len": 20.0, "driver_pcb": 42.5, "driver_depth": 16.0, "ped_top": 74.0, "ped_foot": 96.0, "ped_h": 67.0, "ped_plate_t": 5.0, "ped_top_r": 8.0, "ped_foot_r": 14.0, "ap_w": 42.0, "ap_roof": 10.0, "ap_bottom": 6.0, "ap_top_gap": 7.5, "ear_t": 4.5, "ear_foot_inset": 8.0, "ear_bolt_out": 5.0, "foot_d": 12.4, "slew_gap": 0.4, "yoke_pad_d": 70.0, "yoke_pad_t": 4.0, "pan_hub_od": 20.0, "pan_hub_h": 12.0, "arm_gap": 84.0, "arm_t_top": 7.2, "arm_t_root": 10.0, "arm_x_root": 23.0, "arm_y_root": 22.0, "tilt_axis_h": 60.0, "tilt_pad": 42.0, "pivot_pad_d": 26.0, "plat_w": 78.0, "plat_l": 44.0, "plat_t": 5.0, "cheek_t": 11.0, "axis_z": 22.0, "hub_od": 20.0, "cam_slot": 20.0, "cam_w": 52.0, "cam_h": 44.0, "cam_d": 34.0, "ped_top_z": 67.0, "yoke_z": 67.4, "tilt_z": 127.4, "tilt_face_x": 49.2};
+const D = {"motor_body": 42.3, "motor_len": 32.0, "motor_boss_d": 22.0, "motor_boss_h": 2.0, "shaft_d": 5.0, "shaft_len": 20.0, "driver_pcb": 42.5, "driver_depth": 16.0, "ped_top": 74.0, "ped_foot": 96.0, "ped_h": 67.0, "ped_plate_t": 5.0, "ped_top_r": 8.0, "ped_foot_r": 14.0, "ap_w": 42.0, "ap_roof": 10.0, "ap_bottom": 6.0, "ap_top_gap": 7.5, "ear_t": 4.5, "ear_foot_inset": 8.0, "ear_bolt_out": 5.0, "foot_d": 12.4, "slew_gap": 0.4, "glide_d": 8.4, "glide_t": 0.8, "glide_r": 28.5, "glide_a": 30.0, "glide_recess": 0.4, "yoke_pad_d": 70.0, "yoke_pad_t": 4.0, "pan_hub_od": 22.0, "pan_hub_h": 12.0, "arm_gap": 84.0, "arm_t_top": 7.2, "arm_t_root": 10.0, "arm_x_root": 23.0, "arm_y_root": 22.0, "tilt_axis_h": 63.0, "tilt_pad": 42.0, "pivot_pad_d": 26.0, "plat_w": 78.0, "plat_l": 44.0, "plat_t": 5.0, "cheek_t": 11.0, "axis_z": 25.0, "hub_od": 20.0, "cam_slot": 20.0, "pivot_hub_od": 24.0, "cam_w": 52.0, "cam_h": 44.0, "cam_d": 34.0, "brg_od": 15.0, "brg_id": 10.0, "brg_w": 4.0, "pin_flange_d": 22.0, "pin_flange_t": 3.0, "pin_len": 15.9, "ped_top_z": 67.0, "yoke_z": 67.4, "tilt_z": 130.4, "tilt_face_x": 49.2};
 const LIM = {"pan": [-170.0, 170.0], "tilt": [-45.0, 90.0]};
 
 /* ---------- tiny 3x4 transform helpers (column-major R|t) ---------- */
@@ -306,6 +308,7 @@ const C = {
   driver: '#1d5c2f',
   oled:   '#0b0d12',
   metal:  '#9aa3ad',
+  ptfe:   '#e8e8e4',
   yoke:   getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#e0752f',
   cradle: getComputedStyle(document.documentElement).getPropertyValue('--cool').trim() || '#4aa3d8',
   base:   '#6b7480',
@@ -372,6 +375,14 @@ function build(pan, tilt) {
     cyl(E, 0, rf, 0, D.foot_d, D.ear_t, C.base, 12);
     cyl(E, 0, rf, -2.5, D.foot_d, 2.5, C.oled, 12);
   }
+  // The three PTFE glide pads the yoke runs on, set into the plate. They are the
+  // pan bearing: without them the yoke's pad hovers and the shaft takes the
+  // overturning moment on its own.
+  for (const k of [0, 1, 2]) {
+    const a = (D.glide_a + 120*k) * Math.PI/180;
+    cyl(I(), D.glide_r*Math.cos(a), D.glide_r*Math.sin(a),
+        D.ped_h - D.glide_recess, D.glide_d - 0.4, D.glide_t, C.ptfe, 14);
+  }
   motor(trans(0, 0, D.ped_h - D.ped_plate_t));
 
   // Everything from here turns with pan.
@@ -394,6 +405,14 @@ function build(pan, tilt) {
   // Tilt motor, bolted to the outside of the +X arm, shaft pointing inward.
   motor(mul(P, mul(trans(D.tilt_face_x, 0, D.tilt_z), rotY(-90))));
 
+  // Part D, in from the outside of the -X arm: flange, then the journal the
+  // 6700's inner race sits on. The bearing itself is inside the cheek's pocket
+  // and so cannot be drawn here - the dimension table names it instead.
+  const PIN = mul(P, mul(trans(-D.tilt_face_x - D.pin_flange_t, 0, D.tilt_z),
+                         rotY(90)));
+  cyl(PIN, 0, 0, 0, D.pin_flange_d, D.pin_flange_t, C.metal, 16);
+  cyl(PIN, 0, 0, D.pin_flange_t, D.brg_id, D.pin_len, C.metal, 16);
+
   // --- part B: the cradle, and the payload it carries ----------------------
   // Rotated about the tilt axis, which crosses the pan axis: the camera turns
   // about a line through its own body rather than swinging off a bracket.
@@ -401,10 +420,13 @@ function build(pan, tilt) {
   box(CR, -D.plat_w/2, -D.plat_l/2, 0, D.plat_w, D.plat_l, D.plat_t, C.cradle);
   for (const s of [-1, 1]) {
     const x0 = s > 0 ? D.plat_w/2 - D.cheek_t : -D.plat_w/2;
+    // The pivot cheek's hub is the fatter of the two: it has a 15 mm bearing
+    // pocket to put wall round.
+    const hub = s > 0 ? D.hub_od : D.pivot_hub_od;
     loft(CR, [x0, x0 + D.cheek_t, -D.plat_l/2, D.plat_l/2, D.plat_t],
-             [x0, x0 + D.cheek_t, -D.hub_od/2, D.hub_od/2, D.axis_z], C.cradle);
+             [x0, x0 + D.cheek_t, -hub/2, hub/2, D.axis_z], C.cradle);
     cyl(mul(CR, mul(trans(x0, 0, D.axis_z), rotY(90))), 0, 0, 0,
-        D.hub_od, D.cheek_t, C.cradle);
+        hub, D.cheek_t, C.cradle);
   }
   box(CR, -D.cam_w/2, -D.cam_d/2, D.plat_t, D.cam_w, D.cam_d, D.cam_h, '#23272e');
 }
@@ -545,8 +567,9 @@ const rows = [
   ['tilt axis, above desk', D.tilt_z.toFixed(1) + ' mm'],
   ['tilt axis, above payload base', (D.axis_z - D.plat_t).toFixed(0) + ' mm'],
   ['fork, clear span', D.arm_gap + ' mm'],
-  ['pan bearing pad', D.yoke_pad_d + ' mm on a flat face'],
-  ['shaft joints', D.shaft_d + ' mm D-shaft, screw on the flat'],
+  ['pan bearing', D.yoke_pad_d + ' mm pad on 3 PTFE pads'],
+  ['tilt axis, far end', `6700 bearing, ${D.brg_id}\u00d7${D.brg_od}\u00d7${D.brg_w}`],
+  ['shaft joints', D.shaft_d + ' mm D-shaft, insert + set screw'],
   ['motor face pitch', '31.0 mm sq, M3'],
   ['pedestal footprint', D.ped_foot + ' mm sq, 4 \u00d7 M4'],
   ['payload envelope', D.cam_w + '\u00d7' + D.cam_d + '\u00d7' + D.cam_h + ' mm'],
@@ -554,7 +577,7 @@ const rows = [
 document.getElementById('dimTable').innerHTML =
   rows.map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
 
-const clr = {"swept": 22.69, "where": "yoke hub", "static": 1.2, "staticWhere": "tilt bore vs shaft tip"};
+const clr = {"swept": 22.97, "where": "yoke hub", "static": 1.2, "staticWhere": "tilt bore vs shaft tip"};
 document.getElementById('clr').textContent =
   `swept ${clr.swept.toFixed(1)} mm (${clr.where})`;
 document.getElementById('clr2').textContent =
