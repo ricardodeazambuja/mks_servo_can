@@ -357,6 +357,123 @@ async def cmd_current(can_if: CANInterface, args) -> int:
     return 0
 
 
+# 0x39 reports commanded-minus-actual shaft angle, where 0..51200 spans a turn.
+SHAFT_ERROR_PER_DEG = 51200.0 / 360.0
+
+# Only the serial modes accept the CAN command set at all; the manual is explicit
+# that Part 6 requires SR_OPEN, SR_CLOSE or SR_VFOC.
+MODES = {
+    "open": const.MODE_SR_OPEN,
+    "close": const.MODE_SR_CLOSE,
+    "foc": const.MODE_SR_VFOC,
+}
+
+
+async def cmd_mode(can_if: CANInterface, args) -> int:
+    """Sets the work mode on one or both motors.
+
+    The choice is not cosmetic and it interacts with everything else here:
+
+    * **close** (SR_CLOSE) closes the loop on the encoder and caps at 1500 RPM.
+      Holding current (0x9B) is honoured.
+    * **foc** (SR_VFOC) caps at 3000 RPM and **ignores 0x9B entirely**, so a
+      board in this mode holds full current no matter what you set. That is why
+      turning holding current down to 10% on a hot motor changed nothing.
+    * **open** (SR_OPEN) does not correct anything, caps at 400 RPM, and a
+      forced shaft loses its position permanently.
+
+    THE MOTORS ARE RELEASED FIRST, ON PURPOSE. A motor carrying accumulated
+    following error will drive to close it the moment the loop starts caring -
+    pan was measured 13.23 degrees adrift - and that is a sudden unsupervised
+    move on an axis limited by its cabling. Releasing first means the mode
+    change lands on a motor that is not holding anything, and you re-zero after.
+    """
+    targets = [args.axis] if args.axis else list(AXES)
+    code = MODES[args.mode]
+
+    for name in targets:
+        axis = _axis(can_if, name)
+        await _unmute(axis)
+        await _sync_enable_state(axis)
+        err_before = await axis._low_level_api.read_shaft_angle_error(axis.can_id)
+        await axis.disable_motor()
+        await axis._low_level_api.set_work_mode(axis.can_id, code)
+        print(f"  {name:5} -> {args.mode} (0x{code:02x}), released; "
+              f"following error was {err_before / SHAFT_ERROR_PER_DEG:+.2f} deg")
+
+    print(
+        "\nBoth motors are released. Re-zero before moving again:\n"
+        "    gimbal_cli.py set-zero\n"
+        "The mode is stored on the board, so it survives a power cycle; the "
+        "zero does not."
+    )
+    return 0
+
+
+async def cmd_watch(can_if: CANInterface, args) -> int:
+    """Streams position, following error and protection state while you push it.
+
+    For diagnosing what a motor does when it is forced off its holding position.
+    Four readings, chosen because between them they separate the causes that
+    look identical from outside:
+
+    * **position** (0x31) - where the encoder says the shaft is.
+    * **error** (0x39) - commanded angle minus real angle. If the motor is
+      holding a target and you push it away, this grows. If it *stops* growing
+      while the shaft is somewhere else, the motor has stopped trying, which
+      means it has either lost the pole or given up.
+    * **protect** (0x3E) - whether locked-rotor protection has tripped. Once it
+      trips, the motor stops driving until it is released with 0x3D, and it will
+      not resist being turned at all.
+    * **pulses** (0x33) - the commanded pulse count. This is the discriminator
+      that matters: if the shaft moves 90 degrees and this does *not* change,
+      nothing commanded that motion and the rotor slipped. If it does change,
+      something is still driving.
+
+    Run it, then force the axis by hand and watch which column moves first.
+    """
+    axis = _axis(can_if, args.axis)
+    await _unmute(axis)
+    api = axis._low_level_api
+    print(f"Watching {args.axis} (CAN {axis.can_id}) at {args.hz:.0f} Hz. "
+          f"Force it by hand. Ctrl-C to stop.\n")
+    print(f"{'t':>6}{'position':>12}{'error':>12}{'speed':>8}"
+          f"{'pulses':>12}  protect")
+    print("-" * 66)
+
+    period = 1.0 / args.hz
+    started = asyncio.get_event_loop().time()
+    last_pos = None
+    try:
+        while True:
+            t = asyncio.get_event_loop().time() - started
+            try:
+                pos = await axis.get_current_position_user()
+                err = await api.read_shaft_angle_error(axis.can_id)
+                rpm = await api.read_motor_speed_rpm(axis.can_id)
+                pulses = await api.read_pulses_received(axis.can_id)
+                prot = await api.read_motor_protection_state(axis.can_id)
+            except MKSServoError as exc:
+                print(f"{t:6.1f}   read failed: {type(exc).__name__}: {exc}")
+                await asyncio.sleep(period)
+                continue
+            # Flag the thing being investigated: a large sudden position change
+            # with nothing commanding it.
+            jump = ""
+            if last_pos is not None and abs(pos - last_pos) > 5.0:
+                jump = f"   <-- JUMPED {pos - last_pos:+.1f} deg"
+            last_pos = pos
+            print(
+                f"{t:6.1f}{pos:>+11.2f}d{err/SHAFT_ERROR_PER_DEG:>+11.2f}d"
+                f"{rpm:>8}{pulses:>12}  "
+                f"{'TRIPPED' if prot else 'ok'}{jump}"
+            )
+            await asyncio.sleep(period)
+    except KeyboardInterrupt:
+        print("\nstopped")
+    return 0
+
+
 async def cmd_release(can_if: CANInterface, args) -> int:
     """Disables both motors so the axes can be turned by hand."""
     ok = True
@@ -407,6 +524,8 @@ COMMANDS = {
     # the motors rather than driving them, so there is nothing to guard.
     "set-zero": (cmd_set_zero, False),
     "current": (cmd_current, False),
+    "watch": (cmd_watch, False),
+    "mode": (cmd_mode, False),
     "release": (cmd_release, False),
     "hold": (cmd_hold, False),
 }
@@ -463,6 +582,19 @@ def build_parser() -> argparse.ArgumentParser:
                           f"in every mode, and costs torque for moves too")
     cur.add_argument("--axis", choices=sorted(AXES), default=None,
                      help="just one axis (default: both)")
+    md = sub.add_parser(
+        "mode", help="set the work mode; releases the motors first"
+    )
+    md.add_argument("mode", choices=sorted(MODES),
+                    help="close = SR_CLOSE (encoder loop, honours holding "
+                         "current), foc = SR_VFOC (ignores holding current), "
+                         "open = SR_OPEN (corrects nothing)")
+    md.add_argument("--axis", choices=sorted(AXES), default=None)
+    w = sub.add_parser(
+        "watch", help="stream position, following error and protection state"
+    )
+    w.add_argument("--axis", choices=sorted(AXES), default="pan")
+    w.add_argument("--hz", type=float, default=5.0, help="samples per second")
     sub.add_parser("release", help="motors off, axes free to turn by hand")
     sub.add_parser("hold", help="motors on, holding position")
     return p
