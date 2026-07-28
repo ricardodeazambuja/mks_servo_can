@@ -6,7 +6,9 @@ versioning is [semantic](https://semver.org/).
 
 ## [Unreleased]
 
-Simulator observability, and the library defects that observability exposed.
+Simulator observability, and the library defects that observability exposed —
+plus a printable pan/tilt gimbal for two of these motors, held to the same
+standard: every claim about it comes from a script that measures it.
 
 ### Changed
 
@@ -502,6 +504,50 @@ Simulator observability, and the library defects that observability exposed.
 - **Added `docs/development/roadmap.md`** — the open defects, the order to
   address them in, and how to verify each. `docs/README.md` had reserved a link
   for this since the beginning; it was one of the 27 dead ones.
+
+### Added — a printable pan/tilt gimbal, and the checks that hold it
+
+- **`hardware/gimbal/` prints a two-axis mount for these motors.** Four parts —
+  pan yoke, camera cradle, pedestal, pivot pin — modelled in one OpenSCAD file
+  with the assembly, a section view and the test modes built from the same
+  geometry, so a check can never be measuring a different model from the one
+  that gets exported. `stl/` and `step/` are tracked, so printing or opening it
+  in CAD needs no toolchain at all.
+- **Three places where plastic was doing a job it should not.** The tilt pivot
+  ran plastic on plastic and now carries a 10×15×4 ball bearing on the side
+  opposite the motor; the pan face hovered over the base with nothing deciding
+  the gap and now slews on three PTFE pads at a measured 0.4 mm; and screws bit
+  directly into printed threads, which are now M3 heat-set inserts.
+- **Five checkers, each measuring rather than asserting.**
+  `check_clearances.py` runs 56 exact CSG intersections across the working
+  envelope and reports overlap volume — including whether a 4 mm driver 45 mm
+  long can actually reach all 8 fasteners *in assembly order*, which is a
+  question no rendering answers. `check_printability.py` measures overhang
+  angle, bridge span and bed contact per part in its stated print orientation.
+  `check_slicing.py` asks PrusaSlicer itself and has a `--calibrate` mode that
+  slices a known-bad part first, because a checker that has gone silent looks
+  exactly like a part with no problems. `check_physics.py` takes volume and
+  centroid off the meshes by the divergence theorem and gates balance about the
+  tilt axis and tipping on a desk. `check_stress.py` puts a number on every load
+  path *and states which way the layers run under it*, because the same 6 MPa is
+  comfortable along the layers and marginal across them.
+- **The checks found real defects, which is the point of having them.** The
+  pedestal's hold-down ear was at 20.2 MPa across the layer bond — a genuine
+  failure against a 6.7 MPa allowable — and was rebuilt to 2.83 MPa. A fillet
+  added to strengthen the yoke arm had eaten 9 mm of the rise above it and
+  quietly turned a 55° self-supporting slope into a 41° overhang. The README's
+  old load-path table had claimed every load ran along the layers; it was an
+  argument, and it was wrong.
+- **The exact interference pass got fast enough to be worth widening.** OpenSCAD
+  2021.01 is CGAL-only and takes 20–55 s per `intersection()`; the nightly's
+  Manifold backend takes 0.2–0.6 s for the same boolean and agrees with it to
+  1×10⁻⁵ %. The speed was spent on coverage rather than pocketed — 56 booleans
+  where there had been 11, and the whole pass still finishes in 6.5 s.
+- **`hardware/DESIGNING_PRINTED_PARTS.md`** records the toolchain with pinned
+  versions and its caveats (both the OpenSCAD and PrusaSlicer flatpaks fail by
+  *warning while exiting 0* when asked to write outside `$HOME`, which is how a
+  previous conclusion came to be wrong), the FDM rules these parts are held to,
+  and the traps that cost time here.
 
 ### Known issues
 

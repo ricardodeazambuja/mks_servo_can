@@ -700,7 +700,7 @@ def main() -> int:
     pts = cradle_points(v)
     boxes = swept_obstacles(v)
     labels = [label for label, _, _ in boxes] + ["fork arm"]
-    worst = {label: (1e9, None) for label in labels}
+    worst = dict.fromkeys(labels, (1000000000.0, None))
 
     for tilt in np.arange(TILT_LIMITS[0], TILT_LIMITS[1] + 0.5, 0.5):
         g = to_global(pts, float(tilt), v)
@@ -755,7 +755,12 @@ def main() -> int:
             else:
                 print("  OK  the pivot pin fits its hole in the fork arm")
 
-        print("\nreach, a driver's 45 mm at each screw's step in the order")
+        # The driver's size is read back out of the .scad rather than written
+        # here. It was spelled "45 mm" in this line once, which is a number that
+        # keeps agreeing with the model right up until someone changes the model.
+        print(f"\nreach, a driver's {v['tool_d']:.0f} mm shank and "
+              f"{v['tool_len']:.0f} mm of straight run at each screw's step, "
+              f"in assembly order")
         try:
             blocked = exact_access(args.verbose)
         except FileNotFoundError:
@@ -766,8 +771,12 @@ def main() -> int:
                 print(f"  FAIL no room for a driver on the {name} "
                       f"(tilt {tilt:+.0f}): {vol:.1f} mm^3 of it is inside a part")
             if not blocked:
+                # Separated by "; " and not ", ": one of the steps is called
+                # "pan set screw, assembled", so a comma-joined list reads as
+                # nine items where there are eight, and the count and the list
+                # appear to disagree.
                 print(f"  OK  all {len(ACCESS_CASES)} fasteners: "
-                      + ", ".join(n for n, _ in ACCESS_CASES))
+                      + "; ".join(n for n, _ in ACCESS_CASES))
 
     print(f"\nrequirement: swept >= {REQUIRED_MM:.1f} mm, static as noted, "
           "exact overlap zero")

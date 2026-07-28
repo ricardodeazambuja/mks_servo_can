@@ -14,12 +14,17 @@ stress figure without a layer direction beside it does not mean anything.
 
 WHY THIS IS BEAM THEORY AND NOT FEA. Every section here is a prismatic beam,
 plate or annulus loaded a long way from its supports, which is the case closed-form
-formulas are exact for; and the margins come out between 10x and 1000x. FEA earns
-its setup cost when a margin is small, when the geometry is not beam-like, or when
-the peak is at a stress raiser you cannot see - and the honest use of these numbers
-is to tell you *which* section is worth that trouble. Right now the answer is the
-pedestal's hold-down ear, because it is the only place in the machine where a
-human with a screwdriver, rather than gravity, sets the load.
+formulas are exact for. FEA earns its setup cost when a margin is small, when the
+geometry is not beam-like, or when the peak is at a stress raiser you cannot see -
+and the honest use of these numbers is to tell you *which* section is worth that
+trouble. Everything here is 12x clear or better except two sections at 2x: the
+yoke's arm root and the pedestal's hold-down ear, which is also the only place in
+the machine where a human with a screwdriver, rather than gravity, sets the load.
+
+Both of those 2x figures are conservative on purpose - the ear's section is taken
+at the bolt rather than at the blended root, and the arm's load is an invented
+50 N yank with a factor of three already on it - so the pragmatic answer was to
+make the conservative bound pass rather than to compute the exact one.
 
 Every number below is a hand calculation with its assumptions written down. They
 are meant to be argued with.
@@ -34,7 +39,6 @@ import argparse
 import sys
 
 import numpy as np
-
 from check_clearances import SCAD, scad_values
 
 G = 9.81
@@ -83,41 +87,41 @@ def sections(v: dict, payload_n: float, grab_n: float, screw_n: float) -> list:
     b, h = v["arm_y_root"], v["arm_t_root"]
     lever = v["tilt_axis_h"] - v["yoke_pad_t"] - v["arm_foot_h"]
     z_mod = b * h ** 2 / 6.0
-    out.append(dict(
-        part="A yoke", where="arm root, at the pad",
-        mpa=grab_n / 2 * lever / z_mod, across=True,
-        how=f"{grab_n:.0f} N sideways at the tilt axis, {lever:.0f} mm up, "
-            f"two arms, section {b:.0f}x{h:.0f} mm"))
+    out.append({
+        "part": "A yoke", "where": "arm root, at the pad",
+        "mpa": grab_n / 2 * lever / z_mod, "across": True,
+        "how": f"{grab_n:.0f} N sideways at the tilt axis, {lever:.0f} mm up, "
+            f"two arms, section {b:.0f}x{h:.0f} mm"})
 
     # Same arms under the payload's own weight, straight down: compression along
     # the column, which is across the layers but in the direction where a printed
     # part does not care - layers are pressed together, not pulled apart.
     area = b * h
-    out.append(dict(
-        part="A yoke", where="arm root, compression", mpa=payload_n / 2 / area,
-        across=False,
-        how=f"{payload_n:.1f} N of payload down two {b:.0f}x{h:.0f} mm columns; "
-            f"compression across layers does not open them"))
+    out.append({
+        "part": "A yoke", "where": "arm root, compression", "mpa": payload_n / 2 / area,
+        "across": False,
+        "how": f"{payload_n:.1f} N of payload down two {b:.0f}x{h:.0f} mm columns; "
+            f"compression across layers does not open them"})
 
     # --- the cradle's cheeks, hanging the platform off the tilt axis --------
     # The platform and its payload hang below the axis, so the cheeks are in
     # tension between the two - straight across the layers.
     cheek_area = v["cheek_t"] * v["hub_od"]
-    out.append(dict(
-        part="B cradle", where="cheek, axis to platform",
-        mpa=payload_n / 2 / cheek_area, across=True,
-        how=f"{payload_n:.1f} N hanging on two {v['cheek_t']:.0f}x"
-            f"{v['hub_od']:.0f} mm sections"))
+    out.append({
+        "part": "B cradle", "where": "cheek, axis to platform",
+        "mpa": payload_n / 2 / cheek_area, "across": True,
+        "how": f"{payload_n:.1f} N hanging on two {v['cheek_t']:.0f}x"
+            f"{v['hub_od']:.0f} mm sections"})
 
     # The platform itself, as a beam simply supported at the cheeks with the
     # payload in the middle. Bending here runs along the layers.
     span = v["plat_w"] - 2 * v["cheek_t"]
     z_plat = v["plat_l"] * v["plat_t"] ** 2 / 6.0
-    out.append(dict(
-        part="B cradle", where="platform, mid-span",
-        mpa=(payload_n * span / 4) / z_plat, across=False,
-        how=f"{payload_n:.1f} N at the centre of a {span:.0f} mm span, "
-            f"{v['plat_l']:.0f}x{v['plat_t']:.0f} mm section"))
+    out.append({
+        "part": "B cradle", "where": "platform, mid-span",
+        "mpa": (payload_n * span / 4) / z_plat, "across": False,
+        "how": f"{payload_n:.1f} N at the centre of a {span:.0f} mm span, "
+            f"{v['plat_l']:.0f}x{v['plat_t']:.0f} mm section"})
 
     # --- the pedestal's hold-down ear ---------------------------------------
     # The one load in this machine set by a person rather than by gravity, and
@@ -125,31 +129,31 @@ def sections(v: dict, payload_n: float, grab_n: float, screw_n: float) -> list:
     # corner; the screw sits `ear_bolt_out` beyond the wall it grows from.
     ear_b = 2 * v["ear_bolt_r"]
     z_ear = ear_b * v["ear_t"] ** 2 / 6.0
-    out.append(dict(
-        part="C pedestal", where="hold-down ear root",
-        mpa=(screw_n * v["ear_bolt_out"]) / z_ear, across=True,
-        how=f"{screw_n:.0f} N of screw preload on a {v['ear_bolt_out']:.0f} mm "
-            f"arm, root {ear_b:.0f}x{v['ear_t']:.1f} mm"))
+    out.append({
+        "part": "C pedestal", "where": "hold-down ear root",
+        "mpa": (screw_n * v["ear_bolt_out"]) / z_ear, "across": True,
+        "how": f"{screw_n:.0f} N of screw preload on a {v['ear_bolt_out']:.0f} mm "
+            f"arm, root {ear_b:.0f}x{v['ear_t']:.1f} mm"})
 
     # The shroud carrying the whole machine, in compression and shear. A closed
     # section 74-96 mm across with a 3.2 mm wall has an enormous area.
     perim = 4 * (v["ped_top"] - 2 * v["ped_wall"])
     total_n = payload_n + 2.1   # plus the printed parts above it
-    out.append(dict(
-        part="C pedestal", where="shroud wall", mpa=total_n / (perim * v["ped_wall"]),
-        across=False,
-        how=f"{total_n:.1f} N over a {perim:.0f} mm perimeter of "
-            f"{v['ped_wall']:.1f} mm wall"))
+    out.append({
+        "part": "C pedestal", "where": "shroud wall", "mpa": total_n / (perim * v["ped_wall"]),
+        "across": False,
+        "how": f"{total_n:.1f} N over a {perim:.0f} mm perimeter of "
+            f"{v['ped_wall']:.1f} mm wall"})
 
     # --- the pivot pin ------------------------------------------------------
     # Half the payload on a stub 10 mm across. Bending, so across the layers.
     d = v["brg_journal_d"]
     lever_pin = v["tilt_gap"] + v["brg_seat_depth"] / 2
     z_pin = np.pi * d ** 3 / 32.0
-    out.append(dict(
-        part="D pin", where="journal root",
-        mpa=(payload_n / 2 * lever_pin) / z_pin, across=True,
-        how=f"{payload_n/2:.1f} N at {lever_pin:.1f} mm on a {d:.1f} mm journal"))
+    out.append({
+        "part": "D pin", "where": "journal root",
+        "mpa": (payload_n / 2 * lever_pin) / z_pin, "across": True,
+        "how": f"{payload_n/2:.1f} N at {lever_pin:.1f} mm on a {d:.1f} mm journal"})
 
     return out
 

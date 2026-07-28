@@ -38,9 +38,8 @@ import pathlib
 import sys
 
 import numpy as np
-from stl import mesh
-
 from check_clearances import warn_if_stale
+from stl import mesh
 
 HERE = pathlib.Path(__file__).parent
 

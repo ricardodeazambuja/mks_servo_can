@@ -4,7 +4,7 @@ A pan/tilt camera gimbal built from two NEMA17 32 mm motors, each carrying an
 MKS SERVO42D_CAN driver on its back face. Four printed parts, no supports, and it
 stands on a desk.
 
-| Part | Module | Joins | Mass, as printed |
+| Part | Module | Joins | Mass at 40% infill |
 | --- | --- | --- | --- |
 | **A** | `pan_yoke()` | pan shaft → a fork carrying the tilt axis | 45 g |
 | **B** | `camera_cradle()` | tilt axis → camera | 29 g |
@@ -127,12 +127,12 @@ motors bolt straight to a printed part, so a PLA build that holds position all
 day will creep at the mounting faces. PETG moves that limit ~20 °C away. If you
 are printing PLA anyway, drop `HoldMa` on both axes and balance the tilt properly.
 
-The shallowest down-facing wall is **48°** from horizontal on three parts and 46°
-on the yoke, where it is not a wall at all but the flank of a countersink in a
-vertical face; the underside of that cone is a 6.4 mm bridge and is measured as
-one. Nothing drafts at exactly 45° on purpose: that is the threshold every slicer
-compares against, so surfaces here draft at **40°** and land unambiguously on the
-right side of it.
+The shallowest down-facing wall is **46°** on the yoke, 48° on the cradle and 50°
+on the pedestal (the pin has none). The yoke's 46° is not a wall at all but the
+flank of a countersink in a vertical face; the underside of that cone is a 6.4 mm
+bridge and is measured as one. Nothing drafts at exactly 45° on purpose: that is
+the threshold every slicer compares against, so surfaces here draft at **40°** and
+land unambiguously on the right side of it.
 
 Other things the slicer was allowed to dictate:
 
@@ -299,6 +299,10 @@ Five checks, five different questions. Two of them deliberately overlap:
 `check_printability` measures the geometry and `check_slicing` asks PrusaSlicer,
 which is a model of a slicer versus the slicer itself. When they agree that is
 worth something; when they disagree, one of them is wrong and you find out which.
+
+`calibration.scad` is not a part — it is two fixtures with known answers, one that
+must make the slicer complain and one that must not, so `check_slicing.py
+--calibrate` can prove the detector is still awake.
 
 They have found, between them: a hold-down ear that a hand-driven screw would
 have split off along a layer line, a set screw pointing into the fork's own arm, a
@@ -532,9 +536,14 @@ printability check rather than by thinking about it.
 
 | Payload | Total mass | CG height | Tips at |
 | --- | --- | --- | --- |
-| none | 0.21 kg | 67 mm | 39° |
-| 300 g | 0.51 kg | 105 mm | 27° |
-| 600 g | 0.81 kg | 115 mm | 25° |
+| none | 0.22 kg | 67 mm | 39° |
+| 300 g | 0.52 kg | 105 mm | 27° |
+| 600 g | 0.82 kg | 115 mm | 25° |
+
+Those masses are solid-equivalent — `check_physics.py` works off the mesh, so they
+run about a quarter above the 174 g the parts table gives at 40% infill. The
+tipping angle is set by the *height* of the centre of mass rather than by the mass,
+and the parts and the payload scale together, so the angles hold either way.
 
 "Tips at" is the desk tilt that would put the centre of mass outside the circle
 through the four rubber feet — a stand-in for how hard you can knock it. Feet plus

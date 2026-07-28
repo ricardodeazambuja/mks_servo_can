@@ -84,7 +84,7 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 
 ### General
 * **Determinism Focus**: Designed with considerations for analyzing and understanding timing behavior, aiding in applications with real-time constraints.
-* **Comprehensive Test Strategy**: 805 tests — unit, integration against a live
+* **Comprehensive Test Strategy**: 826 tests — unit, integration against a live
   simulator, wire-format compliance against the manual's transcription,
   determinism under stepped simulated time, and hardware-in-the-loop tests that
   skip without a bench.
@@ -122,7 +122,7 @@ mks_servo_can/
 │   │   └── exceptions.py
 ├── mks_servo_simulator/             # The CLI simulator (mks_servo_simulator)
 │   ├── mks_simulator/               # Source code for the simulator
-│   │   ├── init.py
+│   │   ├── __init__.py
 │   │   ├── cli.py                   # Command-line interface (using Click)
 │   │   ├── clock.py                 # Real-time and stepped simulated clocks
 │   │   ├── motor_model.py           # Simulates individual motor behavior
@@ -137,7 +137,7 @@ mks_servo_can/
 │   │   │   ├── sdk_client.py        # Client helper for the debug API
 │   │   │   └── http_debug_server.py # HTTP REST API for programmatic access
 │   │   └── main.py                  # Entry point for the simulator CLI
-├── tests/                           # Test suite (805 tests)
+├── tests/                           # Test suite (826 tests)
 │   ├── unit/                        # Fast; no simulator subprocess needed
 │   ├── integration/                 # Against a live simulator
 │   ├── simulator_compliance/        # Wire-format conformance vs the manual
@@ -162,6 +162,18 @@ mks_servo_can/
 │   ├── enhanced_svg_plotter.py      # SVG plotting with path optimization
 │   ├── calligraphy_plotter.py       # Artistic calligraphy and text rendering
 │   └── calligraphy_plotter_manual_interpolation.py # Manual interpolation techniques
+├── hardware/                        # Printable parts, and how they are checked
+│   ├── DESIGNING_PRINTED_PARTS.md   # Manual: toolchain, FDM rules, traps
+│   └── gimbal/                      # A pan/tilt mount for two MKS servos
+│       ├── gimbal_parts.scad        # The model: four parts and the test modes
+│       ├── check_clearances.py      # Interference and screw-driver access
+│       ├── check_printability.py    # Overhangs, bridges, bed contact
+│       ├── check_slicing.py         # PrusaSlicer's own stability verdict
+│       ├── check_physics.py         # Balance about the tilt axis, tipping
+│       ├── check_stress.py          # Stress per section, with layer direction
+│       ├── stl/                     # Printable exports
+│       ├── step/                    # Solids for CAD
+│       └── render/                  # Images used by the gimbal README
 ├── docs/                            # Detailed documentation
 │   ├── README.md                    # Index of the documentation
 │   ├── images/                      # Screenshots referenced from the docs

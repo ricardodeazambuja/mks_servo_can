@@ -99,8 +99,8 @@ def convert(name: str, refine: bool) -> tuple:
     try:
         tmp_stl.write_bytes((HERE / "stl" / f"{name}.stl").read_bytes())
         r = subprocess.run(FREECAD + [str(script)], capture_output=True, text=True)
-        line = next((l for l in (r.stdout + r.stderr).splitlines()
-                     if l.startswith("RESULT")), None)
+        line = next((out for out in (r.stdout + r.stderr).splitlines()
+                     if out.startswith("RESULT")), None)
         if not line or not tmp_step.exists():
             print(f"  {name}: FAILED\n{(r.stdout + r.stderr)[-400:]}")
             return None

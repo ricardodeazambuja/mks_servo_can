@@ -92,14 +92,22 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
     * [Using mks-servo-can in Synchronous Applications](advanced_topics/asyncio_with_synchronous_code.md)
     * [Python's Role in Automation: Strengths and Limitations](advanced_topics/python_and_automation.md)
 
-7.  **Development & Contribution**
+7.  **Printed Hardware**
+    * [Designing Printed Parts](../hardware/DESIGNING_PRINTED_PARTS.md) — the
+      toolchain with pinned versions and its caveats, the FDM rules these parts
+      are held to, and the traps that cost time here
+    * [The pan/tilt gimbal](../hardware/gimbal/README.md) — four printable parts
+      for two MKS servos, with the scripts that measure their clearances, screw
+      access, printability, balance and stress rather than asserting them
+
+8.  **Development & Contribution**
     * [Setting up Development Environment](development/setup.md)
     * [Coding Standards & Style Guide](development/coding_standards.md)
     * [Running Tests](development/running_tests.md)
     * [How to Contribute](development/contributing.md)
     * [Roadmap — planned work in priority order](development/roadmap.md) (open defects, sequencing, and how to verify each)
 
-8.  **Appendices**
+9.  **Appendices**
     * [Glossary of Terms](appendices/glossary.md)
     * **MKS servo parameter reference** — the manual's command table is
       transcribed into

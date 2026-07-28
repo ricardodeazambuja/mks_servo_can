@@ -11,7 +11,7 @@ Two different tools agreeing is worth more than either alone, and they check eac
 other: the geometric one says *where* and *how wide*, this one says whether the
 software that generates the actual toolpaths is happy.
 
-CALIBRATE BEFORE BELIEVING. `_calibration.scad` holds a part that obviously needs
+CALIBRATE BEFORE BELIEVING. `calibration.scad` holds a part that obviously needs
 support and one that obviously does not, and `--calibrate` slices both. If the bad
 one does not raise the alarm, this check is not working and its silence on the
 real parts means nothing. That is not paranoia - the first run of this against the
@@ -100,7 +100,7 @@ def calibrate() -> int:
     Returns:
         0 if the bad part raises the alarm and the good one does not.
     """
-    cal = HERE / "_calibration.scad"
+    cal = HERE / "calibration.scad"
     ok = True
     for which, expect in (("bad", True), ("good", False)):
         stl = SCRATCH / f"_cal_{which}.stl"
@@ -148,7 +148,7 @@ def main() -> int:
     print("-" * 68)
     ok = True
     total_cm3 = total_min = 0.0
-    for (stl, name), (issues, cm3, tm) in zip(jobs, results):
+    for (_, name), (issues, cm3, tm) in zip(jobs, results):
         fatal = [i for i in issues if i in FATAL]
         note = ", ".join(issues) if issues else "no stability issues"
         if fatal:

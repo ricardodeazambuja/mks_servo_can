@@ -36,15 +36,22 @@ import pathlib
 import sys
 
 import numpy as np
-from stl import mesh
-
 from check_clearances import SCAD, scad_values, warn_if_stale
+from stl import mesh
 
 HERE = pathlib.Path(__file__).parent
 
-# PLA at 100% infill. Everything below scales linearly in this, and the numbers
-# that matter are ratios of masses rather than masses, so the difference between
-# PLA and PETG (1.27) changes nothing that is being tested.
+# PLA, and the volumes are the *solid* ones off the mesh, so every mass printed
+# here is a solid-equivalent - about 25 % above what these parts actually weigh at
+# 40 % infill (`check_slicing.py` reads the real filament volume out of the
+# G-code: 139.6 cm^3 against 177 cm^3 solid).
+#
+# That is deliberate and it does not affect either gate. Balance is a ratio of
+# masses and tipping is set by the height of the centre of mass, and both parts
+# and payload scale by the same factor - so the angles are right and only the
+# kilograms read high. Using the slicer's number here instead would make this
+# checker depend on a second tool being installed to answer a question about
+# geometry.
 RHO = 1.24e-3   # g/mm^3
 G = 9.81
 
@@ -128,7 +135,10 @@ def main() -> int:
         parts[name] = (vol * RHO, cen)
         print(f"{name:<16}{vol/1000:8.2f} cm^3{vol*RHO:7.1f} g{cen[2]:11.2f} mm")
     printed = sum(m for m, _ in parts.values())
-    print(f"{'printed total':<16}{'':>10}{printed:7.1f} g")
+    print(f"{'printed total':<16}{'':>10}{printed:7.1f} g   solid-equivalent")
+    print(f"{'':<16}{'':>10}{'':>9}   a 40% infill print weighs about a quarter "
+          f"less; the\n{'':<16}{'':>10}{'':>9}   angles below depend on the "
+          f"centre of mass, not the mass")
 
     ok = True
     cradle_g, cradle_cen = parts["camera_cradle"]

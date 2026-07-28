@@ -1,10 +1,9 @@
 # Roadmap — remaining work, in priority order
 
-Repository: `/home/ricardodeazambuja/backup/GitStuff/mks_servo_can`
-Branch: `library-hardening`, **nothing pushed** (no upstream tracking branch).
-Baseline: 807 tests passing / 26 skipped, `ruff check .` clean, library coverage
+Baseline: 826 tests passing / 26 skipped, `ruff check .` clean, library coverage
 79%, **documentation baseline empty** (63 → 26 → 0 known problems). Green against
-the installed wheel as well as the source tree.
+the installed wheel as well as the source tree. `library-hardening` is merged into
+`main` and pushed; `main` is the current state.
 
 Context: a Python library for MKS SERVO42D/57D stepper drivers over CAN, plus a
 simulator that emulates the same protocol so the library can be developed with no
