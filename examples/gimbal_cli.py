@@ -220,32 +220,47 @@ async def cmd_home(can_if: CANInterface, args) -> int:
 async def cmd_point(can_if: CANInterface, args) -> int:
     """Drives both axes to an absolute yaw/pitch pair, together.
 
-    Yaw and pitch are named rather than positional on purpose. The two axes do
+    Yaw and pitch are named rather than positional on purpose. A transposed pair
     is not a slightly wrong pose, it is one axis being driven against the
     other's allowance. Both happen to be +/-90 today, and naming them means that
     stays a coincidence rather than something the tool relies on.
+
+    Each axis can carry its own speed. `--yaw-speed` and `--pitch-speed` fall
+    back to `--speed` when not given, so the simple case stays one number. They
+    are worth having because the two axes are not interchangeable: yaw carries
+    the whole upper assembly and drags the cable loom with it, while pitch moves
+    a balanced cradle. Being able to creep one while the other moves normally is
+    also how you probe an axis that is stalling without slowing the other down.
     """
     check_limits("pan", args.yaw)
     check_limits("tilt", args.pitch)
 
+    yaw_speed = args.yaw_speed if args.yaw_speed is not None else args.speed
+    pitch_speed = args.pitch_speed if args.pitch_speed is not None else args.speed
+
     # Both axes are checked before either moves. Sending yaw and then
     # discovering pitch is out of range would leave the machine somewhere
     # nobody asked for, half way through a pose.
-    print(f"yaw (pan)   -> {args.yaw:+.2f} deg")
-    print(f"pitch (tilt)-> {args.pitch:+.2f} deg")
+    print(f"yaw (pan)   -> {args.yaw:+.2f} deg at {yaw_speed:.0f} deg/s")
+    print(f"pitch (tilt)-> {args.pitch:+.2f} deg at {pitch_speed:.0f} deg/s")
 
-    async def one(name: str, target: float):
+    async def one(name: str, target: float, speed: float):
         axis = _axis(can_if, name)
         await _unmute(axis)
         await axis.enable_motor()
-        await axis.move_to_position_abs_user(target, speed_user=args.speed)
+        await axis.move_to_position_abs_user(target, speed_user=speed)
         return name, await axis.get_current_position_user()
 
     # Together, not one after the other: a gimbal that yaws fully and then
     # pitches sweeps a different path through its own cabling than one that
     # does both at once, and the second is the pose you actually asked for.
+    #
+    # Different speeds mean they no longer arrive together, which is the point:
+    # the pose is the destination, not the path. If you need them to arrive at
+    # the same moment, leave the per-axis speeds alone.
     results = await asyncio.gather(
-        one("pan", args.yaw), one("tilt", args.pitch),
+        one("pan", args.yaw, yaw_speed),
+        one("tilt", args.pitch, pitch_speed),
         return_exceptions=True,
     )
     ok = True
@@ -580,6 +595,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"pan, degrees ({PAN_LIMITS[0]:+.0f} .. {PAN_LIMITS[1]:+.0f})")
     pt.add_argument("--pitch", type=float, required=True,
                     help=f"tilt, degrees ({TILT_LIMITS[0]:+.0f} .. {TILT_LIMITS[1]:+.0f})")
+    pt.add_argument("--yaw-speed", type=float, default=None, metavar="DEG_S",
+                    help="deg/s for the yaw axis only (default: --speed)")
+    pt.add_argument("--pitch-speed", type=float, default=None, metavar="DEG_S",
+                    help="deg/s for the pitch axis only (default: --speed)")
     hm = sub.add_parser("home", help="drive the selected axes to 0")
     hm.add_argument("--axis", choices=sorted(AXES), default=None,
                     help="just one axis (default: both)")
