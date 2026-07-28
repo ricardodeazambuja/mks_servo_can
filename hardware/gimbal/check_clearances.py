@@ -31,6 +31,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from concurrent import futures
 
 import numpy as np
 
@@ -322,10 +323,47 @@ def _stl_volume(path: pathlib.Path) -> float:
                                np.cross(tri[:, 1], tri[:, 2])).sum() / 6.0))
 
 
+# One CGAL boolean over this assembly costs about 19 s, and there are 22 of them.
+# Run serially that is seven minutes, which is long enough that the check stops
+# getting run - and an unrun check is worth nothing at all. They are independent
+# processes, so they go in parallel; `subprocess.run` releases the GIL, so threads
+# are enough and there is no pickling to arrange.
+#
+# Capped rather than set to `nproc`: each openscad holds a few hundred MB while it
+# works, and swapping 12 of them is slower than running 6.
+MAX_WORKERS = 6
+
+
+def _one_overlap(job: tuple) -> tuple:
+    """Runs a single OpenSCAD intersection and measures it.
+
+    Args:
+        job: `(index, pan, tilt, member)`. The index only names the scratch file,
+            so that parallel workers cannot overwrite each other's answer - which
+            they would, silently, and every one of them would read zero.
+
+    Returns:
+        `(pan, tilt, member, mm3)`.
+    """
+    index, pan, tilt, member = job
+    tmp = SCAD.with_name(f"_interference_{index}.stl")
+    try:
+        tmp.unlink(missing_ok=True)
+        subprocess.run(
+            ["openscad", "-D", 'part="interference"', "-D", f"tilt={tilt}",
+             "-D", f"pan={pan}", "-D", f'against="{member}"',
+             "--export-format", "binstl", "-o", str(tmp), str(SCAD)],
+            capture_output=True, check=False,
+        )
+        return pan, tilt, member, _stl_volume(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def exact_overlaps(verbose: bool = False) -> list:
     """Asks OpenSCAD for the actual overlap volume, member by member.
 
-    The analytic sweep above sames the cradle as points and the arms as a plane,
+    The analytic sweep above samples the cradle as points and the arms as a plane,
     and an approximation of a shape is a shape you can get wrong. This does not
     approximate anything: `intersection()` of what moves with what does not is
     the real geometry, and its volume is either zero or it is not.
@@ -336,26 +374,19 @@ def exact_overlaps(verbose: bool = False) -> list:
     Raises:
         FileNotFoundError: If openscad is not installed.
     """
+    jobs = [(i, pan, tilt, member)
+            for i, (pan, tilt, member) in enumerate(
+                (pan, tilt, member) for pan, tilt, members in EXACT_CASES
+                for member in members)]
+    with futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        results = list(pool.map(_one_overlap, jobs))
     out = []
-    tmp = SCAD.with_name("_interference.stl")
-    try:
-        for pan, tilt, members in EXACT_CASES:
-            for member in members:
-                tmp.unlink(missing_ok=True)
-                subprocess.run(
-                    ["openscad", "-D", 'part="interference"', "-D", f"tilt={tilt}",
-                     "-D", f"pan={pan}", "-D", f'against="{member}"',
-                     "--export-format", "binstl", "-o", str(tmp), str(SCAD)],
-                    capture_output=True, check=False,
-                )
-                vol = _stl_volume(tmp)
-                if verbose:
-                    print(f"  pan {pan:+5.1f} tilt {tilt:+6.1f}  {member:<12} "
-                          f"{vol:10.4f} mm^3")
-                if vol > EXACT_TOL_MM3:
-                    out.append((member, pan, tilt, vol))
-    finally:
-        tmp.unlink(missing_ok=True)
+    for pan, tilt, member, vol in results:
+        if verbose:
+            print(f"  pan {pan:+5.1f} tilt {tilt:+6.1f}  {member:<12} "
+                  f"{vol:10.4f} mm^3")
+        if vol > EXACT_TOL_MM3:
+            out.append((member, pan, tilt, vol))
     return out
 
 

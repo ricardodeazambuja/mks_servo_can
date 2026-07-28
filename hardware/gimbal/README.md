@@ -246,11 +246,17 @@ the camera into the yoke.
 python check_clearances.py            # exits non-zero on a clash
 python check_printability.py          # exits non-zero if anything needs support
 python check_physics.py               # exits non-zero if it will not balance or stand
-python check_clearances.py --fast     # skip the slow exact pass
+python check_clearances.py --fast     # skip the exact pass: instant instead of ~2 min
 ```
 
 Each answers a different question: *can it be made*, *can it touch itself*, and
 *what happens once something heavy is bolted to it*.
+
+The exact pass is 22 CGAL booleans at about 19 s each. They run six at a time,
+which is the difference between two minutes and seven — and seven is long enough
+that the check stops being run, which is the only way it can be worth nothing.
+Each worker writes its own scratch STL; sharing one filename would have every
+worker read someone else's answer, or zero.
 
 `check_clearances.py` reports three kinds of number, and mixing them up is how
 this design shipped a 4.4 mm interpenetration with a check that said +2.5 mm:
