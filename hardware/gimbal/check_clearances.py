@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
 import pathlib
 import re
 import subprocess
@@ -36,6 +37,34 @@ from concurrent import futures
 import numpy as np
 
 SCAD = pathlib.Path(__file__).with_name("gimbal_parts.scad")
+
+
+def _openscad() -> str:
+    """Picks an OpenSCAD, preferring one with the Manifold backend.
+
+    2021.01 is the last tagged stable and is CGAL-only; on this design a single
+    boolean takes 20-55 s there and 0.2-0.6 s on a nightly, which is the difference
+    between a check that gets run and one that does not. Measured on all four
+    parts and on four booleans, the two agree on volume to 1e-5 % - Manifold just
+    emits ~12 % fewer facets, having produced fewer degenerate slivers.
+
+    One difference that does *not* matter, because of a decision made earlier: for
+    a zero-volume result the two disagree about whether an STL gets written at all,
+    in both directions. Every test here measures volume rather than asking whether
+    the file exists, so both answers read as "no overlap".
+
+    Returns:
+        The binary to run. `$OPENSCAD` wins if set; otherwise a nightly AppImage
+        in ~/.local/bin if one is there; otherwise whatever is on PATH.
+    """
+    override = os.environ.get("OPENSCAD")
+    if override:
+        return override
+    nightly = pathlib.Path.home() / ".local/bin/openscad-nightly.AppImage"
+    return str(nightly) if nightly.exists() else "openscad"
+
+
+OPENSCAD = _openscad()
 
 # Soft limits from examples/camera_gimbal_tracker.py. Only tilt is swept: pan
 # turns the whole moving assembly about a vertical axis, and everything the
@@ -286,9 +315,18 @@ FIXED_MEMBERS = ("pedestal", "pan motor", "yoke", "tilt motor", "pivot pin")
 # rounded square, so its corners pass under the cradle's nose at 45 deg and not at
 # 0. The analytic sweep covers that with a half-space at the plate's height, which
 # is conservative but says nothing about the corners themselves.
+#
+# Every 15 degrees rather than at five hand-picked angles, because that is what
+# the Manifold backend bought: 58 booleans in under 4 s where CGAL wanted 20 s
+# each. A test's coverage should be set by what the geometry needs, not by what
+# the renderer could afford, and picking angles by hand is picking the angles you
+# already thought of.
 EXACT_CASES = tuple(
-    (0.0, tilt, FIXED_MEMBERS) for tilt in (-45.0, -20.0, 0.0, 45.0, 90.0)
-) + ((45.0, -45.0, ("pedestal",)), (45.0, 90.0, ("pedestal",)))
+    (0.0, float(tilt), FIXED_MEMBERS) for tilt in range(-45, 91, 15)
+) + tuple(
+    (float(pan), float(tilt), ("pedestal",))
+    for pan in (15, 30, 45) for tilt in (-45, 90)
+)
 
 # Coincident faces are everywhere in an assembly - a motor's face bolts flat
 # against a plate - and CGAL returns those contacts as a zero-thickness solid
@@ -350,7 +388,7 @@ def _one_overlap(job: tuple) -> tuple:
     try:
         tmp.unlink(missing_ok=True)
         subprocess.run(
-            ["openscad", "-D", 'part="interference"', "-D", f"tilt={tilt}",
+            [OPENSCAD, "-D", 'part="interference"', "-D", f"tilt={tilt}",
              "-D", f"pan={pan}", "-D", f'against="{member}"',
              "--export-format", "binstl", "-o", str(tmp), str(SCAD)],
             capture_output=True, check=False,
@@ -479,7 +517,7 @@ def _one_access(job: tuple) -> tuple:
     try:
         tmp.unlink(missing_ok=True)
         subprocess.run(
-            ["openscad", "-D", 'part="access"', "-D", f'screw="{name}"',
+            [OPENSCAD, "-D", 'part="access"', "-D", f'screw="{name}"',
              "-D", f"tilt={tilt}", "--export-format", "binstl",
              "-o", str(tmp), str(SCAD)],
             capture_output=True, check=False,
@@ -539,7 +577,7 @@ def exact_fit() -> float:
     try:
         tmp.unlink(missing_ok=True)
         subprocess.run(
-            ["openscad", "-D", 'part="fit"', "--export-format", "binstl",
+            [OPENSCAD, "-D", 'part="fit"', "--export-format", "binstl",
              "-o", str(tmp), str(SCAD)],
             capture_output=True, check=False,
         )
@@ -703,9 +741,11 @@ def main() -> int:
                     print(f"  FAIL cradle overlaps the {member} by {vol:.1f} mm^3 "
                           f"at pan {pan:+.0f}, tilt {tilt:+.0f}")
             else:
-                print(f"  OK  no overlap above {EXACT_TOL_MM3} mm^3 over "
-                      + ", ".join(f"({p:+.0f},{t:+.0f})" for p, t, _ in EXACT_CASES)
-                      + " as (pan, tilt)")
+                runs = sum(len(m) for _, _, m in EXACT_CASES)
+                print(f"  OK  no overlap above {EXACT_TOL_MM3} mm^3 in "
+                      f"{runs} booleans over {len(EXACT_CASES)} poses: tilt "
+                      f"{TILT_LIMITS[0]:+.0f}..{TILT_LIMITS[1]:+.0f} every 15 deg, "
+                      "and pan 15/30/45 against the pedestal")
             fit = exact_fit()
             if fit > EXACT_TOL_MM3:
                 ok = False
