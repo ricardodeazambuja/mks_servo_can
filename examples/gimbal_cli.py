@@ -438,6 +438,87 @@ def _demo_report(name: str, target: float, speed: float, result) -> tuple:
     return landed, result
 
 
+# The board's whole configurable state, minus anything that changes how it is
+# addressed. set_can_id, set_can_bitrate and set_group_id are deliberately
+# absent: a mistake in any of those takes the motor off the bus, and recovering
+# it means the screen and the buttons, not this tool.
+#
+# Values are what this gimbal wants. They are applied in this order because
+# work mode gates two of the others - holding current is ignored in vFOC, and
+# the RPM ceiling depends on the mode - so the mode has to land first.
+PARAM_PLAN = (
+    ("work mode", "set_work_mode", const.MODE_SR_CLOSE,
+     "serial closed loop: honours holding current, 1500 RPM ceiling"),
+    ("working current", "set_working_current", 1200,
+     "mA; torque for moves, and the base the holding percentage applies to"),
+    ("holding current", "set_holding_current_percentage", 0x02,
+     "code 0x02 = 30% of working current, to keep the printed parts cool"),
+    ("subdivision", "set_subdivision", 32,
+     "microsteps; only affects pulse commands, not the 0xF5 moves used here"),
+    ("subdiv interpolation", "set_subdivision_interpolation", True,
+     "smooths the microstep transitions"),
+    ("stall protection", "set_stall_protection", True,
+     "so a jammed axis reports it instead of silently accumulating error"),
+    ("en pin level", "set_en_pin_active_level", const.EN_ACTIVE_LOW,
+     "how the physical En input is read; irrelevant to CAN enable, but it "
+     "should be known rather than whatever the board shipped with"),
+    ("direction", "set_motor_direction", const.DIR_CW,
+     "which way positive counts turn the shaft"),
+    ("auto screen off", "set_auto_screen_off", False,
+     "leave the display on; it is the only readout when CAN is not answering"),
+    ("key lock", "set_key_lock", False,
+     "leave the buttons usable for exactly the same reason"),
+)
+
+
+async def cmd_params(can_if: CANInterface, args) -> int:
+    """Writes the board's whole configuration, except how it is addressed.
+
+    THERE IS NO READ-BACK. Reading a system parameter is 0x00, added in firmware
+    V1.0.6, and these boards do not answer it at all - so this cannot show a
+    before-and-after, and the motor's acknowledgement attests that a command was
+    accepted rather than that anything changed. That is also the reason to have
+    this command: when two boards behave differently and neither will say how it
+    is configured, the only way to compare them is to make them the same.
+
+    CAN identity is deliberately not touched. `set_can_id`, `set_can_bitrate`
+    and `set_group_id` would each take the motor off the bus if they went wrong,
+    and getting it back means the screen and the buttons rather than this tool.
+
+    `--dry-run` prints the plan without sending anything, which is worth doing
+    first: every one of these is a write to a board you cannot interrogate.
+    """
+    print(f"{'parameter':22}{'value':>10}   why")
+    print("-" * 78)
+    for label, _, value, why in PARAM_PLAN:
+        shown = value if not isinstance(value, bool) else ("on" if value else "off")
+        print(f"{label:22}{shown!s:>10}   {why}")
+
+    if args.dry_run:
+        print("\n--dry-run: nothing was sent.")
+        return 0
+
+    ok = True
+    for name in _targets(args):
+        axis = _axis(can_if, name)
+        await _unmute(axis)
+        api = axis._low_level_api
+        print(f"\n{name} (CAN {axis.can_id}):")
+        for label, method, value, _why in PARAM_PLAN:
+            try:
+                await getattr(api, method)(axis.can_id, value)
+                print(f"  OK    {label}")
+            except MKSServoError as exc:
+                ok = False
+                print(f"  FAIL  {label}: {type(exc).__name__}: {str(exc)[:60]}")
+    print(
+        "\nAccepted, not verified - 0x00 is unanswerable on this firmware. "
+        "Power-cycle\nand re-run `set-zero`: work mode and currents are stored "
+        "on the board, zero is not."
+    )
+    return 0 if ok else 1
+
+
 async def cmd_set_zero(can_if: CANInterface, args) -> int:
     """Defines the current position of both axes as zero.
 
@@ -709,6 +790,7 @@ COMMANDS = {
     # set-zero is what makes --zeroed true, so it cannot require it. It releases
     # the motors rather than driving them, so there is nothing to guard.
     "demo": (cmd_demo, True),
+    "params": (cmd_params, False),
     "set-zero": (cmd_set_zero, False),
     "current": (cmd_current, False),
     "watch": (cmd_watch, False),
@@ -779,6 +861,14 @@ def build_parser() -> argparse.ArgumentParser:
     sz.add_argument("--here", action="store_true",
                     help="zero where the machine stands now, without releasing "
                          "the motors and asking you to centre it first")
+    pr = sub.add_parser(
+        "params", help="write the board's whole configuration "
+                       "(not its CAN identity)"
+    )
+    pr.add_argument("--axis", choices=sorted(AXES), default=None,
+                    help="just one axis (default: both)")
+    pr.add_argument("--dry-run", action="store_true",
+                    help="print the plan without sending anything")
     cur = sub.add_parser(
         "current", help="set working and/or holding current (cannot be read back)"
     )
