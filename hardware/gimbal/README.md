@@ -568,8 +568,27 @@ openscad -D 'part="C"' --export-format binstl -o stl/pedestal.stl      gimbal_pa
 openscad -D 'part="D"' --export-format binstl -o stl/pivot_pin.stl     gimbal_parts.scad
 ```
 
-Pre-built STLs are in `stl/`. To preview the whole thing, or to cut it open on the
-plane both axes lie in:
+Pre-built STLs are in `stl/` and STEP solids in `step/`:
+
+```
+python make_step.py            # STL -> sewn solid -> STEP, via FreeCAD's OCC kernel
+```
+
+OpenSCAD cannot write STEP — it is a mesh kernel and STEP is a boundary
+representation — so the parts go out through FreeCAD. **Flat faces come back as
+real planar faces** (the refine pass collapses ~60% of the facets), so the plate,
+the walls and the pad are one face each and you can measure and mate to them.
+**Curved surfaces do not**: a cylinder arrives as the 64 facets it was drawn with,
+because the fact that it was ever a cylinder is thrown away at STL export. A hole
+will not snap to a centre. It is a solid to build a mount around, not an editable
+model — for that you would author in a B-rep kernel rather than convert.
+
+Volumes are checked against the source mesh on the way through and agree to
+2×10⁻⁴ %. Sewing a mesh into a solid is where this kind of conversion goes quietly
+wrong, and a STEP that opens without complaint can still be a different shape from
+the one you printed.
+
+To preview the whole thing, or to cut it open on the plane both axes lie in:
 
 ```
 openscad -D 'part="assembly"' -D pan=25 -D tilt=-20 gimbal_parts.scad
