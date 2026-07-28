@@ -485,6 +485,25 @@ async def cmd_params(can_if: CANInterface, args) -> int:
     and `set_group_id` would each take the motor off the bus if they went wrong,
     and getting it back means the screen and the buttons rather than this tool.
 
+    THESE ARE ALMOST CERTAINLY PERSISTENT WRITES, AND THAT IS NOT VERIFIED HERE.
+    The manual transcription says nothing about flash or EEPROM for any of these
+    commands. What says they persist is indirect but strong: the same settings
+    appear in the board's on-screen menu, and the firmware carries a separate
+    `0x3F restore_default_parameters` - a command that would have nothing to
+    restore if the settings were volatile. Against that, persistence cannot be
+    demonstrated on these boards, because confirming it would mean reading a
+    parameter back and 0x00 is unanswerable here.
+
+    Treat it as writing non-volatile memory. Do not put this in a loop or a
+    startup script: flash and EEPROM have finite write endurance, and a command
+    that quietly consumes it every run is a bad thing to automate. Once per
+    board, or when something is actually wrong, is the intended use.
+
+    The way back from a bad write is `0x3F restore_default_parameters`
+    (`LowLevelAPI.restore_default_parameters`), which is not exposed here on
+    purpose: the motor reboots and has to be **recalibrated** afterwards, so it
+    is a deliberate recovery step and not something to reach for casually.
+
     `--dry-run` prints the plan without sending anything, which is worth doing
     first: every one of these is a write to a board you cannot interrogate.
     """
@@ -512,9 +531,13 @@ async def cmd_params(can_if: CANInterface, args) -> int:
                 ok = False
                 print(f"  FAIL  {label}: {type(exc).__name__}: {str(exc)[:60]}")
     print(
-        "\nAccepted, not verified - 0x00 is unanswerable on this firmware. "
-        "Power-cycle\nand re-run `set-zero`: work mode and currents are stored "
-        "on the board, zero is not."
+        "\nAccepted, not verified - 0x00 is unanswerable on this firmware, so "
+        "nothing here\ncan read a parameter back to confirm it took.\n"
+        "\nThese are almost certainly writes to non-volatile memory: the same "
+        "settings are\nin the board's menu, and 0x3F restore_default_parameters "
+        "exists, which would\nhave nothing to restore otherwise. So do not run "
+        "this repeatedly - flash has a\nfinite number of writes. Zero is not "
+        "among these; re-run `set-zero` after a\npower cycle."
     )
     return 0 if ok else 1
 
