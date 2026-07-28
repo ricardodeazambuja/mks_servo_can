@@ -371,10 +371,10 @@ Current state:
 
 | | Clearance | |
 | --- | --- | --- |
-| pedestal plate | 29.8 mm | swept, worst at tilt +54° |
+| pedestal plate | 29.8 mm | swept, worst at tilt −53.5° |
 | yoke pad | 25.4 mm | swept |
 | yoke hub | 23.0 mm | swept |
-| fork arm | 3.0 mm | swept, worst at tilt −45° |
+| fork arm | 3.0 mm | swept, worst at tilt −90° — the tightest thing in the machine |
 | camera to cheek | 2.0 mm | static, each side |
 | tilt bore vs shaft tip | 1.2 mm | static — bore 11 mm, shaft reaches 9.8 mm in |
 | bearing seat wall | 4.6 mm | static, round a 14.9 mm pocket |
@@ -491,16 +491,22 @@ them by hand, and defines that position as zero; `--hardware` refuses to run
 without `--zeroed` because the first thing the tracking loop does is slew every
 axis to 0.
 
-Soft limits: **pan ±90°**, tilt −45°…+90°. Pan is limited rather than continuous
-because the camera cabling has to come back down past the yoke, and ±90° is
-where the loom on the assembled machine runs out of slack — this said ±170°
-until one was built. A slip ring is what buys the rest of the turn.
+Soft limits: **pan ±90°, tilt ±90°**, both measured off the built machine.
 
-Those limits are a property of the cabling, not of the printed geometry, so the
-clearance check does not depend on them: it sweeps tilt over its full −45°…+90°
-and pans only the pedestal, because everything else is bolted to the yoke and
-turns with it. The pedestal's top plate repeats every 90°, so 15/30/45° covers
-its corners.
+**Pan** is limited rather than continuous because the camera cabling has to come
+back down past the yoke, and ±90° is where the loom on the assembled machine runs
+out of slack — this said ±170° until one was built. A slip ring is what buys the
+rest of the turn. That limit is a property of the cabling, not the geometry, so
+the clearance check does not depend on it: it pans only the pedestal, because
+everything else is bolted to the yoke and turns with it, and the top plate
+repeats every 90°, so 15/30/45° covers its corners.
+
+**Tilt** is the opposite case — it is a geometric limit, and it is checked to the
+end. The sweep runs the full −90°…+90° every 15°, 71 exact booleans over 19
+poses, with no overlap. It read −45° at the low end before the machine existed,
+which was conservative rather than measured. Do not open it further without
+re-running the check: the fork-arm clearance is **exactly 3.00 mm at −90°**, the
+minimum this design requires, with nothing spare.
 
 ## Balance, and why it matters more here than usual
 

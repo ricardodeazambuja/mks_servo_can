@@ -173,9 +173,9 @@ table.dims td:last-child { text-align: right; }
       <div class="eyebrow">Tilt &mdash; CAN&nbsp;id&nbsp;3</div>
       <div class="readout">
         <span class="val" id="tiltVal">+0.0&deg;</span>
-        <span class="lim">-45&deg; to +90&deg;</span>
+        <span class="lim">-90&deg; to +90&deg;</span>
       </div>
-      <input type="range" id="tilt" min="-45" max="90" value="0" step="0.5"
+      <input type="range" id="tilt" min="-90" max="90" value="0" step="0.5"
              aria-label="Tilt angle in degrees">
     </div>
 
@@ -184,7 +184,7 @@ table.dims td:last-child { text-align: right; }
       <div class="btnrow">
         <button data-pose="0,0">home</button>
         <button data-pose="0,90">tilt up</button>
-        <button data-pose="0,-45">tilt down</button>
+        <button data-pose="0,-90">tilt down</button>
         <button data-pose="-170,0">pan min</button>
         <button data-pose="170,0">pan max</button>
         <button id="sweep" aria-pressed="false">sweep</button>
@@ -227,7 +227,7 @@ table.dims td:last-child { text-align: right; }
 
 <script>
 const D = {"motor_body": 42.3, "motor_len": 32.0, "motor_boss_d": 22.0, "motor_boss_h": 2.0, "shaft_d": 5.0, "shaft_len": 20.0, "driver_pcb": 42.5, "driver_depth": 16.0, "ped_top": 74.0, "ped_foot": 96.0, "ped_h": 67.0, "ped_plate_t": 5.0, "ped_top_r": 8.0, "ped_foot_r": 14.0, "ap_w": 42.0, "ap_roof": 10.0, "ap_bottom": 6.0, "ap_top_gap": 7.5, "ear_t": 7.0, "ear_foot_inset": 8.0, "ear_bolt_out": 2.0, "foot_d": 12.4, "slew_gap": 0.4, "glide_d": 8.4, "glide_t": 0.8, "glide_r": 28.5, "glide_a": 30.0, "glide_recess": 0.4, "yoke_pad_d": 70.0, "yoke_pad_t": 4.0, "pan_hub_od": 22.0, "pan_hub_h": 12.0, "arm_gap": 84.0, "arm_t_top": 7.2, "arm_t_root": 10.0, "arm_x_root": 23.0, "arm_y_root": 22.0, "tilt_axis_h": 63.0, "tilt_pad": 42.0, "pivot_pad_d": 26.0, "plat_w": 78.0, "plat_l": 44.0, "plat_t": 5.0, "cheek_t": 11.0, "axis_z": 25.0, "hub_od": 20.0, "cam_slot": 20.0, "pivot_hub_od": 24.0, "cam_w": 52.0, "cam_h": 44.0, "cam_d": 34.0, "brg_od": 15.0, "brg_id": 10.0, "brg_w": 4.0, "pin_flange_d": 22.0, "pin_flange_t": 3.0, "pin_len": 15.9, "ped_top_z": 67.0, "yoke_z": 67.4, "tilt_z": 130.4, "tilt_face_x": 49.2};
-const LIM = {"pan": [-170.0, 170.0], "tilt": [-45.0, 90.0]};
+const LIM = {"pan": [-170.0, 170.0], "tilt": [-90.0, 90.0]};
 
 /* ---------- tiny 3x4 transform helpers (column-major R|t) ---------- */
 const I = () => [1,0,0, 0,1,0, 0,0,1, 0,0,0];

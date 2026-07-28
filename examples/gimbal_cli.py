@@ -221,10 +221,9 @@ async def cmd_point(can_if: CANInterface, args) -> int:
     """Drives both axes to an absolute yaw/pitch pair, together.
 
     Yaw and pitch are named rather than positional on purpose. The two axes do
-    not share limits - yaw is +/-90 and pitch is -45..+90 - so a transposed pair
-    is not a slightly wrong pose, it is the yaw axis being driven against the
-    pitch axis' allowance. Naming them makes that mistake impossible to make
-    silently, at the cost of a few more characters.
+    is not a slightly wrong pose, it is one axis being driven against the
+    other's allowance. Both happen to be +/-90 today, and naming them means that
+    stays a coincidence rather than something the tool relies on.
     """
     check_limits("pan", args.yaw)
     check_limits("tilt", args.pitch)

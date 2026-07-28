@@ -71,7 +71,7 @@ OPENSCAD = _openscad()
 # cradle could reach turns with it. The one fixed thing underneath - the
 # pedestal's top plate - is what the sweep is measured against, and it is the
 # same height at every pan angle.
-TILT_LIMITS = (-45.0, 90.0)
+TILT_LIMITS = (-90.0, 90.0)
 
 # How much clear air a design needs before it is called safe. Printed parts
 # warp, a shaft joint slips a degree, and a camera is bigger than its screw.
@@ -322,10 +322,10 @@ FIXED_MEMBERS = ("pedestal", "pan motor", "yoke", "tilt motor", "pivot pin")
 # the renderer could afford, and picking angles by hand is picking the angles you
 # already thought of.
 EXACT_CASES = tuple(
-    (0.0, float(tilt), FIXED_MEMBERS) for tilt in range(-45, 91, 15)
+    (0.0, float(tilt), FIXED_MEMBERS) for tilt in range(-90, 91, 15)
 ) + tuple(
     (float(pan), float(tilt), ("pedestal",))
-    for pan in (15, 30, 45) for tilt in (-45, 90)
+    for pan in (15, 30, 45) for tilt in (-90, 90)
 )
 
 # Coincident faces are everywhere in an assembly - a motor's face bolts flat

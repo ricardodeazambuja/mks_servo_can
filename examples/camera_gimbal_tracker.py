@@ -113,17 +113,21 @@ logger = logging.getLogger("gimbal")
 # Gimbal geometry
 # --------------------------------------------------------------------------
 
-# Soft limits. Pan is restricted rather than continuous because cabling to the
-# camera has to come back down through the yoke; a slip ring would let you open
-# this up. Tilt is restricted to keep the camera clear of the base.
+# Soft limits, both taken off the built machine rather than chosen.
 #
-# +/-90 on pan is measured off the built machine, not chosen: the loom to the
-# tilt motor and the camera comes back down through the yoke, and it runs out of
-# slack there. This said +/-170 until the first assembled gimbal showed that was
-# most of a turn past what the cables tolerate. If you add a slip ring, this is
-# the number to open up - and it is the only one.
+# +/-90 on pan is the cabling: the loom to the tilt motor and the camera comes
+# back down through the yoke and runs out of slack there. This said +/-170 until
+# the first assembled gimbal showed that was most of a turn past what the cables
+# tolerate. A slip ring is what buys the rest of the turn.
+#
+# +/-90 on tilt is the full travel the geometry allows, and it is checked to the
+# end: `check_clearances.py` sweeps -90..+90 every 15 degrees, 71 exact booleans
+# over 19 poses, with no overlap. It read -45 at the low end before the machine
+# existed, which was conservative rather than measured. Note the fork-arm
+# clearance is exactly 3.00 mm at -90 - the required minimum, with nothing
+# spare - so this is genuinely the end of the travel and not a round number.
 PAN_LIMITS = (-90.0, 90.0)
-TILT_LIMITS = (-45.0, 90.0)
+TILT_LIMITS = (-90.0, 90.0)
 ROLL_LIMITS = (-30.0, 30.0)
 
 # acc=250 gives 20000 deg/s^2 at the shaft, about 90x what a 4 g target at 10 m
