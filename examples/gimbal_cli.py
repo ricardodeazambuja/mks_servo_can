@@ -304,6 +304,59 @@ async def cmd_set_zero(can_if: CANInterface, args) -> int:
     return 0 if ok else 1
 
 
+async def cmd_current(can_if: CANInterface, args) -> int:
+    """Sets working and/or holding current on one or both motors.
+
+    Holding current is what cooks the printed parts. A stepper asked to hold a
+    position draws current continuously, the motor bolts straight to a PLA part,
+    and a NEMA17 at 1.5 A settles at 60-70 C, which is PLA's glass transition.
+
+    Two levers, and they are not equivalent:
+
+    * ``--holding`` (0x9B) sets holding current as a *percentage of the working
+      current*, 10% to 90%. The manual says plainly that it is "effective in
+      OPEN and CLOSE modes only; vFOC ignores it". So on a board running vFOC
+      this command succeeds and changes nothing.
+    * ``--working`` (0x83) sets the working current in mA outright. It is not
+      mode-dependent, so it bites regardless - at the cost of torque for
+      everything, moves included.
+
+    NEITHER CAN BE READ BACK ON THIS FIRMWARE. Reading a system parameter is
+    0x00, which the manual adds in V1.0.6 and which these boards do not answer
+    at all (see docs/development/hardware_validation.md). So the motor's
+    acknowledgement is the only evidence there is: it says the command was
+    accepted, not that it had an effect. If you need to know the heat actually
+    went away, the honest instrument is a finger on the motor a few minutes
+    later, or `release`.
+    """
+    targets = [args.axis] if args.axis else list(AXES)
+    if args.holding is None and args.working is None:
+        raise SystemExit("nothing to do: pass --holding and/or --working")
+
+    for name in targets:
+        axis = _axis(can_if, name)
+        await _unmute(axis)
+        api = axis._low_level_api
+        if args.working is not None:
+            await api.set_working_current(axis.can_id, args.working)
+            print(f"  {name:5} working current -> {args.working} mA (accepted)")
+        if args.holding is not None:
+            # 0x00 is 10%, rising in 10% steps to 0x08 for 90%.
+            code = args.holding // 10 - 1
+            await api.set_holding_current_percentage(axis.can_id, code)
+            print(f"  {name:5} holding current -> {args.holding}% of working "
+                  f"(code 0x{code:02x}, accepted)")
+
+    if args.holding is not None:
+        print(
+            "\n'accepted' is not 'applied': 0x9B is ignored outright in vFOC "
+            "mode, and the\nwork-mode read needs firmware >= V1.0.6, which "
+            "these boards do not have. If the\nmotors stay hot, use --working, "
+            "which no mode ignores."
+        )
+    return 0
+
+
 async def cmd_release(can_if: CANInterface, args) -> int:
     """Disables both motors so the axes can be turned by hand."""
     ok = True
@@ -353,9 +406,15 @@ COMMANDS = {
     # set-zero is what makes --zeroed true, so it cannot require it. It releases
     # the motors rather than driving them, so there is nothing to guard.
     "set-zero": (cmd_set_zero, False),
+    "current": (cmd_current, False),
     "release": (cmd_release, False),
     "hold": (cmd_hold, False),
 }
+
+# Conservative ceiling. SERVO42D/28D/35D are rated 3000 mA and the 57D 5200, and
+# nothing here can read back which board it is talking to, so this refuses to be
+# the thing that overcurrents a motor on a guess.
+MAX_WORKING_MA = 3000
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -392,6 +451,18 @@ def build_parser() -> argparse.ArgumentParser:
     sz.add_argument("--here", action="store_true",
                     help="zero where the machine stands now, without releasing "
                          "the motors and asking you to centre it first")
+    cur = sub.add_parser(
+        "current", help="set working and/or holding current (cannot be read back)"
+    )
+    cur.add_argument("--holding", type=int, choices=range(10, 100, 10),
+                     metavar="PERCENT",
+                     help="holding current as a percent of working current, "
+                          "10-90 in steps of 10; ignored by vFOC mode")
+    cur.add_argument("--working", type=int, metavar="MA",
+                     help=f"working current in mA, 0-{MAX_WORKING_MA}; applies "
+                          f"in every mode, and costs torque for moves too")
+    cur.add_argument("--axis", choices=sorted(AXES), default=None,
+                     help="just one axis (default: both)")
     sub.add_parser("release", help="motors off, axes free to turn by hand")
     sub.add_parser("hold", help="motors on, holding position")
     return p
@@ -404,6 +475,15 @@ async def main() -> int:
         level=logging.DEBUG if args.verbose else logging.ERROR,
         format="%(levelname)s %(name)s: %(message)s",
     )
+
+    if args.command == "current" and args.working is not None:
+        if not (0 <= args.working <= MAX_WORKING_MA):
+            parser.error(
+                f"--working {args.working} mA is outside 0..{MAX_WORKING_MA}. "
+                f"That ceiling is the\nrating of the 28D/35D/42D; a 57D takes "
+                f"5200, but nothing here can read back which\nboard it is "
+                f"talking to, so it will not guess on your behalf."
+            )
 
     handler, moves = COMMANDS[args.command]
     if moves and not args.zeroed:
