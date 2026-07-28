@@ -279,6 +279,9 @@ once it is together, rather than trying to make the flat land somewhere.
 
 ## Verifying a change
 
+The method these checks came out of is written up in [../DESIGNING_PRINTED_PARTS.md](../DESIGNING_PRINTED_PARTS.md) — toolchain, how to
+verify a checker, and the traps, for the next part rather than this one.
+
 `gimbal_parts.scad` is parametric, and a plausible-looking edit can quietly move
 the camera into the yoke.
 
