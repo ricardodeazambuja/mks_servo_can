@@ -12,6 +12,7 @@ Every command is a single action that finishes and exits.
     python examples/gimbal_cli.py --zeroed jog pan 10          # relative
     python examples/gimbal_cli.py --zeroed goto tilt -20       # one axis
     python examples/gimbal_cli.py --zeroed home                # both to 0
+    python examples/gimbal_cli.py --zeroed demo                # sweep the limits
     python examples/gimbal_cli.py release             # motors off, free to turn
     python examples/gimbal_cli.py hold                # motors on, holding
 
@@ -277,6 +278,98 @@ async def cmd_point(can_if: CANInterface, args) -> int:
               f"(asked {want:+.2f})")
         ok = ok and landed
     return 0 if ok else 1
+
+
+async def cmd_demo(can_if: CANInterface, args) -> int:
+    """Sweeps each axis limit to limit at a range of speeds, then both together.
+
+    This is the most demanding thing the machine does: full travel is where the
+    cable loom is tightest and where a stalling axis has the most room to build
+    up following error. So it is built to stop rather than to finish.
+
+    **It aborts on the first move that does not land.** A stepper that stalls
+    does not report a failure - the commanded angle simply runs on without the
+    shaft, and the further it runs the harder the eventual catch-up snap. So
+    every leg is verified against the encoder and a miss ends the run, leaving
+    the machine where it stopped and printing what it was doing. Finishing the
+    script matters less than not driving a jammed axis to the end of its travel.
+
+    `--fraction` scales the travel: 0.5 sweeps half of each limit. Use it the
+    first time, on any machine whose full range has not been driven before.
+    """
+    speeds = [float(s) for s in args.speeds.split(",")]
+    frac = args.fraction
+    names = _targets(args)
+
+    print(f"Sweeping {', '.join(names)} at {frac*100:.0f}% of travel, "
+          f"speeds {', '.join(f'{s:.0f}' for s in speeds)} deg/s.")
+    print("Aborts on the first leg that does not land.\n")
+
+    legs = []
+    for name in names:
+        low, high = AXES[name]["limits"]
+        for speed in speeds:
+            legs.append((name, low * frac, speed))
+            legs.append((name, high * frac, speed))
+        legs.append((name, 0.0, speeds[-1]))
+    # Then both at once, each at a different speed, which is where the two axes
+    # sharing one bus and one power supply actually gets tested.
+    if len(names) > 1:
+        for speed in speeds:
+            legs.append(("both", frac, speed))
+
+    print(f"{'axis':6}{'target':>10}{'speed':>9}{'landed':>10}   result")
+    print("-" * 52)
+    for name, target, speed in legs:
+        if name == "both":
+            hi_p = AXES["pan"]["limits"][1]
+            lo_t = AXES["tilt"]["limits"][0]
+            # Opposite corners, and deliberately at different speeds per axis.
+            pairs = [("pan", hi_p * target, speed), ("tilt", lo_t * target, speed / 2)]
+            res = await asyncio.gather(*[
+                _demo_leg(can_if, n, t, s) for n, t, s in pairs
+            ], return_exceptions=True)
+            for (n, t, s), r in zip(pairs, res):
+                landed, _ = _demo_report(n, t, s, r)
+                if not landed:
+                    return 1
+            continue
+        r = await _demo_leg(can_if, name, target, speed)
+        landed, _ = _demo_report(name, target, speed, r)
+        if not landed:
+            return 1
+
+    print("\nSwept both limits at every speed. Returning to home.")
+    for name in names:
+        await _demo_leg(can_if, name, 0.0, speeds[-1])
+    return 0
+
+
+async def _demo_leg(can_if: CANInterface, name: str, target: float,
+                    speed: float):
+    """Runs one leg of the demo, returning the landed position or the error."""
+    try:
+        check_limits(name, target)
+        axis = _axis(can_if, name)
+        await _unmute(axis)
+        await _sync_enable_state(axis)
+        await axis.enable_motor()
+        await axis.move_to_position_abs_user(target, speed_user=speed)
+        return await axis.get_current_position_user()
+    except Exception as exc:
+        return exc
+
+
+def _demo_report(name: str, target: float, speed: float, result) -> tuple:
+    """Prints one leg's outcome. Returns `(landed, position_or_None)`."""
+    if isinstance(result, BaseException):
+        print(f"{name:6}{target:>+9.1f}d{speed:>8.0f}{'-':>10}   "
+              f"FAILED {type(result).__name__}: {str(result)[:60]}")
+        return False, None
+    landed = abs(result - target) <= 1.0
+    print(f"{name:6}{target:>+9.1f}d{speed:>8.0f}{result:>+9.2f}d   "
+          f"{'ok' if landed else 'SHORT - aborting'}")
+    return landed, result
 
 
 async def cmd_set_zero(can_if: CANInterface, args) -> int:
@@ -549,6 +642,7 @@ COMMANDS = {
     "home": (cmd_home, True),
     # set-zero is what makes --zeroed true, so it cannot require it. It releases
     # the motors rather than driving them, so there is nothing to guard.
+    "demo": (cmd_demo, True),
     "set-zero": (cmd_set_zero, False),
     "current": (cmd_current, False),
     "watch": (cmd_watch, False),
@@ -599,6 +693,17 @@ def build_parser() -> argparse.ArgumentParser:
                     help="deg/s for the yaw axis only (default: --speed)")
     pt.add_argument("--pitch-speed", type=float, default=None, metavar="DEG_S",
                     help="deg/s for the pitch axis only (default: --speed)")
+    dm = sub.add_parser(
+        "demo", help="sweep each axis limit to limit at several speeds"
+    )
+    dm.add_argument("--axis", choices=sorted(AXES), default=None,
+                    help="just one axis (default: both)")
+    dm.add_argument("--speeds", default="10,30,60",
+                    help="comma-separated deg/s to sweep at")
+    dm.add_argument("--fraction", type=float, default=1.0,
+                    metavar="F",
+                    help="fraction of each limit to sweep, 0<F<=1; use "
+                         "0.5 the first time on an untested machine")
     hm = sub.add_parser("home", help="drive the selected axes to 0")
     hm.add_argument("--axis", choices=sorted(AXES), default=None,
                     help="just one axis (default: both)")
