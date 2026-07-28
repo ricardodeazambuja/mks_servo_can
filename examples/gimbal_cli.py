@@ -79,6 +79,13 @@ DEFAULT_CHANNEL = "can0"
 DEFAULT_BITRATE = 500000
 DEFAULT_SPEED_DEG_S = 30.0
 
+# Slowest speed that survives the conversion to an MKS speed parameter. The
+# mapping rounds deg/s divided by six, so 3.0 still lands on 0 and 3.1 is the
+# first value that reaches 1. Measured against the real conversion rather than
+# derived, because "divided by six" is an observation about the current
+# kinematics and not a promise.
+MIN_SPEED_DEG_S = 3.1
+
 
 def _axis(can_if: CANInterface, name: str) -> Axis:
     """Builds an `Axis` for one of the gimbal's motors."""
@@ -135,6 +142,49 @@ async def _sync_enable_state(axis: Axis) -> None:
     await axis.read_en_status()
 
 
+def check_speed(speed: float) -> int:
+    """Refuses a speed the motor cannot express, and returns what it becomes.
+
+    The speed sent in an 0xF5 frame is the MKS parameter, which is essentially
+    shaft RPM as an integer. `user_speed_to_motor_speed` divides by six and
+    truncates, so the resolution near the bottom is terrible and there is a dead
+    zone below it:
+
+        deg/s   2   4   5   8  10  15  20  30  60
+        param   0   1   1   1   2   2   3   5  10
+
+    Two consequences worth knowing. Anything from about 4 to 8 deg/s is the same
+    command, so asking for 8 rather than 5 changes nothing. And below about
+    3 deg/s the parameter is 0, which `Axis._move_absolute_handler` treats as
+    "no move needed" - it returns success having sent no frame at all. Measured:
+    a tilt move of +8 deg at 2 deg/s moved +0.00 deg and raised nothing, while
+    the same move at 20 deg/s moved exactly +8.00.
+
+    Args:
+        speed: Requested speed in degrees per second.
+
+    Returns:
+        The MKS speed parameter the motor will actually receive.
+
+    Raises:
+        SystemExit: If the speed rounds to zero, rather than letting the move be
+            silently discarded.
+    """
+    kin = RotaryKinematics(
+        steps_per_revolution=const.ENCODER_PULSES_PER_REVOLUTION
+    )
+    param = kin.user_speed_to_motor_speed(speed)
+    if param < 1:
+        raise SystemExit(
+            f"refusing: {speed:g} deg/s becomes MKS speed parameter 0, and a "
+            f"move at speed 0 is\ndiscarded by the library without sending a "
+            f"frame or raising - it would look\nlike a completed move that did "
+            f"nothing. The slowest speed this motor can\nexpress is "
+            f"{MIN_SPEED_DEG_S:g} deg/s (parameter 1)."
+        )
+    return param
+
+
 def check_limits(name: str, target: float) -> None:
     """Refuses a target outside the axis' soft limits.
 
@@ -183,21 +233,34 @@ async def cmd_status(can_if: CANInterface, args) -> int:
 
 async def _move(can_if: CANInterface, name: str, target: float,
                 speed: float, relative_from: float | None) -> int:
-    """Sends one absolute move and reports where the axis actually ended up."""
+    """Sends one absolute move and checks where the axis actually ended up.
+
+    Returns non-zero when the shaft did not arrive. `point` and `demo` verified
+    their moves from the start and these did not - they printed the landing
+    position and exited 0 regardless, so `goto tilt -10` could report
+    "now +34.67 (asked for -10.00)" and still look like a success.
+    """
+    param = check_speed(speed)
     axis = _axis(can_if, name)
     await _unmute(axis)
+    await _sync_enable_state(axis)
     await axis.enable_motor()
     before = await axis.get_current_position_user()
     if relative_from is not None:
         target = before + relative_from
         check_limits(name, target)
-    print(f"{name}: {before:+.2f} -> {target:+.2f} deg at {speed:.0f} deg/s")
+    # The MKS parameter is printed beside the speed because the mapping is lossy
+    # near the bottom: 4 through 8 deg/s all become 1.
+    print(f"{name}: {before:+.2f} -> {target:+.2f} deg at {speed:.0f} deg/s "
+          f"(MKS param {param})")
     await axis.move_to_position_abs_user(target, speed_user=speed)
     after = await axis.get_current_position_user()
     # Report the encoder, not the fact the command returned: where the shaft
     # ended up is the thing being tested.
-    print(f"{name}: now {after:+.2f} deg  (asked for {target:+.2f})")
-    return 0
+    landed = abs(after - target) <= 1.0
+    print(f"{name}: {'ok  ' if landed else 'SHORT'} now {after:+.2f} deg  "
+          f"(asked for {target:+.2f})")
+    return 0 if landed else 1
 
 
 async def cmd_jog(can_if: CANInterface, args) -> int:
@@ -238,12 +301,13 @@ async def cmd_point(can_if: CANInterface, args) -> int:
 
     yaw_speed = args.yaw_speed if args.yaw_speed is not None else args.speed
     pitch_speed = args.pitch_speed if args.pitch_speed is not None else args.speed
+    yaw_param, pitch_param = check_speed(yaw_speed), check_speed(pitch_speed)
 
     # Both axes are checked before either moves. Sending yaw and then
     # discovering pitch is out of range would leave the machine somewhere
     # nobody asked for, half way through a pose.
-    print(f"yaw (pan)   -> {args.yaw:+.2f} deg at {yaw_speed:.0f} deg/s")
-    print(f"pitch (tilt)-> {args.pitch:+.2f} deg at {pitch_speed:.0f} deg/s")
+    print(f"yaw (pan)   -> {args.yaw:+.2f} deg at {yaw_speed:.0f} deg/s (param {yaw_param})")
+    print(f"pitch (tilt)-> {args.pitch:+.2f} deg at {pitch_speed:.0f} deg/s (param {pitch_param})")
 
     async def one(name: str, target: float, speed: float):
         axis = _axis(can_if, name)
@@ -298,6 +362,8 @@ async def cmd_demo(can_if: CANInterface, args) -> int:
     first time, on any machine whose full range has not been driven before.
     """
     speeds = [float(s) for s in args.speeds.split(",")]
+    for s_ in speeds:
+        check_speed(s_)   # fail before moving, not part way through
     frac = args.fraction
     names = _targets(args)
 
