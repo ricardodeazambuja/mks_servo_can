@@ -103,6 +103,19 @@ async def _unmute(axis: Axis) -> None:
     )
 
 
+def _targets(args) -> list:
+    """Which axes a command acts on.
+
+    Every command that can sensibly act on one motor takes `--axis`, defaulting
+    to both. That matters more than tidiness when one axis is faulty: releasing
+    a jammed yaw axis while leaving pitch holding, or zeroing only the axis you
+    just moved, are both things you want during a diagnosis and neither is
+    possible if the tool insists on operating in pairs.
+    """
+    chosen = getattr(args, "axis", None)
+    return [chosen] if chosen else list(AXES)
+
+
 async def _sync_enable_state(axis: Axis) -> None:
     """Makes the axis' cached enable flag match the motor before acting on it.
 
@@ -145,7 +158,7 @@ async def cmd_status(can_if: CANInterface, args) -> int:
     """Reports where each axis is and whether it is holding. Moves nothing."""
     print(f"{'axis':6}{'CAN':>5}{'position':>12}{'limits':>18}   state")
     print("-" * 60)
-    for name in AXES:
+    for name in _targets(args):
         axis = _axis(can_if, name)
         low, high = AXES[name]["limits"]
         try:
@@ -198,8 +211,8 @@ async def cmd_goto(can_if: CANInterface, args) -> int:
 
 
 async def cmd_home(can_if: CANInterface, args) -> int:
-    """Drives every axis to zero."""
-    for name in AXES:
+    """Drives the selected axes to zero."""
+    for name in _targets(args):
         await _move(can_if, name, 0.0, args.speed, None)
     return 0
 
@@ -261,7 +274,7 @@ async def cmd_set_zero(can_if: CANInterface, args) -> int:
     machine is standing, which is right when you have just positioned it and
     wrong the rest of the time.
     """
-    axes = {name: _axis(can_if, name) for name in AXES}
+    axes = {name: _axis(can_if, name) for name in _targets(args)}
     for axis in axes.values():
         await _unmute(axis)
 
@@ -329,7 +342,7 @@ async def cmd_current(can_if: CANInterface, args) -> int:
     went away, the honest instrument is a finger on the motor a few minutes
     later, or `release`.
     """
-    targets = [args.axis] if args.axis else list(AXES)
+    targets = _targets(args)
     if args.holding is None and args.working is None:
         raise SystemExit("nothing to do: pass --holding and/or --working")
 
@@ -388,7 +401,7 @@ async def cmd_mode(can_if: CANInterface, args) -> int:
     move on an axis limited by its cabling. Releasing first means the mode
     change lands on a motor that is not holding anything, and you re-zero after.
     """
-    targets = [args.axis] if args.axis else list(AXES)
+    targets = _targets(args)
     code = MODES[args.mode]
 
     for name in targets:
@@ -477,7 +490,7 @@ async def cmd_watch(can_if: CANInterface, args) -> int:
 async def cmd_release(can_if: CANInterface, args) -> int:
     """Disables both motors so the axes can be turned by hand."""
     ok = True
-    for name in AXES:
+    for name in _targets(args):
         axis = _axis(can_if, name)
         await _unmute(axis)
         await _sync_enable_state(axis)
@@ -501,7 +514,7 @@ async def cmd_release(can_if: CANInterface, args) -> int:
 async def cmd_hold(can_if: CANInterface, args) -> int:
     """Enables both motors so they hold position."""
     ok = True
-    for name in AXES:
+    for name in _targets(args):
         axis = _axis(can_if, name)
         await _unmute(axis)
         await _sync_enable_state(axis)
@@ -554,7 +567,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--verbose", action="store_true")
 
     sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("status", help="read positions and hold state; moves nothing")
+    st = sub.add_parser("status",
+                        help="read positions and hold state; moves nothing")
+    st.add_argument("--axis", choices=sorted(AXES), default=None,
+                    help="just one axis (default: both)")
     for verb, helptext in (("jog", "move by N degrees, relative"),
                            ("goto", "move to N degrees, absolute")):
         s = sub.add_parser(verb, help=helptext)
@@ -565,8 +581,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"pan, degrees ({PAN_LIMITS[0]:+.0f} .. {PAN_LIMITS[1]:+.0f})")
     pt.add_argument("--pitch", type=float, required=True,
                     help=f"tilt, degrees ({TILT_LIMITS[0]:+.0f} .. {TILT_LIMITS[1]:+.0f})")
-    sub.add_parser("home", help="drive every axis to 0")
+    hm = sub.add_parser("home", help="drive the selected axes to 0")
+    hm.add_argument("--axis", choices=sorted(AXES), default=None,
+                    help="just one axis (default: both)")
     sz = sub.add_parser("set-zero", help="define the current position as zero")
+    sz.add_argument("--axis", choices=sorted(AXES), default=None,
+                    help="just one axis (default: both)")
     sz.add_argument("--here", action="store_true",
                     help="zero where the machine stands now, without releasing "
                          "the motors and asking you to centre it first")
@@ -595,8 +615,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     w.add_argument("--axis", choices=sorted(AXES), default="pan")
     w.add_argument("--hz", type=float, default=5.0, help="samples per second")
-    sub.add_parser("release", help="motors off, axes free to turn by hand")
-    sub.add_parser("hold", help="motors on, holding position")
+    rl = sub.add_parser("release",
+                        help="motors off, axes free to turn by hand")
+    rl.add_argument("--axis", choices=sorted(AXES), default=None,
+                    help="just one axis (default: both)")
+    hd = sub.add_parser("hold", help="motors on, holding position")
+    hd.add_argument("--axis", choices=sorted(AXES), default=None,
+                    help="just one axis (default: both)")
     return p
 
 
