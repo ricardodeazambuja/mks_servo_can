@@ -164,7 +164,6 @@ mks_servo_can/
 │   ├── calligraphy_plotter.py       # Artistic calligraphy and text rendering
 │   └── calligraphy_plotter_manual_interpolation.py # Manual interpolation techniques
 ├── hardware/                        # Printable parts, and how they are checked
-│   ├── DESIGNING_PRINTED_PARTS.md   # Manual: toolchain, FDM rules, traps
 │   └── gimbal/                      # A pan/tilt mount for two MKS servos
 │       ├── gimbal_parts.scad        # The model: four parts and the test modes
 │       ├── check_clearances.py      # Interference and screw-driver access

@@ -94,9 +94,6 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
     * [Python's Role in Automation: Strengths and Limitations](advanced_topics/python_and_automation.md)
 
 7.  **Printed Hardware**
-    * [Designing Printed Parts](../hardware/DESIGNING_PRINTED_PARTS.md) — the
-      toolchain with pinned versions and its caveats, the FDM rules these parts
-      are held to, and the traps that cost time here
     * [The pan/tilt gimbal](../hardware/gimbal/README.md) — four printable parts
       for two MKS servos, with the scripts that measure their clearances, screw
       access, printability, balance and stress rather than asserting them

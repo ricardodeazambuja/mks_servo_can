@@ -39,3 +39,6 @@ env/
 # Editor backup files
 *.bak
 *.orig
+
+# Kept locally, deliberately not published.
+hardware/DESIGNING_PRINTED_PARTS.md

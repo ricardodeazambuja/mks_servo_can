@@ -543,11 +543,6 @@ standard: every claim about it comes from a script that measures it.
   Manifold backend takes 0.2–0.6 s for the same boolean and agrees with it to
   1×10⁻⁵ %. The speed was spent on coverage rather than pocketed — 71 booleans
   where there had been 11, and the whole check still finishes in under 8 s.
-- **`hardware/DESIGNING_PRINTED_PARTS.md`** records the toolchain with pinned
-  versions and its caveats (both the OpenSCAD and PrusaSlicer flatpaks fail by
-  *warning while exiting 0* when asked to write outside `$HOME`, which is how a
-  previous conclusion came to be wrong), the FDM rules these parts are held to,
-  and the traps that cost time here.
 - **`hardware/` is documentation, so the documentation ratchet now reads it.**
   `tests/test_docs_api.py` globbed `docs/` and `README.md`, a list written before
   `hardware/` existed, so the largest block of prose in the repository was
