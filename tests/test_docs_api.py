@@ -1,9 +1,9 @@
 """
 The documentation must describe the API that exists.
 
-Every code block in `docs/` and `README.md` is parsed and every name it uses is
-checked against the real package. Internal links in the documentation index are
-checked to resolve. Neither had ever been verified, and both had drifted badly:
+Every code block in `docs/`, `hardware/` and `README.md` is parsed and every name
+it uses is checked against the real package. Internal links in the documentation
+index are checked to resolve. Neither had ever been verified, and both had drifted badly:
 26 references to methods and parameters that do not exist, 7 blocks that are not
 valid Python, and 27 of 52 index links pointing at documents that were never
 written.
@@ -33,7 +33,11 @@ import re
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-DOCS_DIR = REPO_ROOT / "docs"
+# Every tree that holds prose about this project, rather than a list of the ones
+# that happened to exist when this was written: `hardware/` arrived later with
+# 1000 lines of documentation in it and was checked by nothing at all, which is
+# how its README came to quote a CLI invocation that exits 2.
+DOC_DIRS = [REPO_ROOT / "docs", REPO_ROOT / "hardware"]
 BASELINE_PATH = REPO_ROOT / "tests" / "fixtures" / "docs_known_issues.json"
 
 PYTHON_BLOCK = re.compile(r"```python\n(.*?)```", re.S)
@@ -47,7 +51,8 @@ def _documentation_files():
     Returns:
         A sorted list of paths, relative paths being resolved from the repo root.
     """
-    return sorted(DOCS_DIR.rglob("*.md")) + [REPO_ROOT / "README.md"]
+    found = [path for directory in DOC_DIRS for path in directory.rglob("*.md")]
+    return sorted(found) + [REPO_ROOT / "README.md"]
 
 
 def _relative(path):

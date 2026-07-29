@@ -16,6 +16,7 @@ import pathlib
 
 import numpy as np
 from check_clearances import (
+    PAN_LIMITS,
     SCAD,
     TILT_LIMITS,
     clearance,
@@ -27,7 +28,6 @@ from check_clearances import (
 )
 
 OUT = pathlib.Path(__file__).with_name("gimbal_viewer.html")
-PAN_LIMITS = (-170.0, 170.0)
 
 # Dimensions the viewer needs. Named here rather than dumping everything so a
 # missing one is an error at generation time, not a silent NaN in the browser.

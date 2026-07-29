@@ -71,7 +71,15 @@ OPENSCAD = _openscad()
 # cradle could reach turns with it. The one fixed thing underneath - the
 # pedestal's top plate - is what the sweep is measured against, and it is the
 # same height at every pan angle.
+#
+# These are copies, so tests/unit/test_gimbal_limits.py fails if they ever stop
+# matching the tracker's. The pan figure is not used by any check here - it is a
+# property of the cable loom rather than the geometry - but make_visualizer.py
+# needs it for the viewer's slider, and a second hand-kept copy of it in that
+# file is how the viewer came to go on offering +/-170 after the built machine
+# turned out to reach +/-90.
 TILT_LIMITS = (-90.0, 90.0)
+PAN_LIMITS = (-90.0, 90.0)
 
 # How much clear air a design needs before it is called safe. Printed parts
 # warp, a shaft joint slips a degree, and a camera is bigger than its screw.
@@ -317,7 +325,7 @@ FIXED_MEMBERS = ("pedestal", "pan motor", "yoke", "tilt motor", "pivot pin")
 # is conservative but says nothing about the corners themselves.
 #
 # Every 15 degrees rather than at five hand-picked angles, because that is what
-# the Manifold backend bought: 56 booleans in a few seconds where CGAL wanted
+# the Manifold backend bought: 71 booleans in a few seconds where CGAL wanted
 # 20 s each. A test's coverage should be set by what the geometry needs, not by what
 # the renderer could afford, and picking angles by hand is picking the angles you
 # already thought of.

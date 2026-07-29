@@ -1,6 +1,6 @@
 # Roadmap — remaining work, in priority order
 
-Baseline: 826 tests passing / 26 skipped, `ruff check .` clean, library coverage
+Baseline: 828 tests passing / 26 skipped, `ruff check .` clean, library coverage
 79%, **documentation baseline empty** (63 → 26 → 0 known problems). Green against
 the installed wheel as well as the source tree. `library-hardening` is merged into
 `main` and pushed; `main` is the current state.

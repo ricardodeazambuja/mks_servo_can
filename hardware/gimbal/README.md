@@ -268,7 +268,8 @@ It matters, because the tilt shaft and the pivot pin come in from opposite sides
    pan hub — not enough to get a driver in, which the `reach` check will tell you
    if you ever move something.
 9. Zip-tie the tilt motor's harness to the yoke's pad and the pedestal's corner
-   slots, leaving a service loop for ±170° of pan.
+   slots, leaving a service loop for ±90° of pan — that loop is what sets the
+   limit, so give it more slack than you think and the limit can grow.
 
 The pin's keeper screws are not in the load path — the journal in its hole is.
 They stop the pin walking out.
@@ -310,11 +311,13 @@ camera screw no driver can reach with the cradle level, three bridges that a
 tolerance quietly deleted from the measurement, and a fillet whose corners hung
 over the edge of the pad it was filleting.
 
-The exact pass is 22 CGAL booleans at about 19 s each. They run six at a time,
-which is the difference between two minutes and seven — and seven is long enough
-that the check stops being run, which is the only way it can be worth nothing.
-Each worker writes its own scratch STL; sharing one filename would have every
-worker read someone else's answer, or zero.
+The exact pass is 71 booleans, and the whole check runs in under 8 s. Two things
+bought that: the nightly's Manifold backend costs 0.2–0.6 s per boolean where
+2021.01's CGAL charges 20–55 s, and they run six at a time. It was 22 booleans at
+about 19 s each — seven minutes — and seven minutes is long enough that the check
+stops being run, which is the only way it can be worth nothing. Each worker writes
+its own scratch STL; sharing one filename would have every worker read someone
+else's answer, or zero.
 
 `check_clearances.py` reports three kinds of number, and mixing them up is how
 this design shipped a 4.4 mm interpenetration with a check that said +2.5 mm:
@@ -380,7 +383,7 @@ Current state:
 | bearing seat wall | 4.6 mm | static, round a 14.9 mm pocket |
 | pin overrun past the race | 1.5 mm | static — the tilt joint's axial slack |
 | glide pad to a motor screw | 1.9 mm | static, in the plate |
-| exact overlap | 0 mm³ | 5 tilts at pan 0, plus tilt ±45/90 at pan 45 |
+| exact overlap | 0 mm³ | 71 booleans: tilt −90…+90 every 15°, plus pan 15/30/45 |
 | pin in the arm's hole | 0 mm³ | `part="fit"` |
 
 ### The printability checker had a blind spot, and the glide pads found it
@@ -468,12 +471,15 @@ tilt = CAN 3):
 python examples/gimbal_cli.py status                       # reads only
 python examples/gimbal_cli.py set-zero                     # define home by hand
 python examples/gimbal_cli.py --zeroed point --yaw 30 --pitch -20
-python examples/gimbal_cli.py --zeroed goto tilt -20 --speed 20
+python examples/gimbal_cli.py --zeroed --speed 20 goto tilt -20
 python examples/gimbal_cli.py --zeroed demo                # sweep both limits
 python examples/gimbal_cli.py release                      # motors off
 ```
 
-Every command takes `--axis` to work on one motor. Every move is **verified
+`--speed` and `--zeroed` are the program's own options, so they go **before** the
+subcommand; anything after it belongs to that subcommand. The commands that act
+on both motors take `--axis` to work on one; `jog` and `goto` name their axis as
+their first argument instead, and `point` needs both. Every move is **verified
 against the encoder** and exits non-zero if the shaft did not arrive — that is
 what turned a stalling axis into a number rather than a hunch. Two more that
 earn their place when something is wrong:

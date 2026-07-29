@@ -519,7 +519,7 @@ standard: every claim about it comes from a script that measures it.
   the gap and now slews on three PTFE pads at a measured 0.4 mm; and screws bit
   directly into printed threads, which are now M3 heat-set inserts.
 - **Five checkers, each measuring rather than asserting.**
-  `check_clearances.py` runs 56 exact CSG intersections across the working
+  `check_clearances.py` runs 71 exact CSG intersections across the working
   envelope and reports overlap volume — including whether a 4 mm driver 45 mm
   long can actually reach all 8 fasteners *in assembly order*, which is a
   question no rendering answers. `check_printability.py` measures overhang
@@ -541,13 +541,27 @@ standard: every claim about it comes from a script that measures it.
 - **The exact interference pass got fast enough to be worth widening.** OpenSCAD
   2021.01 is CGAL-only and takes 20–55 s per `intersection()`; the nightly's
   Manifold backend takes 0.2–0.6 s for the same boolean and agrees with it to
-  1×10⁻⁵ %. The speed was spent on coverage rather than pocketed — 56 booleans
-  where there had been 11, and the whole pass still finishes in 6.5 s.
+  1×10⁻⁵ %. The speed was spent on coverage rather than pocketed — 71 booleans
+  where there had been 11, and the whole check still finishes in under 8 s.
 - **`hardware/DESIGNING_PRINTED_PARTS.md`** records the toolchain with pinned
   versions and its caveats (both the OpenSCAD and PrusaSlicer flatpaks fail by
   *warning while exiting 0* when asked to write outside `$HOME`, which is how a
   previous conclusion came to be wrong), the FDM rules these parts are held to,
   and the traps that cost time here.
+- **`hardware/` is documentation, so the documentation ratchet now reads it.**
+  `tests/test_docs_api.py` globbed `docs/` and `README.md`, a list written before
+  `hardware/` existed, so the largest block of prose in the repository was
+  checked by nothing — and it showed: a `gimbal_cli.py` invocation that exits 2
+  because a program option was written after the subcommand, a claim that every
+  command takes `--axis` when three do not, and boolean counts left behind by two
+  commits that changed them. All fixed, and the checker now iterates the trees
+  that hold prose rather than the ones that happened to exist.
+- **The gimbal's soft limits are checked to be one number.** Pan was cut from
+  ±170° to ±90° when the built machine ran out of cable; `make_visualizer.py`
+  held a second hand-kept copy, so `gimbal_viewer.html` went on offering a ±170°
+  slider on a page whose README says it is generated so that it cannot drift.
+  The copy now lives once, beside the tilt limit it is already kept next to, and
+  `tests/unit/test_gimbal_limits.py` fails if it stops matching the tracker's.
 
 ### Known issues
 

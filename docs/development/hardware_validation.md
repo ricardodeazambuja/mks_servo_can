@@ -256,5 +256,5 @@ tell the two apart.
 
 ## Test suite
 
-`python -m pytest tests/ -q` → **826 passed, 26 skipped**, against the simulator,
+`python -m pytest tests/ -q` → **828 passed, 26 skipped**, against the simulator,
 with no hardware attached and no stray simulator processes.

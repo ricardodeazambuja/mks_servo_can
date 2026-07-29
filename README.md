@@ -84,7 +84,7 @@ This project provides a Python library (`mks-servo-can`) for controlling MKS SER
 
 ### General
 * **Determinism Focus**: Designed with considerations for analyzing and understanding timing behavior, aiding in applications with real-time constraints.
-* **Comprehensive Test Strategy**: 826 tests — unit, integration against a live
+* **Comprehensive Test Strategy**: 828 tests — unit, integration against a live
   simulator, wire-format compliance against the manual's transcription,
   determinism under stepped simulated time, and hardware-in-the-loop tests that
   skip without a bench.
@@ -137,7 +137,7 @@ mks_servo_can/
 │   │   │   ├── sdk_client.py        # Client helper for the debug API
 │   │   │   └── http_debug_server.py # HTTP REST API for programmatic access
 │   │   └── main.py                  # Entry point for the simulator CLI
-├── tests/                           # Test suite (826 tests)
+├── tests/                           # Test suite (828 tests)
 │   ├── unit/                        # Fast; no simulator subprocess needed
 │   ├── integration/                 # Against a live simulator
 │   ├── simulator_compliance/        # Wire-format conformance vs the manual
