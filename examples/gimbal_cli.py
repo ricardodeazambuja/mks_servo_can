@@ -86,6 +86,27 @@ DEFAULT_SPEED_DEG_S = 30.0
 # kinematics and not a promise.
 MIN_SPEED_DEG_S = 3.1
 
+# How far short of each soft limit `demo` turns around, and how far a leg may
+# miss its target before the run aborts.
+#
+# These exist because the axis overshoots. Commanding pan to exactly -90 landed
+# it at -91.60: the limit is a *cable* limit, so a sweep that targets it exactly
+# puts the machine outside the envelope the limit defines, which is the one
+# thing the limits are for. The demo therefore turns around 2 degrees inside
+# each end and still calls that "sweeping the limits", because 2 degrees of
+# margin is worth more than 2 degrees of travel.
+#
+# The tolerance is the same figure for the same reason: 1.0 was tighter than
+# this machine repeats to, and aborted a run over a 1.6 degree overshoot that
+# was normal behaviour rather than a fault.
+DEMO_END_MARGIN_DEG = 2.0
+DEMO_TOL_DEG = 2.0
+
+# The motor reports a move complete before the shaft has finished settling, so
+# reading the encoder immediately races it. Short enough not to hide a real
+# failure to arrive, long enough that the reading is the resting position.
+DEMO_SETTLE_S = 0.25
+
 
 def _axis(can_if: CANInterface, name: str) -> Axis:
     """Builds an `Axis` for one of the gimbal's motors."""
@@ -369,14 +390,20 @@ async def cmd_demo(can_if: CANInterface, args) -> int:
 
     print(f"Sweeping {', '.join(names)} at {frac*100:.0f}% of travel, "
           f"speeds {', '.join(f'{s:.0f}' for s in speeds)} deg/s.")
+    print(f"Turning around {DEMO_END_MARGIN_DEG:.0f} deg inside each limit, "
+          f"so overshoot stays inside it. Tolerance {DEMO_TOL_DEG:.0f} deg.")
     print("Aborts on the first leg that does not land.\n")
 
     legs = []
     for name in names:
         low, high = AXES[name]["limits"]
+        # Turn around inside each end so the overshoot stays within the
+        # limit rather than just outside it.
+        low = (low + DEMO_END_MARGIN_DEG) * frac
+        high = (high - DEMO_END_MARGIN_DEG) * frac
         for speed in speeds:
-            legs.append((name, low * frac, speed))
-            legs.append((name, high * frac, speed))
+            legs.append((name, low, speed))
+            legs.append((name, high, speed))
         legs.append((name, 0.0, speeds[-1]))
     # Then both at once, each at a different speed, which is where the two axes
     # sharing one bus and one power supply actually gets tested.
@@ -388,10 +415,18 @@ async def cmd_demo(can_if: CANInterface, args) -> int:
     print("-" * 52)
     for name, target, speed in legs:
         if name == "both":
-            hi_p = AXES["pan"]["limits"][1]
-            lo_t = AXES["tilt"]["limits"][0]
+            # The same margin the single-axis legs use. Without it these legs
+            # targeted the limits exactly and landed outside them - measured at
+            # +90.04 on pan and -90.24 on tilt, which is the machine sitting
+            # past the cable limit the whole sweep exists to respect.
+            hi_p = (AXES["pan"]["limits"][1] - DEMO_END_MARGIN_DEG) * target
+            lo_t = (AXES["tilt"]["limits"][0] + DEMO_END_MARGIN_DEG) * target
             # Opposite corners, and deliberately at different speeds per axis.
-            pairs = [("pan", hi_p * target, speed), ("tilt", lo_t * target, speed / 2)]
+            # The halved speed is floored: half of the slowest speed in the list
+            # can fall under what the motor can express, and a move at
+            # parameter 0 is discarded silently.
+            slow = max(speed / 2, MIN_SPEED_DEG_S)
+            pairs = [("pan", hi_p, speed), ("tilt", lo_t, slow)]
             res = await asyncio.gather(*[
                 _demo_leg(can_if, n, t, s) for n, t, s in pairs
             ], return_exceptions=True)
@@ -420,7 +455,17 @@ async def _demo_leg(can_if: CANInterface, name: str, target: float,
         await _unmute(axis)
         await _sync_enable_state(axis)
         await axis.enable_motor()
+        # Read the position *before* moving, and not for the reading's sake.
+        # `Axis` sizes a move's completion timeout from its cached position, and
+        # falls back to assuming zero when the cache is empty - which it always
+        # is here, because every command builds its own `Axis`. A sweep from
+        # +88.84 to -88 was therefore budgeted as if it started at 0, got half
+        # the time it needed, and timed out at 12.21 s on a move that takes
+        # nearly 18 at 10 deg/s. This read populates the cache so the estimate
+        # is made against where the axis actually is.
+        await axis.get_current_position_user()
         await axis.move_to_position_abs_user(target, speed_user=speed)
+        await asyncio.sleep(DEMO_SETTLE_S)
         return await axis.get_current_position_user()
     except Exception as exc:
         return exc
@@ -432,9 +477,17 @@ def _demo_report(name: str, target: float, speed: float, result) -> tuple:
         print(f"{name:6}{target:>+9.1f}d{speed:>8.0f}{'-':>10}   "
               f"FAILED {type(result).__name__}: {str(result)[:60]}")
         return False, None
-    landed = abs(result - target) <= 1.0
-    print(f"{name:6}{target:>+9.1f}d{speed:>8.0f}{result:>+9.2f}d   "
-          f"{'ok' if landed else 'SHORT - aborting'}")
+    miss = result - target
+    landed = abs(miss) <= DEMO_TOL_DEG
+    # Say which way it missed. This read "SHORT" for everything, including a leg
+    # that overshot its target by 1.6 degrees, which points the reader at
+    # exactly the wrong cause.
+    if landed:
+        verdict = "ok"
+    else:
+        verdict = (f"{'OVER' if abs(result) > abs(target) else 'SHORT'} by "
+                   f"{abs(miss):.2f} deg - aborting")
+    print(f"{name:6}{target:>+9.1f}d{speed:>8.0f}{result:>+9.2f}d   {verdict}")
     return landed, result
 
 
