@@ -456,6 +456,39 @@ python examples/camera_gimbal_tracker.py --hardware --channel can0 \
     --two-axis --zeroed --park     # before switching off
 ```
 
+### Moving it by hand from a shell
+
+`camera_gimbal_tracker.py` runs a tracking pass. For the other thing you want on
+a bench — poke one axis a few degrees and see what happens —
+[`examples/gimbal_cli.py`](../../examples/gimbal_cli.py) is a set of one-shot
+commands, defaulted to this machine (`can0` at 500 kbit/s, pan = CAN 2,
+tilt = CAN 3):
+
+```
+python examples/gimbal_cli.py status                       # reads only
+python examples/gimbal_cli.py set-zero                     # define home by hand
+python examples/gimbal_cli.py --zeroed point --yaw 30 --pitch -20
+python examples/gimbal_cli.py --zeroed goto tilt -20 --speed 20
+python examples/gimbal_cli.py --zeroed demo                # sweep both limits
+python examples/gimbal_cli.py release                      # motors off
+```
+
+Every command takes `--axis` to work on one motor. Every move is **verified
+against the encoder** and exits non-zero if the shaft did not arrive — that is
+what turned a stalling axis into a number rather than a hunch. Two more that
+earn their place when something is wrong:
+
+| | |
+| --- | --- |
+| `watch` | streams position, following error (`0x39`), speed and locked-rotor state while you push the axis by hand |
+| `params` | writes the board's whole configuration except its CAN identity, so two motors that behave differently can be made identical — the only comparison available when nothing reads back |
+
+`params` writes what is almost certainly non-volatile memory, so it is a
+once-per-board command and not something to automate. See
+[Diagnosing an axis that answers but will not move](../../docs/development/hardware_validation.md)
+for what these readings looked like on a motor whose bearing preload spring had
+been displaced.
+
 **Park before powering down and home survives the power cycle.** The motor
 zeroes its encoder wherever the shaft is standing at switch-on, so if the
 machine is always switched off at home, then zero *is* home next time — the

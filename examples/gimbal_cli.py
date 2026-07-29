@@ -45,11 +45,11 @@ any ordinary waited move after a tracking run waits for a frame that never
 arrives. Every command here re-enables it first.
 
 **Every move reports where the shaft actually ended up**, read back off the
-encoder, and prints `OFF` and exits non-zero when that is more than 0.5 deg from
-what was asked. This is not decoration: the first move made after a motor has
-been released reliably falls short here - measured at 1.73 deg on pan - because
-enabling snaps the rotor to the nearest detent and the move starts from a frame
-that disagrees with the encoder. Issuing the same command again lands it.
+encoder, and exits non-zero when it missed by more than `MOVE_TOL_DEG` - or
+`DEMO_TOL_DEG` for a sweep, which overshoots more at the end of full travel.
+This is not decoration. It caught a move that reported "now +34.67" against a
+target of -10.00 and would otherwise have exited 0, and it is how a stalling
+axis announces itself before anything else does.
 
 It is deliberately **not** retried automatically. A move that stops short
 because it has run into the cable loom looks identical from here, and retrying
@@ -101,6 +101,13 @@ MIN_SPEED_DEG_S = 3.1
 # was normal behaviour rather than a fault.
 DEMO_END_MARGIN_DEG = 2.0
 DEMO_TOL_DEG = 2.0
+
+# How far a single discrete move may miss before it is called a failure.
+# Separate from DEMO_TOL_DEG because a full-travel sweep overshoots more
+# than a short hop: 1.60 deg was measured at the end of a 177 deg leg,
+# against 0.1-0.4 deg on the short moves. goto, jog and point had 1.0, 1.0
+# and 0.5 hardcoded between them, for no reason anyone could have stated.
+MOVE_TOL_DEG = 1.0
 
 # The motor reports a move complete before the shaft has finished settling, so
 # reading the encoder immediately races it. Short enough not to hide a real
@@ -278,7 +285,7 @@ async def _move(can_if: CANInterface, name: str, target: float,
     after = await axis.get_current_position_user()
     # Report the encoder, not the fact the command returned: where the shaft
     # ended up is the thing being tested.
-    landed = abs(after - target) <= 1.0
+    landed = abs(after - target) <= MOVE_TOL_DEG
     print(f"{name}: {'ok  ' if landed else 'SHORT'} now {after:+.2f} deg  "
           f"(asked for {target:+.2f})")
     return 0 if landed else 1
@@ -358,7 +365,7 @@ async def cmd_point(can_if: CANInterface, args) -> int:
         name, pos = item
         label = "yaw" if name == "pan" else "pitch"
         want = args.yaw if name == "pan" else args.pitch
-        landed = abs(pos - want) <= 0.5
+        landed = abs(pos - want) <= MOVE_TOL_DEG
         print(f"  {'OK  ' if landed else 'OFF '} {label:5} now {pos:+.2f} deg "
               f"(asked {want:+.2f})")
         ok = ok and landed

@@ -147,6 +147,7 @@ mks_servo_can/
 │   └── fixtures/                    # docs_known_issues.json (documentation ratchet)
 ├── examples/                        # Example scripts demonstrating library usage
 │   ├── camera_gimbal_tracker.py     # 3-axis gimbal tracking a fast target
+│   ├── gimbal_cli.py                # One-shot commands to move the printed gimbal
 │   ├── single_axis_real_hw.py       # Basic single motor control with real hardware
 │   ├── multi_axis_simulator.py      # Multi-motor control with simulator
 │   ├── advanced_axis_control.py     # Advanced motor control techniques
@@ -381,6 +382,9 @@ https://github.com/user-attachments/assets/b7e87119-080f-4230-921d-b1fbb9b76aef
 
 **Real-Time Tracking:**
 * `examples/camera_gimbal_tracker.py`: A camera gimbal tracking a fast target.
+* `examples/gimbal_cli.py`: Move the printed `hardware/gimbal/` from a shell —
+  zero it, point it, sweep its limits, read its following error, and write the
+  motors' configuration. Every move is verified against the encoder.
   Runs against the simulator with no hardware. Documents the design reasoning -
   why direct drive beats a reduction here, why latency rather than motor speed is
   the binding constraint, and how to size the axes. Three axes by default;

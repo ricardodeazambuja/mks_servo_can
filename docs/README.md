@@ -73,6 +73,7 @@ Welcome to the documentation for the MKS Servo CAN Control Project. This section
     |---|---|
     | control one axis against the simulator | [`multi_axis_simulator.py`](../examples/multi_axis_simulator.py), [`comprehensive_simulator_test.py`](../examples/comprehensive_simulator_test.py) |
     | control one axis on real hardware | [`single_axis_real_hw.py`](../examples/single_axis_real_hw.py) |
+    | drive the printed pan/tilt gimbal by hand | [`gimbal_cli.py`](../examples/gimbal_cli.py), and [the build](../hardware/gimbal/README.md) |
     | drive a 2-link planar arm (`TwoLinkArmPlanar`) | [`two_link_planar_arm.py`](../examples/two_link_planar_arm.py) |
     | drive a 3-DOF Cartesian robot (`CartesianRobot`) | [`cartesian_3dof_robot.py`](../examples/cartesian_3dof_robot.py) |
     | drive a 3-DOF RRR arm (`RRRArm`) | [`three_link_arm.py`](../examples/three_link_arm.py) |
